@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "etf-sentiment-analyzer"
+version = "0.1.0"
+description = "Stock screener and predictor powered by FinBERT NLP and technical analysis"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "Vignesh Murugan" },
+]
+keywords = ["stocks", "etf", "sentiment", "finbert", "nlp", "trading", "screener"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
+dependencies = [
+    "transformers>=4.35.0",
+    "torch>=2.0.0",
+    "feedparser>=6.0.10",
+    "rich>=13.7.0",
+    "python-dateutil>=2.8.2",
+    "yfinance>=0.2.31",
+    "pandas>=2.0.0",
+]
+
+[project.scripts]
+etf-sentiment = "etf_sentiment.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/vigneshmurugan/etf-sentiment-analyzer"
+Repository = "https://github.com/vigneshmurugan/etf-sentiment-analyzer"
+Issues = "https://github.com/vigneshmurugan/etf-sentiment-analyzer/issues"
+
+[tool.setuptools.packages.find]
+include = ["etf_sentiment*"]
