@@ -181,7 +181,7 @@ class ScreenerDashboard:
         seen = set()
 
         for p in predictions:
-            for title, score, source in p.top_headlines[:2]:
+            for title, score, source, url in p.top_headlines[:2]:
                 if title in seen:
                     continue
                 seen.add(title)

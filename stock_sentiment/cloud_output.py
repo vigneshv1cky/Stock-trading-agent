@@ -61,9 +61,9 @@ def generate_html_report(predictions: list, screened_count: int) -> str:
     top_detail = ""
     for p in bullish[:8]:
         headlines_html = ""
-        for title, score, source in p.top_headlines[:3]:
+        for title, score, source, url in p.top_headlines[:3]:
             s_color = "#22c55e" if score > 0.1 else "#ef4444" if score < -0.1 else "#eab308"
-            headlines_html += f'<li style="margin:2px 0"><span style="color:{s_color}">{score:+.2f}</span> {title[:80]} <span style="color:#666">— {source}</span></li>'
+            headlines_html += f'<li style="margin:2px 0"><span style="color:{s_color}">{score:+.2f}</span> <a href="{url}" style="color:#e6edf3;text-decoration:none" target="_blank">{title[:80]}</a> <span style="color:#666">— {source}</span></li>'
 
         top_detail += f"""
         <div style="background:#1a1a2e;border:1px solid #333;border-radius:8px;padding:16px;margin:8px 0">

@@ -2,6 +2,7 @@
 
 import math
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Optional
 
 from stock_sentiment.market.screener import ScreenedStock
@@ -28,7 +29,7 @@ class StockPrediction:
     bullish_count: int
     bearish_count: int
     neutral_count: int
-    top_headlines: list  # [(title, score, source)]
+    top_headlines: list  # [(title, score, source, url)]
 
     # Technicals
     rsi: Optional[float]
@@ -67,18 +68,59 @@ class StockPredictor:
         headlines = []
         bullish = bearish = neutral = 0
 
+        # Recency weighting
+        now = datetime.now(timezone.utc)
+        weighted_sentiment_sum = 0.0
+        total_weight = 0.0
+
         for a in articles:
             if hasattr(a, "normalized_score"):
                 score = a.normalized_score
                 title = a.article.title
                 source = a.article.source
+                url = a.article.url
+                published_at = a.article.published_at
             else:
                 score = a.get("normalized_score", 0.0)
                 title = a.get("title", "")
                 source = a.get("source", "")
+                url = a.get("url", "#")
+                published_at = a.get("published_at")
+
+            # Calculate age-based weight
+            weight = 0.2  # Default for old articles
+            if published_at:
+                if isinstance(published_at, str):
+                    try:
+                        published_at = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
+                    except ValueError:
+                        published_at = None
+                
+                if published_at:
+                    # Ensure timezone awareness for comparison
+                    if published_at.tzinfo is None:
+                        published_at = published_at.replace(tzinfo=timezone.utc)
+                    
+                    try:
+                        age_hours = (now - published_at).total_seconds() / 3600
+                        if age_hours < 12:
+                            weight = 1.0
+                        elif age_hours < 24:
+                            weight = 0.8
+                        elif age_hours < 72:  # 1-3 days
+                            weight = 0.5
+                        elif age_hours < 168:  # 3-7 days
+                            weight = 0.2
+                        else:
+                            weight = 0.1
+                    except (TypeError, ValueError):
+                        weight = 0.5 # Fallback
+
+            weighted_sentiment_sum += score * weight
+            total_weight += weight
 
             sentiments.append(score)
-            headlines.append((title, score, source))
+            headlines.append((title, score, source, url))
 
             if score > 0.1:
                 bullish += 1
@@ -87,7 +129,7 @@ class StockPredictor:
             else:
                 neutral += 1
 
-        avg_sentiment = sum(sentiments) / len(sentiments) if sentiments else 0.0
+        avg_sentiment = weighted_sentiment_sum / total_weight if total_weight > 0 else 0.0
         # Sort headlines by absolute sentiment (most impactful first)
         headlines.sort(key=lambda x: abs(x[1]), reverse=True)
 
@@ -225,17 +267,13 @@ class StockPredictor:
 
         score = 0.0
 
-        # RSI (0-30)
+        # RSI (0-30 contribution to total technical score)
         if ti.rsi_14 < 30:
-            score += 30  # Oversold = bounce potential
-        elif ti.rsi_14 < 45:
-            score += 25
-        elif ti.rsi_14 < 60:
-            score += 20  # Healthy range
+            score += 30  # Oversold = high reward
         elif ti.rsi_14 < 70:
-            score += 15
+            score += 15  # Normal range
         else:
-            score += 5  # Overbought = risk
+            score -= 20  # Overbought = heavy punishment
 
         # MACD (0-25)
         if ti.macd_crossover == "bullish":
@@ -261,7 +299,7 @@ class StockPredictor:
         else:
             score += 8
 
-        return min(100, score)
+        return max(0, min(100, score))
 
     def _classify(
         self, overall: float, sentiment: float,
