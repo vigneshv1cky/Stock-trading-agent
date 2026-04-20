@@ -108,7 +108,7 @@ html_template = """
         
         <div class="form-group">
             <label>
-                Min Return (%):
+                Min 3-Month Return (%):
                 <input type="number" id="min_return" value="10.0" step="0.1">
             </label>
             <label>

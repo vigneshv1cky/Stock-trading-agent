@@ -82,14 +82,23 @@ class PriceFetcher:
                     prev = float(df["Close"].iloc[-2])
                     change_pct = ((current - prev) / prev) * 100
 
-                    vol = int(df["Volume"].iloc[-1]) if not pd.isna(df["Volume"].iloc[-1]) else 0
-                    avg_vol = float(df["Volume"].tail(20).mean()) if len(df) >= 5 else float(vol)
+                    # Use Previous Full Trading Day for Volume to avoid intraday lag
+                    vol_series = df["Volume"].dropna()
+                    if len(vol_series) >= 22:
+                        # Reference: Last completed full day (2nd to last row)
+                        ref_vol = int(vol_series.iloc[-2])
+                        # Baseline: 20 days preceding the reference day
+                        avg_vol = float(vol_series.iloc[-22:-2].mean())
+                    else:
+                        # Fallback for short history
+                        ref_vol = int(vol_series.iloc[-1])
+                        avg_vol = float(vol_series.mean())
 
                     price_data = PriceData(
                         symbol=symbol,
                         current_price=current,
                         change_pct=change_pct,
-                        volume=vol,
+                        volume=ref_vol,
                         avg_volume_20d=avg_vol,
                         ohlcv=df,
                         fetched_at=now,

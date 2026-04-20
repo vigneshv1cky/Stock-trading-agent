@@ -299,6 +299,15 @@ class StockPredictor:
         else:
             score += 8
 
+        # Relative Volume (The "Fuel" Check) - New!
+        if ti.volume_ratio:
+            if ti.volume_ratio > 2.0:
+                score += 15  # Massive surge
+            elif ti.volume_ratio > 1.2:
+                score += 5   # Healthy interest
+            elif ti.volume_ratio < 0.7:
+                score -= 10  # Sleepy / low conviction
+
         return max(0, min(100, score))
 
     def _classify(
@@ -386,7 +395,7 @@ class StockPredictor:
                 reasons.append("Strong uptrend")
 
             if ti.volume_ratio and ti.volume_ratio > 1.5:
-                reasons.append(f"Volume surge ({ti.volume_ratio:.1f}x avg)")
+                reasons.append(f"Previous day volume surge ({ti.volume_ratio:.1f}x avg)")
 
         if not reasons:
             reasons.append("Mixed signals — proceed with caution")

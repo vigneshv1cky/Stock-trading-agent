@@ -24,58 +24,61 @@ SCREEN_UNIVERSE = [
     "SE", "SHOP", "SPOT", "OPEN",
     "DUOL", "BILL", "PCOR", "DT", "FRSH", "TENB", "RPD", "CRDO", "ANET",
 
+    # ===== Cybersecurity (High War Sensitivity) =====
+    "PANW", "FTNT", "CRWD", "ZS", "CYBR", "S", "QLYS", "CHKP", "AVAST", "GEN",
+
     # ===== Semiconductors =====
+    "NVDA", "TSM", "AVGO", "ASML", "AMAT", "LRCX", "KLAC", "MU", "ADI", "TXN",
     "WOLF", "SLAB", "ACLS", "RMBS", "DIOD", "INDI", "SITM", "CRUS",
     "LSCC", "MTSI", "NVTS", "POWI",
 
     # ===== Fintech / Finance / Crypto =====
-    "PYPL", "COIN", "NU", "MARA", "RIOT", "CLSK", "BITF", "HUT",
-    "CORZ", "CIFR", "XYZ", "ALLY", "LC", "LPLA",
-    "FOUR", "STNE", "PAGS", "VIRT", "IBKR",
+    "SQ", "V", "MA", "GS", "JPM", "BAC", "MS", "C", "WFC", "AXP", "BLK",
+    "MSTR", "COIN", "WULF", "IREN", "MARA", "RIOT", "CLSK", "BITF", "HUT",
+    "CORZ", "CIFR", "PYPL", "NU", "HOOD", "SOFI", "IBKR", "ALLY", "STNE",
 
-    # ===== Healthcare / Biotech =====
-    "MRNA", "HIMS", "DOCS", "TDOC", "DNA", "BEAM", "CRSP",
-    "INSM", "SAVA", "ARDX", "VKTX", "LEGN", "GERN", "IOVA",
-    "RXRX", "ACAD", "ARCT", "EXAS", "NUVB",
-    "CORT", "FOLD", "TGTX", "ARVN", "ALNY", "PCVX",
-    "IRTC", "ISRG", "HALO", "INSP", "PODD",
+    # ===== Aerospace / Defense (Direct Beneficiaries) =====
+    "LMT", "RTX", "NOC", "GD", "BA", "LHX", "HWM", "TDG", "HII", "LDOS",
+    "BWXT", "TEXT", "HEI", "CAE", "AVAV", "BCO", "SPR", "AXON", "RKLB", 
+    "IRDM", "SPCE", "RDW", "KTOS",
 
-    # ===== Consumer / Retail / Restaurants =====
-    "NKE", "SBUX", "DIS", "NCLH", "CCL", "RCL",
-    "GME", "AMC", "CHWY", "ETSY", "W", "RVLV",
-    "CAVA", "BIRK", "CART", "SHAK", "BROS", "WING",
-    "LULU", "DECK", "CROX", "HAS", "MAT",
-    "BKNG", "EXPE", "LYV", "DKNG", "PENN", "MGM",
-    "WYNN", "CZR",
+    # ===== Energy / Oil & Gas (War Catalyst) =====
+    "XOM", "CVX", "COP", "OXY", "EOG", "SLB", "PBR", "TTE", "SHEL", "BP", "EQNR",
+    "MPC", "PSX", "VLO", "APA", "MUR", "DVN", "HAL", "OVV", "CTRA", "AR", "RRC", 
+    "EQT", "CTVA", "CF", "MOS", "ADM", "BG",
 
-    # ===== Energy / Clean Energy =====
-    "FSLR", "ENPH", "PLUG", "RUN", "SEDG", "ARRY",
-    "DVN", "HAL", "OVV", "CTRA", "AR", "RRC", "EQT",
-    "CLNE", "CHPT", "EVGO", "BLDP", "BE",
+    # ===== Clean Energy / Solar / Nuclear =====
+    "NEE", "FSLR", "ENPH", "PLUG", "RUN", "SEDG", "ARRY", "BE", "VIST", "SMR", 
+    "OKLO", "LEU", "CCJ", "UUUU",
+
+    # ===== Shipping & Maritime (Supply Chain Impact) =====
+    "ZIM", "MATX", "GNK", "DSX", "STNG", "FRO", "DAC", "EGLE", "SBLK", "NM",
+
+    # ===== Commodities / Materials / Gold =====
+    "FCX", "AA", "CLF", "NUE", "NEM", "GOLD", "AU", "HMY", "KGC", "RGLD", "FNV",
 
     # ===== EV / Auto / Transport =====
-    "F", "GM", "RIVN", "LCID", "NIO", "XPEV", "LI",
-    "JOBY", "ACHR", "PSNY", "NKLA",
-    "ZIM", "MATX", "DAL", "UAL", "AAL", "JBLU",
+    "TSLA", "RACE", "UPS", "FDX", "NSC", "CSX", "UNP", "LUV", "DAL", "UAL", "AAL",
+    "F", "GM", "RIVN", "LCID", "NIO", "XPEV", "LI", "JOBY", "ACHR", "PSNY",
 
-    # ===== Industrials / Aerospace / Defense =====
-    "AXON", "RKLB", "IRDM", "SPCE", "RDW",
-    "BWA", "TER", "GNRC", "BLDR",
-    "KTOS",
+    # ===== Healthcare / Biotech =====
+    "PFE", "JNJ", "ABBV", "LLY", "UNH", "MRNA", "HIMS", "DOCS", "TDOC", "DNA", 
+    "BEAM", "CRSP", "VKTX", "LEGN", "GERN", "IOVA", "CORT", "ISRG",
 
-    # ===== Real Estate / REITs =====
-    "IRM", "IIPR", "GOOD", "NLY", "AGNC",
+    # ===== Consumer / Retail / Brands =====
+    "NKE", "SBUX", "DIS", "AAPL", "AMZN", "WMT", "COST", "HD", "TGT", "TJX",
+    "CAVA", "BIRK", "SHAK", "BROS", "WING", "LULU", "DECK", "CROX",
 
-    # ===== Media / Social / Entertainment =====
-    "RDDT", "DJT", "WBD",
+    # ===== Real Estate / REITs / Data =====
+    "PLD", "AMT", "EQIX", "DLR", "IRM", "IIPR", "VICI", "O", "SPG",
+
+    # ===== Media / Social / AdTech =====
+    "META", "GOOGL", "NFLX", "SPOT", "TTD", "RDDT", "DJT", "WBD", "PARA", "FOXA",
     "MTCH", "BMBL", "ZG",
-    "NFLX", "SPOT",
 
-    # ===== Mid-cap Growth / Other =====
-    "APP", "TTD", "CELH", "ARM",
-    "TMDX", "GKOS", "ACLX", "SAIA", "ODFL", "XPO",
-    "PAYC", "WIX", "GFS",
-    "FTNT", "PANW", "CYBR",
+    # ===== Growth & Mid-caps =====
+    "APP", "CELH", "ARM", "TMDX", "GKOS", "ACLX", "SAIA", "ODFL", "XPO",
+    "PAYC", "WIX", "GFS", "FTNT", "PANW", "CYBR", "NOW", "WDAY", "HUBS", "TEAM",
 ]
 
 
