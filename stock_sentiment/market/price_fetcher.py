@@ -20,6 +20,7 @@ class PriceData:
     avg_volume_20d: float
     ohlcv: pd.DataFrame  # 30-day history
     fetched_at: datetime
+    days_to_earnings: Optional[int] = None
 
 
 class PriceFetcher:
@@ -94,6 +95,20 @@ class PriceFetcher:
                         ref_vol = int(vol_series.iloc[-1])
                         avg_vol = float(vol_series.mean())
 
+                    # Fetch earnings date
+                    days_to_earnings = None
+                    try:
+                        cal = yf.Ticker(symbol).calendar
+                        if isinstance(cal, dict) and 'Earnings Date' in cal:
+                            dates = cal.get('Earnings Date', [])
+                            # Handle both datetime.date and datetime.datetime
+                            d = [dt.date() if hasattr(dt, 'date') else dt for dt in dates]
+                            future = [dt for dt in d if dt >= now.date()]
+                            if future:
+                                days_to_earnings = (future[0] - now.date()).days
+                    except Exception:
+                        pass
+
                     price_data = PriceData(
                         symbol=symbol,
                         current_price=current,
@@ -102,6 +117,7 @@ class PriceFetcher:
                         avg_volume_20d=avg_vol,
                         ohlcv=df,
                         fetched_at=now,
+                        days_to_earnings=days_to_earnings,
                     )
                     self._cache[symbol] = price_data
                 except Exception:

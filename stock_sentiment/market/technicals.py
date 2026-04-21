@@ -26,6 +26,7 @@ class TechnicalIndicators:
     volume_ratio: Optional[float] = None  # current vol / 20d avg
     trend_direction: str = "sideways"  # "up", "down", "sideways"
     trend_strength: float = 0.0  # 0.0 to 1.0
+    days_to_earnings: Optional[int] = None
 
 
 class TechnicalAnalyzer:
@@ -35,12 +36,12 @@ class TechnicalAnalyzer:
         """Compute all indicators for a single symbol."""
         df = price_data.ohlcv
         if df is None or df.empty or len(df) < 5:
-            return TechnicalIndicators(symbol=price_data.symbol)
+            return TechnicalIndicators(symbol=price_data.symbol, days_to_earnings=price_data.days_to_earnings)
 
         closes = df["Close"].astype(float)
         current_price = float(closes.iloc[-1])
 
-        ti = TechnicalIndicators(symbol=price_data.symbol)
+        ti = TechnicalIndicators(symbol=price_data.symbol, days_to_earnings=price_data.days_to_earnings)
 
         # RSI
         ti.rsi_14 = self.compute_rsi(closes, 14)

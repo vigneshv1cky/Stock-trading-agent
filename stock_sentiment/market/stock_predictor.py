@@ -38,6 +38,7 @@ class StockPrediction:
     trend_strength: float
     volume_ratio: Optional[float]
     price_vs_sma20: str
+    days_to_earnings: Optional[int]
 
     # Prediction
     prediction: str  # "BULLISH", "BEARISH", "NEUTRAL"
@@ -179,6 +180,7 @@ class StockPredictor:
             trend_strength=technicals.trend_strength if technicals else 0,
             volume_ratio=technicals.volume_ratio if technicals else None,
             price_vs_sma20=technicals.price_vs_sma20 if technicals else "unknown",
+            days_to_earnings=technicals.days_to_earnings if technicals else None,
             prediction=prediction,
             confidence=confidence,
             predicted_move=predicted_move,
@@ -349,6 +351,12 @@ class StockPredictor:
                 predicted_move += " [oversold bounce possible]"
                 confidence *= 0.85
 
+        # Earnings Avoidance
+        if ti and ti.days_to_earnings is not None and ti.days_to_earnings <= 3:
+            prediction = "BEARISH"
+            confidence *= 0.5
+            predicted_move = "Sidelines [Earnings approaching in {} days]".format(ti.days_to_earnings)
+
         return prediction, round(confidence, 1), predicted_move
 
     def _build_reasoning(
@@ -396,6 +404,9 @@ class StockPredictor:
 
             if ti.volume_ratio and ti.volume_ratio > 1.5:
                 reasons.append(f"Previous day volume surge ({ti.volume_ratio:.1f}x avg)")
+
+            if ti.days_to_earnings is not None and ti.days_to_earnings <= 3:
+                reasons.append(f"High Volatility Risk: Earnings in {ti.days_to_earnings} days")
 
         if not reasons:
             reasons.append("Mixed signals — proceed with caution")

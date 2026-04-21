@@ -15,8 +15,11 @@ Modes:
 """
 
 import argparse
-
+from dotenv import load_dotenv
 from rich.console import Console
+
+# Load environment variables from .env file
+load_dotenv()
 
 console = Console()
 
@@ -83,8 +86,8 @@ It does NOT constitute financial advice.
     parser.add_argument(
         "--every",
         type=float,
-        default=24.0,
-        help="Schedule interval in hours (default: 24 = daily)",
+        default=1.0,
+        help="Schedule interval in hours (default: 1 = hourly)",
     )
     parser.add_argument(
         "--no-backtest",

@@ -7,3 +7,5 @@ yfinance>=0.2.31
 pandas>=2.0.0
 fastapi
 uvicorn
+alpaca-py>=0.14.0boto3
+python-dotenv
