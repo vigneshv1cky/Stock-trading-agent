@@ -1,17 +1,8 @@
 #!/bin/bash
 #
-# AWS Deployment Script for Stock Screener
+# AWS Deployment Script for Stock Screener (Production ALB Mode)
 # ==========================================
-# Sets up: ECR, ECS Fargate, EventBridge daily schedule, S3, IAM
-#
-# Prerequisites:
-#   - AWS CLI installed and configured (aws configure)
-#   - Docker installed and running
-#   - An SES-verified email address
-#
-# Usage:
-#   chmod +x deploy/deploy.sh
-#   ./deploy/deploy.sh
+# Sets up: ECR, ECS Fargate, S3, IAM, Load Balancer (ALB)
 #
 
 set -e
@@ -24,193 +15,120 @@ APP_NAME="stock-screener"
 ECR_REPO="${APP_NAME}"
 ECS_CLUSTER="${APP_NAME}-cluster"
 TASK_FAMILY="${APP_NAME}-task"
+SERVICE_NAME="${APP_NAME}-service"
 S3_BUCKET="${APP_NAME}-reports-$(aws sts get-caller-identity --query Account --output text 2>/dev/null || echo 'ACCOUNT_ID')"
-SES_FROM_EMAIL="${SES_FROM_EMAIL:-}"     # Set this: your verified SES email
-SES_TO_EMAIL="${SES_TO_EMAIL:-}"         # Set this: where to receive reports
-SCHEDULE_EXPRESSION="rate(1 day)"        # Daily. Use "rate(12 hours)" for twice daily
 TASK_CPU="1024"                          # 1 vCPU
-TASK_MEMORY="4096"                       # 4 GB (FinBERT needs ~2GB)
+TASK_MEMORY="4096"                       # 4 GB
 
 echo "============================================"
-echo "  Stock Screener — AWS Deployment"
+echo "  Stock Screener — Production Deployment (ALB)"
 echo "============================================"
 echo ""
 echo "  Region:    $AWS_REGION"
 echo "  App:       $APP_NAME"
 echo "  S3 Bucket: $S3_BUCKET"
-echo "  Schedule:  $SCHEDULE_EXPRESSION"
 echo ""
 
 # Check prerequisites
-if ! command -v aws &> /dev/null; then
-    echo "ERROR: AWS CLI not found. Install: https://aws.amazon.com/cli/"
-    exit 1
-fi
-
-if ! command -v docker &> /dev/null; then
-    echo "ERROR: Docker not found. Install: https://docs.docker.com/get-docker/"
-    exit 1
-fi
-
-if ! aws sts get-caller-identity &> /dev/null; then
-    echo "ERROR: AWS CLI not configured. Run: aws configure"
-    exit 1
-fi
+if ! command -v aws &> /dev/null; then echo "ERROR: AWS CLI not found."; exit 1; fi
+if ! command -v docker &> /dev/null; then echo "ERROR: Docker not found."; exit 1; fi
 
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 ECR_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}"
 
-echo "AWS Account: $ACCOUNT_ID"
-echo ""
-
 # ============================================================
-# Step 1: Create S3 bucket for reports
+# Step 1-2: S3 and ECR (Fast Checks)
 # ============================================================
-echo ">>> Step 1: Creating S3 bucket..."
-if aws s3 ls "s3://${S3_BUCKET}" 2>/dev/null; then
-    echo "  Bucket already exists: ${S3_BUCKET}"
-else
-    aws s3 mb "s3://${S3_BUCKET}" --region "${AWS_REGION}"
-    echo "  Created bucket: ${S3_BUCKET}"
-fi
-
-# ============================================================
-# Step 2: Create ECR repository
-# ============================================================
-echo ""
-echo ">>> Step 2: Creating ECR repository..."
-if aws ecr describe-repositories --repository-names "${ECR_REPO}" --region "${AWS_REGION}" &>/dev/null; then
-    echo "  Repository already exists: ${ECR_REPO}"
-else
-    aws ecr create-repository \
-        --repository-name "${ECR_REPO}" \
-        --region "${AWS_REGION}" \
-        --image-scanning-configuration scanOnPush=true
-    echo "  Created repository: ${ECR_REPO}"
+if ! aws s3 ls "s3://${S3_BUCKET}" 2>/dev/null; then aws s3 mb "s3://${S3_BUCKET}" --region "${AWS_REGION}"; fi
+if ! aws ecr describe-repositories --repository-names "${ECR_REPO}" --region "${AWS_REGION}" &>/dev/null; then
+    aws ecr create-repository --repository-name "${ECR_REPO}" --region "${AWS_REGION}"
 fi
 
 # ============================================================
 # Step 3: Build and push Docker image
 # ============================================================
-echo ""
-echo ">>> Step 3: Building Docker image..."
+echo ">>> Building and Pushing Docker Image..."
 cd "$(dirname "$0")/.."
-
-docker build -t "${APP_NAME}:latest" .
-
-echo "  Logging into ECR..."
-aws ecr get-login-password --region "${AWS_REGION}" | \
-    docker login --username AWS --password-stdin "${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-
-echo "  Tagging and pushing image..."
+docker build --platform linux/amd64 -t "${APP_NAME}:latest" .
+aws ecr get-login-password --region "${AWS_REGION}" | docker login --username AWS --password-stdin "${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 docker tag "${APP_NAME}:latest" "${ECR_URI}:latest"
 docker push "${ECR_URI}:latest"
-echo "  Image pushed: ${ECR_URI}:latest"
 
 # ============================================================
-# Step 4: Create IAM execution role for ECS
+# Step 4: Networking & Security Groups
 # ============================================================
-echo ""
-echo ">>> Step 4: Creating IAM roles..."
+echo ">>> Configuring VPC and Security Groups..."
+VPC_ID=$(aws ec2 describe-vpcs --filters "Name=isDefault,Values=true" --query 'Vpcs[0].VpcId' --output text --region "${AWS_REGION}")
+SUBNETS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=${VPC_ID}" --query 'Subnets[*].SubnetId' --output text --region "${AWS_REGION}" | xargs | tr ' ' ',')
+# Convert commas to space-separated list for AWS CLI arrays if needed, but for create-lb it takes space-separated
+SUBNET_LIST=$(echo $SUBNETS | tr ',' ' ')
 
+# ALB Security Group (Allows 80 from everywhere)
+ALB_SG_NAME="${APP_NAME}-alb-sg"
+if ! ALB_SG_ID=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=${ALB_SG_NAME}" "Name=vpc-id,Values=${VPC_ID}" --query 'SecurityGroups[0].GroupId' --output text --region "${AWS_REGION}" 2>/dev/null) || [ "$ALB_SG_ID" == "None" ]; then
+    ALB_SG_ID=$(aws ec2 create-security-group --group-name "${ALB_SG_NAME}" --description "ALB Inbound" --vpc-id "${VPC_ID}" --query 'GroupId' --output text --region "${AWS_REGION}")
+    aws ec2 authorize-security-group-ingress --group-id "${ALB_SG_ID}" --protocol tcp --port 80 --cidr 0.0.0.0/0 --region "${AWS_REGION}"
+fi
+
+# Task Security Group (Allows 8080 from ALB only)
+TASK_SG_NAME="${APP_NAME}-task-sg"
+if ! TASK_SG_ID=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=${TASK_SG_NAME}" "Name=vpc-id,Values=${VPC_ID}" --query 'SecurityGroups[0].GroupId' --output text --region "${AWS_REGION}" 2>/dev/null) || [ "$TASK_SG_ID" == "None" ]; then
+    TASK_SG_ID=$(aws ec2 create-security-group --group-name "${TASK_SG_NAME}" --description "Task Inbound from ALB" --vpc-id "${VPC_ID}" --query 'GroupId' --output text --region "${AWS_REGION}")
+    aws ec2 authorize-security-group-ingress --group-id "${TASK_SG_ID}" --protocol tcp --port 8080 --source-group "${ALB_SG_ID}" --region "${AWS_REGION}"
+fi
+
+# ============================================================
+# Step 5: Load Balancer & Target Group
+# ============================================================
+echo ">>> Managing Application Load Balancer..."
+TG_NAME="${APP_NAME}-tg"
+if ! TG_ARN=$(aws elbv2 describe-target-groups --names "${TG_NAME}" --query 'TargetGroups[0].TargetGroupArn' --output text --region "${AWS_REGION}" 2>/dev/null); then
+    TG_ARN=$(aws elbv2 create-target-group --name "${TG_NAME}" --protocol HTTP --port 8080 --vpc-id "${VPC_ID}" --target-type ip --health-check-path "/health" --query 'TargetGroups[0].TargetGroupArn' --output text --region "${AWS_REGION}")
+fi
+
+ALB_NAME="${APP_NAME}-alb"
+if ! ALB_ARN=$(aws elbv2 describe-load-balancers --names "${ALB_NAME}" --query 'LoadBalancers[0].LoadBalancerArn' --output text --region "${AWS_REGION}" 2>/dev/null); then
+    ALB_ARN=$(aws elbv2 create-load-balancer --name "${ALB_NAME}" --subnets $SUBNET_LIST --security-groups "${ALB_SG_ID}" --query 'LoadBalancers[0].LoadBalancerArn' --output text --region "${AWS_REGION}")
+    aws elbv2 create-listener --load-balancer-arn "${ALB_ARN}" --protocol HTTP --port 80 --default-actions Type=forward,TargetGroupArn="${TG_ARN}" --region "${AWS_REGION}" > /dev/null
+fi
+ALB_DNS=$(aws elbv2 describe-load-balancers --names "${ALB_NAME}" --query 'LoadBalancers[0].DNSName' --output text --region "${AWS_REGION}")
+
+# ============================================================
+# Step 6: IAM Roles
+# ============================================================
 EXEC_ROLE_NAME="${APP_NAME}-ecs-exec-role"
 TASK_ROLE_NAME="${APP_NAME}-ecs-task-role"
 
-# ECS execution role (pull images + send logs)
-if aws iam get-role --role-name "${EXEC_ROLE_NAME}" &>/dev/null; then
-    echo "  Execution role exists: ${EXEC_ROLE_NAME}"
-else
-    aws iam create-role \
-        --role-name "${EXEC_ROLE_NAME}" \
-        --assume-role-policy-document '{
-            "Version": "2012-10-17",
-            "Statement": [{
-                "Effect": "Allow",
-                "Principal": {"Service": "ecs-tasks.amazonaws.com"},
-                "Action": "sts:AssumeRole"
-            }]
-        }'
-    aws iam attach-role-policy \
-        --role-name "${EXEC_ROLE_NAME}" \
-        --policy-arn "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
-    echo "  Created execution role: ${EXEC_ROLE_NAME}"
+if ! aws iam get-role --role-name "${EXEC_ROLE_NAME}" &>/dev/null; then
+    aws iam create-role --role-name "${EXEC_ROLE_NAME}" --assume-role-policy-document '{"Version": "2012-10-17","Statement": [{"Effect": "Allow","Principal": {"Service": "ecs-tasks.amazonaws.com"},"Action": "sts:AssumeRole"}]}'
+    aws iam attach-role-policy --role-name "${EXEC_ROLE_NAME}" --policy-arn "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 fi
-
 EXEC_ROLE_ARN=$(aws iam get-role --role-name "${EXEC_ROLE_NAME}" --query 'Role.Arn' --output text)
 
-# ECS task role (S3 + SES access)
-if aws iam get-role --role-name "${TASK_ROLE_NAME}" &>/dev/null; then
-    echo "  Task role exists: ${TASK_ROLE_NAME}"
-else
-    aws iam create-role \
-        --role-name "${TASK_ROLE_NAME}" \
-        --assume-role-policy-document '{
-            "Version": "2012-10-17",
-            "Statement": [{
-                "Effect": "Allow",
-                "Principal": {"Service": "ecs-tasks.amazonaws.com"},
-                "Action": "sts:AssumeRole"
-            }]
-        }'
-    echo "  Created task role: ${TASK_ROLE_NAME}"
+if ! aws iam get-role --role-name "${TASK_ROLE_NAME}" &>/dev/null; then
+    aws iam create-role --role-name "${TASK_ROLE_NAME}" --assume-role-policy-document '{"Version": "2012-10-17","Statement": [{"Effect": "Allow","Principal": {"Service": "ecs-tasks.amazonaws.com"},"Action": "sts:AssumeRole"}]}'
 fi
-
 TASK_ROLE_ARN=$(aws iam get-role --role-name "${TASK_ROLE_NAME}" --query 'Role.Arn' --output text)
 
-# Attach S3 and SES policies to task role
-POLICY_NAME="${APP_NAME}-task-policy"
 POLICY_DOC=$(cat <<POLICY
 {
     "Version": "2012-10-17",
     "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": ["s3:PutObject", "s3:GetObject"],
-            "Resource": "arn:aws:s3:::${S3_BUCKET}/*"
-        },
-        {
-            "Effect": "Allow",
-            "Action": ["ses:SendEmail", "ses:SendRawEmail"],
-            "Resource": "*"
-        }
+        {"Effect": "Allow", "Action": ["s3:PutObject", "s3:GetObject"], "Resource": "arn:aws:s3:::${S3_BUCKET}/*"},
+        {"Effect": "Allow", "Action": ["ses:SendEmail", "ses:SendRawEmail"], "Resource": "*"},
+        {"Effect": "Allow", "Action": ["dynamodb:ListTables"], "Resource": "*"},
+        {"Effect": "Allow", "Action": ["dynamodb:CreateTable","dynamodb:DescribeTable","dynamodb:GetItem","dynamodb:PutItem","dynamodb:UpdateItem","dynamodb:DeleteItem","dynamodb:Query","dynamodb:Scan","dynamodb:BatchWriteItem"], "Resource": "arn:aws:dynamodb:${AWS_REGION}:*:table/PROD_*"}
     ]
 }
 POLICY
 )
-
-aws iam put-role-policy \
-    --role-name "${TASK_ROLE_NAME}" \
-    --policy-name "${POLICY_NAME}" \
-    --policy-document "${POLICY_DOC}"
-echo "  Attached S3 + SES policy to task role"
+aws iam put-role-policy --role-name "${TASK_ROLE_NAME}" --policy-name "${APP_NAME}-task-policy" --policy-document "${POLICY_DOC}"
 
 # ============================================================
-# Step 5: Create ECS cluster
+# Step 7: Cluster and Task Definition
 # ============================================================
-echo ""
-echo ">>> Step 5: Creating ECS cluster..."
-if aws ecs describe-clusters --clusters "${ECS_CLUSTER}" --region "${AWS_REGION}" \
-    --query 'clusters[?status==`ACTIVE`].clusterName' --output text | grep -q "${ECS_CLUSTER}"; then
-    echo "  Cluster already exists: ${ECS_CLUSTER}"
-else
-    aws ecs create-cluster --cluster-name "${ECS_CLUSTER}" --region "${AWS_REGION}"
-    echo "  Created cluster: ${ECS_CLUSTER}"
-fi
-
-# ============================================================
-# Step 6: Create CloudWatch log group
-# ============================================================
-echo ""
-echo ">>> Step 6: Creating CloudWatch log group..."
-LOG_GROUP="/ecs/${APP_NAME}"
-aws logs create-log-group --log-group-name "${LOG_GROUP}" --region "${AWS_REGION}" 2>/dev/null || true
-echo "  Log group: ${LOG_GROUP}"
-
-# ============================================================
-# Step 7: Register ECS task definition
-# ============================================================
-echo ""
-echo ">>> Step 7: Registering task definition..."
+aws ecs create-cluster --cluster-name "${ECS_CLUSTER}" --region "${AWS_REGION}" > /dev/null || true
+aws logs create-log-group --log-group-name "/ecs/${APP_NAME}" --region "${AWS_REGION}" 2>/dev/null || true
 
 TASK_DEF=$(cat <<TASKDEF
 {
@@ -226,16 +144,18 @@ TASK_DEF=$(cat <<TASKDEF
             "name": "${APP_NAME}",
             "image": "${ECR_URI}:latest",
             "essential": true,
+            "portMappings": [{"containerPort": 8080, "hostPort": 8080, "protocol": "tcp"}],
             "environment": [
+                {"name": "ENV", "value": "PROD"},
+                {"name": "ALPACA_API_KEY", "value": "${ALPACA_API_KEY}"},
+                {"name": "ALPACA_SECRET_KEY", "value": "${ALPACA_SECRET_KEY}"},
                 {"name": "S3_BUCKET", "value": "${S3_BUCKET}"},
-                {"name": "SES_FROM_EMAIL", "value": "${SES_FROM_EMAIL}"},
-                {"name": "SES_TO_EMAIL", "value": "${SES_TO_EMAIL}"},
                 {"name": "AWS_REGION", "value": "${AWS_REGION}"}
             ],
             "logConfiguration": {
                 "logDriver": "awslogs",
                 "options": {
-                    "awslogs-group": "${LOG_GROUP}",
+                    "awslogs-group": "/ecs/${APP_NAME}",
                     "awslogs-region": "${AWS_REGION}",
                     "awslogs-stream-prefix": "screener"
                 }
@@ -245,133 +165,22 @@ TASK_DEF=$(cat <<TASKDEF
 }
 TASKDEF
 )
-
-echo "${TASK_DEF}" > /tmp/task-def.json
-aws ecs register-task-definition --cli-input-json file:///tmp/task-def.json --region "${AWS_REGION}" > /dev/null
-echo "  Registered: ${TASK_FAMILY}"
+aws ecs register-task-definition --cli-input-json "$TASK_DEF" --region "${AWS_REGION}" > /dev/null
 
 # ============================================================
-# Step 8: Get default VPC and subnets
+# Step 8: ECS Service
 # ============================================================
-echo ""
-echo ">>> Step 8: Getting VPC configuration..."
-VPC_ID=$(aws ec2 describe-vpcs --filters "Name=isDefault,Values=true" \
-    --query 'Vpcs[0].VpcId' --output text --region "${AWS_REGION}")
-echo "  VPC: ${VPC_ID}"
-
-SUBNETS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=${VPC_ID}" \
-    --query 'Subnets[*].SubnetId' --output text --region "${AWS_REGION}" | tr '\t' ',')
-FIRST_SUBNET=$(echo "${SUBNETS}" | cut -d',' -f1)
-echo "  Subnets: ${SUBNETS}"
-
-SG_ID=$(aws ec2 describe-security-groups \
-    --filters "Name=vpc-id,Values=${VPC_ID}" "Name=group-name,Values=default" \
-    --query 'SecurityGroups[0].GroupId' --output text --region "${AWS_REGION}")
-echo "  Security Group: ${SG_ID}"
-
-# ============================================================
-# Step 9: Create EventBridge rule for daily schedule
-# ============================================================
-echo ""
-echo ">>> Step 9: Creating EventBridge schedule..."
-RULE_NAME="${APP_NAME}-daily-schedule"
-
-aws events put-rule \
-    --name "${RULE_NAME}" \
-    --schedule-expression "${SCHEDULE_EXPRESSION}" \
-    --state ENABLED \
-    --region "${AWS_REGION}" > /dev/null
-
-# Create role for EventBridge to run ECS tasks
-EVENTS_ROLE_NAME="${APP_NAME}-events-role"
-if ! aws iam get-role --role-name "${EVENTS_ROLE_NAME}" &>/dev/null; then
-    aws iam create-role \
-        --role-name "${EVENTS_ROLE_NAME}" \
-        --assume-role-policy-document '{
-            "Version": "2012-10-17",
-            "Statement": [{
-                "Effect": "Allow",
-                "Principal": {"Service": "events.amazonaws.com"},
-                "Action": "sts:AssumeRole"
-            }]
-        }'
-    aws iam put-role-policy \
-        --role-name "${EVENTS_ROLE_NAME}" \
-        --policy-name "ecs-run-task" \
-        --policy-document '{
-            "Version": "2012-10-17",
-            "Statement": [{
-                "Effect": "Allow",
-                "Action": ["ecs:RunTask", "iam:PassRole"],
-                "Resource": "*"
-            }]
-        }'
-fi
-EVENTS_ROLE_ARN=$(aws iam get-role --role-name "${EVENTS_ROLE_NAME}" --query 'Role.Arn' --output text)
-
-# Get the latest task definition ARN
-TASK_DEF_ARN=$(aws ecs describe-task-definition --task-definition "${TASK_FAMILY}" \
-    --query 'taskDefinition.taskDefinitionArn' --output text --region "${AWS_REGION}")
-
-# Set the ECS target
-aws events put-targets \
-    --rule "${RULE_NAME}" \
-    --targets "[{
-        \"Id\": \"${APP_NAME}-target\",
-        \"Arn\": \"arn:aws:ecs:${AWS_REGION}:${ACCOUNT_ID}:cluster/${ECS_CLUSTER}\",
-        \"RoleArn\": \"${EVENTS_ROLE_ARN}\",
-        \"EcsParameters\": {
-            \"TaskDefinitionArn\": \"${TASK_DEF_ARN}\",
-            \"TaskCount\": 1,
-            \"LaunchType\": \"FARGATE\",
-            \"NetworkConfiguration\": {
-                \"awsvpcConfiguration\": {
-                    \"Subnets\": [\"${FIRST_SUBNET}\"],
-                    \"SecurityGroups\": [\"${SG_ID}\"],
-                    \"AssignPublicIp\": \"ENABLED\"
-                }
-            }
-        }
-    }]" \
-    --region "${AWS_REGION}" > /dev/null
-
-echo "  Schedule created: ${RULE_NAME} (${SCHEDULE_EXPRESSION})"
-
-# ============================================================
-# DONE
-# ============================================================
-echo ""
-echo "============================================"
-echo "  ✅ Deployment Complete!"
-echo "============================================"
-echo ""
-echo "  Resources created:"
-echo "    ECR:        ${ECR_URI}"
-echo "    ECS:        ${ECS_CLUSTER} / ${TASK_FAMILY}"
-echo "    S3:         s3://${S3_BUCKET}"
-echo "    Schedule:   ${RULE_NAME} (${SCHEDULE_EXPRESSION})"
-echo "    Logs:       ${LOG_GROUP}"
-echo ""
-echo "  Reports will be saved to:"
-echo "    s3://${S3_BUCKET}/reports/YYYY/MM/DD/"
-echo ""
-if [ -n "${SES_FROM_EMAIL}" ]; then
-    echo "  Emails will be sent from: ${SES_FROM_EMAIL}"
-    echo "  Emails will be sent to:   ${SES_TO_EMAIL}"
+echo ">>> Managing ECS Service..."
+if aws ecs describe-services --cluster "${ECS_CLUSTER}" --services "${SERVICE_NAME}" --region "${AWS_REGION}" --query 'services[?status==`ACTIVE`].serviceName' --output text | grep -q "${SERVICE_NAME}"; then
+    aws ecs update-service --cluster "${ECS_CLUSTER}" --service "${SERVICE_NAME}" --task-definition "${TASK_FAMILY}" --force-new-deployment --region "${AWS_REGION}" > /dev/null
 else
-    echo "  ⚠  Email not configured. Set SES_FROM_EMAIL and SES_TO_EMAIL"
-    echo "     and re-run deploy to enable email reports."
+    aws ecs create-service --cluster "${ECS_CLUSTER}" --service-name "${SERVICE_NAME}" --task-definition "${TASK_FAMILY}" --desired-count 1 --launch-type FARGATE \
+        --load-balancers "targetGroupArn=${TG_ARN},containerName=${APP_NAME},containerPort=8080" \
+        --network-configuration "awsvpcConfiguration={subnets=[$(echo $SUBNETS | cut -d',' -f1,2)],securityGroups=[${TASK_SG_ID}],assignPublicIp=ENABLED}" \
+        --region "${AWS_REGION}" > /dev/null
 fi
+
 echo ""
-echo "  To run manually:"
-echo "    aws ecs run-task --cluster ${ECS_CLUSTER} \\"
-echo "      --task-definition ${TASK_FAMILY} \\"
-echo "      --launch-type FARGATE \\"
-echo "      --network-configuration 'awsvpcConfiguration={subnets=[${FIRST_SUBNET}],securityGroups=[${SG_ID}],assignPublicIp=ENABLED}'"
-echo ""
-echo "  To check logs:"
-echo "    aws logs tail ${LOG_GROUP} --follow"
-echo ""
-echo "  To tear down:"
-echo "    ./deploy/teardown.sh"
-echo ""
+echo "✅ Deployment Complete!"
+echo "PUBLIC URL: http://${ALB_DNS}"
+echo "Note: It may take 2-3 minutes for the Load Balancer to become active."

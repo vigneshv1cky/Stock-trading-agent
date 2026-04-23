@@ -15,6 +15,8 @@ RUN pip install --no-cache-dir -r requirements.txt boto3
 COPY run.py .
 COPY web.py .
 COPY stock_sentiment/ stock_sentiment/
+COPY templates/ templates/
+COPY static/ static/
 
 # Pre-download FinBERT model so it's baked into the image
 RUN python -c "from transformers import pipeline; pipeline('sentiment-analysis', model='ProsusAI/finbert', device=-1)"

@@ -8,8 +8,8 @@ FinBERT sentiment + technical analysis.
 
 Modes:
     python run.py                          # Run screener once
-    python run.py --schedule               # Auto-run daily
-    python run.py --schedule --every 12    # Auto-run every 12 hours
+    python run.py --schedule               # Auto-run every 30 minutes
+    python run.py --schedule --every 1     # Auto-run every hour
     python run.py --backtest               # Check past prediction accuracy
     python run.py --alerts                 # Show recent alerts
 """
@@ -31,9 +31,9 @@ def main():
         epilog="""
 Modes:
   python run.py                           Run screener once (default)
-  python run.py --schedule                Auto-run daily with alerts
-  python run.py --schedule --every 12     Auto-run every 12 hours
-  python run.py --schedule --every 168    Auto-run weekly
+  python run.py --schedule                Auto-run every 30 mins with alerts
+  python run.py --schedule --every 1      Auto-run every hour
+  python run.py --schedule --every 24     Auto-run daily
   python run.py --backtest                Check how past predictions performed
   python run.py --alerts                  Show recent alerts
 
@@ -50,7 +50,7 @@ It does NOT constitute financial advice.
     parser.add_argument(
         "--schedule",
         action="store_true",
-        help="Auto-run on a schedule (default: daily)",
+        help="Auto-run on a schedule (default: 30 minutes)",
     )
     parser.add_argument(
         "--backtest",
@@ -86,8 +86,8 @@ It does NOT constitute financial advice.
     parser.add_argument(
         "--every",
         type=float,
-        default=1.0,
-        help="Schedule interval in hours (default: 1 = hourly)",
+        default=0.5,
+        help="Schedule interval in hours (default: 0.5 = 30 minutes)",
     )
     parser.add_argument(
         "--no-backtest",
@@ -128,7 +128,7 @@ def _run_once(args):
         min_return=args.min_return,
         top_n=args.top,
     )
-    app.run(cloud_mode=args.cloud)
+    app.run(cloud_mode=args.cloud, trigger="CLI")
 
 
 def _run_scheduled(args):

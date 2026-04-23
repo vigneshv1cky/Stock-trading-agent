@@ -114,12 +114,14 @@ class StockScreener:
         import yfinance as yf
 
         symbols = universe or SCREEN_UNIVERSE
+        print(f"[StockScreener] Filtering {len(symbols)} stocks in universe...")
         console.print(
             f"[cyan]Screening {len(symbols)} stocks "
             f"(3-month return > {self.min_3m_return}%)...[/cyan]"
         )
 
         # Batch download 3 months of data
+        print("[StockScreener] Downloading 3-month OHLCV data via yfinance...")
         try:
             data = yf.download(
                 symbols,
@@ -129,12 +131,15 @@ class StockScreener:
                 threads=True,
             )
         except Exception as e:
+            print(f"[StockScreener] CRITICAL: Batch download failed: {e}")
             console.print(f"[red]Screen failed: {e}[/red]")
             return []
 
         if data.empty:
+            print("[StockScreener] Downloaded data is empty.")
             return []
 
+        print(f"[StockScreener] Processing momentum metrics for each stock...")
         results = []
         for symbol in symbols:
             try:
@@ -208,6 +213,7 @@ class StockScreener:
         results.sort(key=lambda s: s.change_3m_pct, reverse=True)
         results = results[:self.top_n]
 
+        print(f"[StockScreener] Found {len(results)} stocks passing all momentum filters.")
         console.print(
             f"  [green]Found {len(results)} stocks matching criteria[/green]"
         )

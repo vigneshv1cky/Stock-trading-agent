@@ -32,8 +32,9 @@ class ScreenerApp:
         self.sentiment = SentimentAnalyzer()
         self.dashboard = ScreenerDashboard()
 
-    def run(self, cloud_mode: bool = False):
+    def run(self, cloud_mode: bool = False, trigger: str = "MANUAL"):
         """Full pipeline: screen → fetch news → analyze → predict → display."""
+        print(f"[ScreenerApp] Starting full pipeline run (Trigger: {trigger})...")
         console.print("\n[bold cyan]Starting Stock Screener & Predictor...[/bold cyan]\n")
         console.print(f"  Criteria: 3-month return > {self.screener.min_3m_return}%")
         console.print(f"  News window: This week only")
@@ -41,30 +42,40 @@ class ScreenerApp:
         console.print()
 
         # Step 1: Screen stocks
+        print("[ScreenerApp] Step 1: Screening stocks via StockScreener...")
         screened = self.screener.screen()
         if not screened:
+            print("[ScreenerApp] No stocks matched criteria.")
             console.print("[red]No stocks matched the criteria. Try lowering the minimum return.[/red]")
             return ([], 0, [])
 
         symbols = [s.symbol for s in screened]
+        print(f"[ScreenerApp] Found {len(symbols)} candidate stocks: {', '.join(symbols[:10])}")
         console.print(f"\n  Top performers: {', '.join(symbols[:10])}{'...' if len(symbols) > 10 else ''}\n")
 
         # Step 2: Fetch this week's news for each screened stock
+        print(f"[ScreenerApp] Step 2: Fetching news for {len(symbols)} stocks...")
         console.print("[cyan]Fetching this week's news for screened stocks...[/cyan]")
         stock_articles = self._fetch_weekly_news(symbols)
         total_articles = sum(len(a) for a in stock_articles.values())
+        print(f"[ScreenerApp] Fetched {total_articles} total articles.")
         console.print(f"  Fetched {total_articles} articles for {len(stock_articles)} stocks")
 
         # Step 3: Analyze sentiment
+        print("[ScreenerApp] Step 3: Analyzing sentiment with FinBERT...")
         console.print("[cyan]Analyzing sentiment...[/cyan]")
         scored_articles = self._analyze_sentiment(stock_articles)
+        print(f"[ScreenerApp] Sentiment analysis complete for {len(scored_articles)} stocks.")
 
         # Step 4: Get technicals (reuse the 3-month data from screener where possible)
+        print("[ScreenerApp] Step 4: Computing technical indicators...")
         console.print("[cyan]Computing technical indicators...[/cyan]")
         stock_prices = self.price_fetcher.fetch_batch(symbols, period="3mo")
         technicals = self.tech_analyzer.analyze_batch(stock_prices)
+        print(f"[ScreenerApp] Technical analysis complete for {len(technicals)} stocks.")
 
         # Step 5: Generate predictions
+        print("[ScreenerApp] Step 5: Generating final predictions/scoring...")
         console.print("[cyan]Generating predictions...[/cyan]")
         predictions = []
         for stock in screened:
@@ -75,28 +86,38 @@ class ScreenerApp:
 
         # Sort by overall score
         predictions.sort(key=lambda p: p.overall_score, reverse=True)
+        print(f"[ScreenerApp] Generated {len(predictions)} predictions.")
 
         # Step 6: Save to history + check alerts
+        print("[ScreenerApp] Step 6: Saving to history and checking alerts...")
         alerts = []
+        history = None
         try:
             from stock_sentiment.history import History
             from stock_sentiment.alerts import AlertManager
 
             history = History()
+            print("[ScreenerApp] Saving run to history storage...")
             history.save_run(
                 predictions,
                 self.screener.min_3m_return, self.screener.top_n,
+                trigger_type=trigger
             )
 
-            alert_mgr = AlertManager(history)
+            print("[ScreenerApp] Triggering AlertManager...")
+            alert_mgr = AlertManager(history, disable_notifications=True)
             alerts = alert_mgr.check_and_alert(predictions)
-            history.close()
-        except Exception:
-            pass
+            print(f"[ScreenerApp] History/Alerts done. {len(alerts)} alerts generated.")
+        except Exception as e:
+            print(f"[ScreenerApp] ERROR in History/Alerts step: {e}")
+        finally:
+            if history:
+                history.close()
 
         console.print("[green]Done![/green]\n")
 
         # Step 7: Output
+        print(f"[ScreenerApp] Step 7: Outputting results (cloud_mode={cloud_mode})...")
         if cloud_mode:
             from stock_sentiment.cloud_output import run_cloud_mode
             run_cloud_mode(predictions, len(screened), alerts)
@@ -104,8 +125,9 @@ class ScreenerApp:
             self.dashboard.render(predictions, len(screened))
             if alerts:
                 from stock_sentiment.alerts import AlertManager
-                AlertManager().display_alerts(alerts)
+                AlertManager(disable_notifications=True).display_alerts(alerts)
 
+        print("[ScreenerApp] Pipeline execution finished.")
         return (predictions, len(screened), alerts)
 
     def _fetch_weekly_news(self, symbols: list[str]) -> dict[str, list[Article]]:

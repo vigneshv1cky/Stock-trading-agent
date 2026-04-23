@@ -26,6 +26,7 @@ Thumbs.db
 # Environment variables
 .env
 *.env
+aws_creds.sh
 
 # Docker
 docker-compose.override.yml

@@ -22,8 +22,9 @@ console = Console()
 class AlertManager:
     """Detects and delivers alerts based on prediction changes."""
 
-    def __init__(self, history: History = None):
+    def __init__(self, history: History = None, disable_notifications: bool = False):
         self.history = history or History()
+        self.disable_notifications = disable_notifications
 
     def check_and_alert(self, current_predictions: list) -> list[dict]:
         """Compare current predictions against previous run and generate alerts.
@@ -46,7 +47,7 @@ class AlertManager:
             # NEW_ENTRY: stock wasn't in the last run
             if symbol not in prev_symbols and prev_symbols:
                 alert = {
-                    "type": "NEW_ENTRY",
+                    "alert_type": "NEW_ENTRY",
                     "symbol": symbol,
                     "message": f"{symbol} just entered the screener at ${pred.current_price:.2f} "
                                f"(3M: +{pred.change_3m_pct:.1f}%, Score: {pred.overall_score:.0f})",
@@ -64,7 +65,7 @@ class AlertManager:
                     # BULLISH_FLIP
                     if pred.prediction == "BULLISH" and prev["prediction"] != "BULLISH":
                         alert = {
-                            "type": "BULLISH_FLIP",
+                            "alert_type": "BULLISH_FLIP",
                             "symbol": symbol,
                             "message": f"{symbol} flipped to BULLISH from {prev['prediction']} "
                                        f"(Score: {prev['overall_score']:.0f} → {pred.overall_score:.0f})",
@@ -79,7 +80,7 @@ class AlertManager:
                     score_change = pred.overall_score - prev["overall_score"]
                     if score_change >= 15:
                         alert = {
-                            "type": "SCORE_SURGE",
+                            "alert_type": "SCORE_SURGE",
                             "symbol": symbol,
                             "message": f"{symbol} score surged +{score_change:.0f} points "
                                        f"({prev['overall_score']:.0f} → {pred.overall_score:.0f})",
@@ -93,7 +94,7 @@ class AlertManager:
             # HIGH_CONFIDENCE: always alert on very strong signals
             if pred.prediction == "BULLISH" and pred.confidence >= 70:
                 alert = {
-                    "type": "HIGH_CONFIDENCE",
+                    "alert_type": "HIGH_CONFIDENCE",
                     "symbol": symbol,
                     "message": f"{symbol} BULLISH with {pred.confidence:.0f}% confidence "
                                f"(Score: {pred.overall_score:.0f}, Price: ${pred.current_price:.2f})",
@@ -115,9 +116,10 @@ class AlertManager:
         console.print()
 
         # Send desktop notification for important alerts
-        important = [a for a in alerts if a["type"] in ("BULLISH_FLIP", "HIGH_CONFIDENCE", "SCORE_SURGE")]
-        if important:
-            self._send_desktop_notification(important)
+        if not self.disable_notifications:
+            important = [a for a in alerts if a["alert_type"] in ("BULLISH_FLIP", "HIGH_CONFIDENCE", "SCORE_SURGE")]
+            if important:
+                self._send_desktop_notification(important)
 
     def show_recent_alerts(self, hours: int = 24):
         """Show alerts from the last N hours."""
@@ -174,9 +176,10 @@ class AlertManager:
 
         lines = []
         for a in alerts:
-            icon = icons.get(a["type"], "•")
-            color = colors.get(a["type"], "white")
-            lines.append(f"  {icon} [{color}]{a['type']}[/{color}] — {a['message']}")
+            atype = a["alert_type"]
+            icon = icons.get(atype, "•")
+            color = colors.get(atype, "white")
+            lines.append(f"  {icon} [{color}]{atype}[/{color}] — {a['message']}")
 
         return Panel(
             "\n".join(lines),

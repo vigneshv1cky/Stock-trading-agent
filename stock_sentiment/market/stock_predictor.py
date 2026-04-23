@@ -63,6 +63,7 @@ class StockPredictor:
         technicals: Optional[TechnicalIndicators],
     ) -> StockPrediction:
         """Generate a prediction for a single stock."""
+        print(f"[StockPredictor] Scoring {stock.symbol}...")
 
         # --- Parse articles ---
         sentiments = []
@@ -158,6 +159,8 @@ class StockPredictor:
         reasoning = self._build_reasoning(
             stock, avg_sentiment, bullish, bearish, technicals, momentum
         )
+
+        print(f"[StockPredictor] {stock.symbol}: Score={overall:.1f}, Prediction={prediction}")
 
         return StockPrediction(
             symbol=stock.symbol,
