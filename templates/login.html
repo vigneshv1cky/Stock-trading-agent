@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Bot Command Center</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <style>
+        body { display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background-color: #0d1117; color: #c9d1d9; }
+        .login-container { background: #161b22; padding: 2.5rem; border-radius: 8px; border: 1px solid #30363d; width: 100%; max-width: 400px; text-align: center; }
+        .login-container h2 { margin-top: 0; color: #58a6ff; }
+        .form-group { margin-bottom: 1.5rem; text-align: left; }
+        .form-group label { display: block; margin-bottom: 0.5rem; color: #8b949e; font-size: 14px; }
+        .form-group input { width: 100%; padding: 0.75rem; border-radius: 6px; border: 1px solid #30363d; background: #0d1117; color: #c9d1d9; box-sizing: border-box; }
+        .form-group input:focus { outline: none; border-color: #58a6ff; }
+        .btn { width: 100%; padding: 0.75rem; border-radius: 6px; border: none; background: #238636; color: white; font-weight: bold; cursor: pointer; transition: 0.2s; }
+        .btn:hover { background: #2ea043; }
+        .error { color: #f85149; margin-bottom: 1rem; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <h2>Bot Command Center</h2>
+        <p style="color: #8b949e; font-size: 14px; margin-bottom: 2rem;">Institutional Swing Trading AI</p>
+        
+        {% if error %}
+        <div class="error">{{ error }}</div>
+        {% endif %}
+        
+        <form action="/login" method="POST">
+            <div class="form-group">
+                <label for="username">Username</label>
+                <input type="text" id="username" name="username" required autofocus>
+            </div>
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" required>
+            </div>
+            <button type="submit" class="btn">Access Terminal</button>
+        </form>
+    </div>
+</body>
+</html>

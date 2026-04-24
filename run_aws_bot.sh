@@ -1,4 +1,12 @@
 #!/bin/bash
+set -e
+
+echo "----------------------------------------------------"
+echo "🚀 AWS WORKFLOW REMINDER:"
+echo "1. aws sso login --profile vignesh-sso-profile"
+echo "2. ./run_aws_bot.sh"
+echo "----------------------------------------------------"
+echo ""
 
 # 1. Set environment variables from .env file (Alpaca, AWS SSO, etc.)
 if [ -f ".env" ]; then
@@ -9,7 +17,13 @@ if [ -f ".env" ]; then
     set +a
 fi
 
-# Ensure Alpaca keys were found (from either source)
+# 2. Set AWS Profile if provided in .env
+if [ ! -z "$AWS_PROFILE" ]; then
+    echo "Using AWS Profile: $AWS_PROFILE"
+    export AWS_PROFILE=$AWS_PROFILE
+fi
+
+# Ensure Alpaca keys were found
 if [ -z "$ALPACA_API_KEY" ]; then
     echo "ERROR: ALPACA_API_KEY not found in .env or environment"
     exit 1
@@ -19,14 +33,12 @@ fi
 echo "Deploying to AWS..."
 ./deploy/deploy.sh
 
-# 4. Start the bot cycle in Fargate
-echo "Triggering cloud bot execution..."
-aws ecs run-task --cluster stock-screener-cluster \
-  --task-definition stock-screener-task \
-  --launch-type FARGATE \
-  --network-configuration 'awsvpcConfiguration={subnets=[subnet-005647977afe24ae7],securityGroups=[sg-0fa5426cf64d24526],assignPublicIp=ENABLED}' \
-  --region us-east-1
-
 echo ""
-echo "Bot is starting in the cloud! Use this command to watch logs:"
-echo "aws logs tail /ecs/stock-screener --region us-east-1 --follow"
+echo "✅ Bot has been updated in the cloud!"
+echo "The ECS Service will automatically spin up 1 healthy task (Desired Count: 1)."
+echo "Use this command to watch live logs:"
+if [ ! -z "$AWS_PROFILE" ]; then
+    echo "aws logs tail /ecs/stock-screener --region us-east-1 --follow --profile $AWS_PROFILE"
+else
+    echo "aws logs tail /ecs/stock-screener --region us-east-1 --follow"
+fi

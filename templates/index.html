@@ -1,17 +1,25 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Stock Screener</title>
+    <title>Bot Command Center</title>
     <link rel="stylesheet" href="/static/style.css">
+    <style>
+        .container {
+            max-width: 1000px !important;
+        }
+    </style>
 </head>
+
 <body>
     <div class="sidebar" id="sidebar">
-        <h1>📊 Stock Screener & Bot</h1>
+        <h1>📊 Bot Command Center</h1>
         <div class="tabs">
-            <button class="tab-btn active" onclick="switchTab('performance')">Bot Performance</button>
-            <button class="tab-btn" onclick="switchTab('manual')">Manual Screener</button>
+            <button class="tab-btn active" onclick="switchTab('performance')">Performance</button>
+            <button class="tab-btn" onclick="switchTab('history')">Trade History</button>
+            <button class="tab-btn" onclick="switchTab('manual')">Screener</button>
         </div>
     </div>
 
@@ -19,59 +27,95 @@
 
     <div class="main-content">
         <div class="container" id="main-container">
+            <!-- PERFORMANCE TAB -->
             <div id="performance-tab" class="tab-content active">
-                <p>Recent performance metrics from Alpaca and local backtests.</p>
                 <div class="spinner" id="perf-spinner" style="display: none;"></div>
                 <div id="perf-content">
+
+                    <!-- BOT HEARTBEAT SECTION -->
+                    <div class="metric-cards" id="heartbeat-cards">
+                        <div class="card status-card">
+                            <h3>Bot Heartbeat</h3>
+                            <div class="value" id="bot-status">---</div>
+                            <div class="sub-value" id="bot-message">Waiting for data...</div>
+                        </div>
+                        <div class="card status-card">
+                            <h3>Last Scan</h3>
+                            <div class="value" id="last-run-time">---</div>
+                            <div class="sub-value">
+                                <span id="ticker-display" style="color: var(--accent-color); font-weight: bold;"></span>
+                                <span id="last-run-id">No runs found</span>
+                            </div>
+                        </div>
+                    </div>
+
                     <div id="initial-load-msg" style="padding: 2rem; color: #8b949e;">
-                        <p>Dashboard ready. Click "Refresh Data" to fetch latest bot status and Alpaca metrics.</p>
+                        <p>Dashboard ready. Fetching Alpaca metrics...</p>
                     </div>
-                    <div class="metric-cards" id="perf-metrics" style="display: none;">
-                        <!-- Metrics will be injected here -->
-                    </div>
+
+                    <!-- ALPACA METRIC CARDS -->
+                    <div class="metric-cards" id="perf-metrics" style="display: none;"></div>
+
                     <div id="perf-positions" class="list-container" style="display: none;">
                         <h3>Active Positions</h3>
                         <div id="positions-list"></div>
                     </div>
-                    <div id="perf-picks" class="list-container" style="display: none;">
-                        <h3>Last Run's Top Picks</h3>
-                        <div id="picks-list"></div>
-                    </div>
 
-                    <div style="margin-top: 2rem; padding: 1.5rem; border: 1px solid #d73a49; border-radius: 8px; background: rgba(215, 58, 73, 0.1);">
-                        <h3 style="color: #ff7b72; margin-top: 0;">Force Bot Execution</h3>
-                        <p style="font-size: 14px; color: #8b949e;">
-                            This will immediately run a full trading cycle (screening, sentiment analysis, and trade execution).
-                            <strong>Warning:</strong> This will place real paper trades on your Alpaca account.
-                        </p>
-                        <button class="action-btn" id="force-btn" style="background-color: #d73a49;" onclick="forceTrade()">Force Bot Trade & Run</button>
-                        <div class="spinner" id="force-spinner"></div>
+                    <!-- FORCE EXECUTION ZONE -->
+                    <div
+                        style="margin-top: 2rem; padding: 1.5rem; border: 1px solid var(--border-color); border-radius: 8px; background: #0d1117; text-align: center;">
+                        <h3 style="color: var(--accent-color); margin-top: 0;">Manual Trade Execution</h3>
+                        <p style="font-size: 13px; color: #8b949e; margin-bottom: 1rem;">Execute a full AI cycle and
+                            place paper trades immediately.</p>
+                        <div class="action-area" style="min-height: 80px; display: flex; flex-direction: column; justify-content: center; align-items: center;">
+                            <button class="action-btn" id="force-btn" onclick="forceTrade()">Force Execution</button>
+                            <div class="spinner" id="force-spinner" style="display: none; margin-top: 20px;"></div>
+                        </div>
                     </div>
                 </div>
-                <button class="action-btn" style="margin-top: 1rem;" onclick="loadPerformance()">Refresh Data</button>
+                <div style="text-align: left; margin-top: 1rem;">
+                    <button class="action-btn" onclick="loadPerformance()">Refresh Metrics</button>
+                </div>
             </div>
 
-            <div id="manual-tab" class="tab-content">
-                <p>Run the analysis manually to find top performing stocks.</p>
-                <div class="form-group">
-                    <label>
-                        Min 3-Month Return (%):
-                        <input type="number" id="min_return" value="10.0" step="0.1">
-                    </label>
-                    <label>
-                        Top N:
-                        <input type="number" id="top_n" value="30">
-                    </label>
+            <!-- HISTORY TAB -->
+            <div id="history-tab" class="tab-content">
+                <h3>Closed Trade Log (P/L)</h3>
+                <div class="spinner" id="history-spinner" style="display: none;"></div>
+                <div class="history-table-container">
+                    <table class="history-table">
+                        <thead>
+                            <tr>
+                                <th>Symbol</th>
+                                <th>Entry</th>
+                                <th>Exit</th>
+                                <th>Qty</th>
+                                <th>$ P/L</th>
+                                <th>% Ret</th>
+                                <th>Closed At</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="history-table-body"></tbody>
+                    </table>
                 </div>
+            </div>
 
-                <button class="action-btn" id="run-btn" onclick="runScreener()">Run Screener</button>
-                <div class="spinner" id="manual-spinner"></div>
+            <!-- SCREENER TAB -->
+            <div id="manual-tab" class="tab-content" style="text-align: center;">
+                <h3>Autonomous Screener</h3>
+                <p style="color: #8b949e; font-size: 14px; margin-bottom: 1.5rem;">
+                    Run the "Triple-Door" logic to find Momentum, Breakout, and Recovery plays.
+                </p>
+                <div class="action-area" style="min-height: 80px; display: flex; flex-direction: column; justify-content: center; align-items: center;">
+                    <button class="action-btn" id="run-btn" onclick="runScreener()">Scan Market Now</button>
+                    <div class="spinner" id="manual-spinner" style="display: none; margin-top: 20px;"></div>
+                </div>
             </div>
         </div>
-        
         <div id="result"></div>
     </div>
-
     <script src="/static/app.js"></script>
 </body>
+
 </html>

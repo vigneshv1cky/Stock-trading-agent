@@ -1,5 +1,5 @@
-from fastapi import FastAPI, BackgroundTasks, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, BackgroundTasks, Request, Depends, HTTPException, status, Form
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -7,18 +7,25 @@ import uvicorn
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
+import os
+import threading
+import traceback
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Admin credentials
+ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "changeme")
 
 from stock_sentiment.screener_app import ScreenerApp
 from stock_sentiment.cloud_output import generate_html_report
 from stock_sentiment.history import History
 from stock_sentiment.market.broker import PaperBroker
+from stock_sentiment.market.performance import PerformanceTracker
 from stock_sentiment.scheduler import Scheduler
-import threading
 
-app = FastAPI(title="Stock Screener Web App")
+app = FastAPI(title="Bot Command Center")
 
 # Mount static files and initialize templates
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -29,29 +36,59 @@ def run_bot_in_background():
     print("[Web] Starting background trading bot...")
     history = History()
     try:
-        # These settings match your default 'run.py --schedule' behavior
-        scheduler = Scheduler(min_return=10.0, top_n=30, interval_hours=0.5)
+        import time; time.sleep(5)
+        print(f"[Web] Initializing Autonomous Scheduler (Triple-Door Logic)")
+        scheduler = Scheduler(top_n=40, interval_hours=0.5)
         scheduler.run()
     except Exception as e:
         print(f"[Web] CRITICAL: Background bot failed: {e}")
+        traceback.print_exc()
         try:
             history.save_heartbeat("Error", f"Bot thread crashed: {str(e)}")
-        except:
-            pass
+        except Exception as inner_e:
+            print(f"[Web] Failed to save error heartbeat: {inner_e}")
     finally:
         history.close()
 
 @app.on_event("startup")
 async def startup_event():
-    # Start the bot in its own thread so it doesn't block FastAPI
     bot_thread = threading.Thread(target=run_bot_in_background, daemon=True)
     bot_thread.start()
 
-# Create a thread pool to run the screener
 executor = ThreadPoolExecutor(max_workers=2)
+
+# --- Authentication Logic ---
+def check_auth(request: Request):
+    # Allow bypass if ADMIN_PASSWORD is not configured and defaults to 'changeme'
+    if ADMIN_PASSWORD == "changeme":
+        return
+    if request.cookies.get("auth_token") != ADMIN_PASSWORD:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page(request: Request):
+    return templates.TemplateResponse(request=request, name="login.html", context={"error": None})
+
+@app.post("/login")
+def login(request: Request, username: str = Form(...), password: str = Form(...)):
+    if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+        response = RedirectResponse(url="/", status_code=302)
+        response.set_cookie(key="auth_token", value=password, httponly=True)
+        return response
+    return templates.TemplateResponse(request=request, name="login.html", context={"error": "Invalid credentials"})
+
+@app.get("/logout")
+def logout():
+    response = RedirectResponse(url="/login", status_code=302)
+    response.delete_cookie("auth_token")
+    return response
+
+# --- Protected Routes ---
 
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
+    if ADMIN_PASSWORD != "changeme" and request.cookies.get("auth_token") != ADMIN_PASSWORD:
+        return RedirectResponse(url="/login", status_code=302)
     return templates.TemplateResponse(request=request, name="index.html")
 
 @app.get("/health")
@@ -62,140 +99,87 @@ class LogRequest(BaseModel):
     level: str = "INFO"
     message: str
 
-@app.post("/api/log")
+@app.post("/api/log", dependencies=[Depends(check_auth)])
 async def client_log(req: LogRequest):
     print(f"[Client {req.level}] {req.message}")
     return {"status": "ok"}
 
-class ScreenRequest(BaseModel):
-    min_return: float = 10.0
-    top_n: int = 30
-
-@app.post("/api/screen", response_class=HTMLResponse)
-async def screen_stocks(req: ScreenRequest):
+@app.post("/api/screen", response_class=HTMLResponse, dependencies=[Depends(check_auth)])
+async def screen_stocks():
     def _run_screener():
-        screener_app = ScreenerApp(min_return=req.min_return, top_n=req.top_n)
+        screener_app = ScreenerApp(top_n=40)
         try:
             predictions, count, alerts = screener_app.run(cloud_mode=False, trigger="MANUAL")
             return generate_html_report(predictions, count, fragment=True)
         except Exception as e:
             print(f"[Web] Manual screen error: {e}")
+            traceback.print_exc()
             return f"<p style='color: red'>Error: {str(e)}</p>"
-
     loop = asyncio.get_running_loop()
-    html_report = await loop.run_in_executor(executor, _run_screener)
-    return html_report
+    return await loop.run_in_executor(executor, _run_screener)
 
-@app.post("/api/force-trade", response_class=HTMLResponse)
-async def force_trade(req: ScreenRequest):
+@app.post("/api/force-trade", response_class=HTMLResponse, dependencies=[Depends(check_auth)])
+async def force_trade():
     def _run_force_trade():
-        # Instantiate a new Scheduler with the requested parameters
-        scheduler = Scheduler(min_return=req.min_return, top_n=req.top_n)
+        scheduler = Scheduler(top_n=40)
         try:
-            # Execute one cycle
-            predictions, count, alerts = scheduler.execute_cycle(trigger="FORCE_TRADE")
-            # Return a fragment of the HTML report
+            predictions, count, alerts = scheduler.execute_cycle(trigger="FORCE_EXEC")
             return generate_html_report(predictions, count, fragment=True)
         except Exception as e:
             print(f"[Web] Force trade error: {e}")
+            traceback.print_exc()
             return f"<p style='color: red'>Error: {str(e)}</p>"
         finally:
             scheduler.history.close()
-
     loop = asyncio.get_running_loop()
-    html_fragment = await loop.run_in_executor(executor, _run_force_trade)
-    return html_fragment
+    return await loop.run_in_executor(executor, _run_force_trade)
 
-@app.get("/api/performance", response_class=JSONResponse)
+@app.get("/api/history", response_class=JSONResponse, dependencies=[Depends(check_auth)])
+def get_trade_history():
+    tracker = PerformanceTracker()
+    history = tracker.get_closed_trades(limit=500)
+    return {"history": history}
+
+@app.get("/api/performance", response_class=JSONResponse, dependencies=[Depends(check_auth)])
 def get_performance():
-    print("[Web] Fetching performance data...")
     history = History()
-    
+    tracker = PerformanceTracker()
     try:
-        # 1. Fetch Backtest Stats & Latest Run from Local History
-        print("[Web] Reading history...")
-        try:
-            backtest_stats = history.get_backtest_stats()
-            if backtest_stats and "accuracy" in backtest_stats and backtest_stats["accuracy"] is not None:
-                accuracy_pct = backtest_stats["accuracy"] * 100
-            else:
-                accuracy_pct = None
-            total_return = backtest_stats.get("avg_return_10d")
-        except Exception as e:
-            print(f"[Web] Error fetching backtest stats: {e}")
-            accuracy_pct = None
-            total_return = None
-
-        try:
-            latest_run = history.get_latest_run()
-            if latest_run:
-                picks = history.get_predictions_for_run(latest_run["id"])
-                picks = picks[:5]
-                last_run_at = latest_run["run_at"]
-                trigger_type = latest_run.get("trigger_type", "UNKNOWN")
-            else:
-                picks = []
-                last_run_at = None
-                trigger_type = None
-        except Exception as e:
-            print(f"[Web] Error fetching latest run: {e}")
-            latest_run = None
-            picks = []
-            last_run_at = None
-            trigger_type = None
-
-        heartbeat = None
-        try:
-            heartbeat = history.get_heartbeat()
-        except Exception as e:
-            print(f"[Web] Error fetching heartbeat: {e}")
-
-        # 2. Fetch Alpaca data
-        print("[Web] Checking Alpaca...")
-        broker = PaperBroker()
-        alpaca_data = {"equity": None, "buying_power": None, "positions": [], "error": None}
-        
-        if broker.client:
-            def fetch_alpaca():
-                return broker.client.get_account(), broker.client.get_all_positions()
-                
-            try:
-                future = executor.submit(fetch_alpaca)
-                account, positions = future.result(timeout=5.0)
-                
-                alpaca_data["equity"] = float(account.equity)
-                alpaca_data["buying_power"] = float(account.buying_power)
-                
-                alpaca_data["positions"] = [
-                    {
-                        "symbol": p.symbol,
-                        "qty": float(p.qty),
-                        "avg_entry_price": float(p.avg_entry_price),
-                        "unrealized_plpc": float(p.unrealized_plpc)
-                    } for p in positions
-                ]
-            except TimeoutError:
-                print("[Web] Alpaca request timed out.")
-                alpaca_data["error"] = "Alpaca request timed out."
-            except Exception as e:
-                print(f"[Web] Alpaca error: {e}")
-                alpaca_data["error"] = f"Alpaca error: {str(e)}"
-        else:
-            alpaca_data["error"] = "Alpaca integration disabled or keys missing."
-
-        print("[Web] Performance data ready.")
+        backtest_stats = history.get_backtest_stats()
+        latest_run = history.get_latest_run()
+        heartbeat = history.get_heartbeat()
+        perf = tracker.get_performance_summary()
+        positions = []
+        if tracker.client:
+            p_list = tracker.client.get_all_positions()
+            positions = [
+                {
+                    "symbol": p.symbol, "qty": float(p.qty), "avg_entry_price": float(p.avg_entry_price),
+                    "current_price": float(p.current_price), "unrealized_pl": float(p.unrealized_pl),
+                    "unrealized_plpc": float(p.unrealized_plpc) * 100
+                } for p in p_list
+            ]
         return {
-            "backtest": {
-                "accuracy": accuracy_pct,
-                "total_return": total_return
+            "summary": perf, "positions": positions, "backtest": backtest_stats,
+            "latest_run": { 
+                "id": latest_run["id"] if latest_run else None, 
+                "at": latest_run["run_at"] if latest_run else None, 
+                "trigger": latest_run.get("trigger_type", "AUTO") if latest_run else "AUTO" 
             },
-            "latest_run": {
-                "picks": picks,
-                "last_run_at": last_run_at,
-                "trigger": trigger_type
-            },
-            "bot_status": heartbeat,
-            "alpaca": alpaca_data
+            "bot_status": {
+                "status": heartbeat.get("status") if heartbeat else "Idle",
+                "message": heartbeat.get("message") if heartbeat else "No recent activity",
+                "last_ping": heartbeat.get("last_updated") if heartbeat else None
+            }
         }
+    except Exception as e:
+        print(f"[Web] Performance fetch error: {e}")
+        traceback.print_exc()
+        return {"error": str(e)}
     finally:
         history.close()
+
+@app.get("/api/equity-curve", response_class=JSONResponse, dependencies=[Depends(check_auth)])
+def get_equity_curve():
+    tracker = PerformanceTracker()
+    return {"points": tracker.get_equity_curve()}

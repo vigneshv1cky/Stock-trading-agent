@@ -51,6 +51,7 @@ class Backtester:
             group_by="ticker" if len(symbols) > 1 else "column",
             progress=False,
             threads=True,
+            auto_adjust=False,
         )
 
         checked = 0

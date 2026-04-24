@@ -57,6 +57,7 @@ class PriceFetcher:
                 group_by="ticker" if len(uncached) > 1 else "column",
                 progress=False,
                 threads=True,
+                auto_adjust=False,
             )
 
             if data.empty:

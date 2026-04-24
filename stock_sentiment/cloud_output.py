@@ -212,11 +212,9 @@ def send_email(
 
 
 def run_cloud_mode(predictions: list, screened_count: int, alerts: list = None):
-    """Full cloud output: generate report, upload to S3, send email."""
+    """Full cloud output: generate report and upload to S3."""
     region = os.environ.get("AWS_REGION", "us-east-1")
     bucket = os.environ.get("S3_BUCKET")
-    from_email = os.environ.get("SES_FROM_EMAIL")
-    to_email = os.environ.get("SES_TO_EMAIL")
 
     now = datetime.now(timezone.utc)
     print(f"[Cloud] Generating report at {now.isoformat()}")
@@ -238,21 +236,6 @@ def run_cloud_mode(predictions: list, screened_count: int, alerts: list = None):
             print(f"[Cloud] Uploaded to S3: {s3_url}")
     else:
         print("[Cloud] S3_BUCKET not set, skipping S3 upload")
-
-    # Send email
-    if from_email and to_email:
-        bullish_count = sum(1 for p in predictions if p.prediction == "BULLISH")
-        subject = f"📊 Stock Screener: {bullish_count} BULLISH, {screened_count} screened — {now.strftime('%Y-%m-%d')}"
-
-        if alerts:
-            alert_symbols = ", ".join(set(a["symbol"] for a in alerts[:5]))
-            subject += f" | Alerts: {alert_symbols}"
-
-        sent = send_email(subject, html, from_email, to_email, region, s3_url)
-        if sent:
-            print(f"[Cloud] Email sent to {to_email}")
-    else:
-        print("[Cloud] SES_FROM_EMAIL / SES_TO_EMAIL not set, skipping email")
 
     # Save results as JSON too
     results_json = {

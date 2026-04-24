@@ -78,11 +78,12 @@ uvicorn web:app --reload --port 8000
 
 ### 3.2 Production Deployment (PROD Mode)
 The entire AWS infrastructure is provisioned via the master deployment script.
-```bash
-# 1. Update .env with fresh AWS SSO credentials
-# 2. Deploy/Update the Managed Service
-./run_aws_bot.sh
-```
+
+**Workflow:**
+1.  **Refresh Login:** `aws sso login --profile vignesh-sso-profile`
+2.  **Deploy:** `./run_aws_bot.sh`
+
+*(The script automatically detects the `AWS_PROFILE` from your `.env` file).*
 
 ---
 

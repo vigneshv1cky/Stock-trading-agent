@@ -33,77 +33,81 @@ class AlertManager:
         - NEW_ENTRY: Stock newly appeared in the screener
         - BULLISH_FLIP: Stock changed from NEUTRAL/BEARISH to BULLISH
         - SCORE_SURGE: Overall score increased significantly (>15 points)
-        - HIGH_CONFIDENCE: BULLISH prediction with confidence >= 70%
+        - HIGH_CONFIDENCE: BULLISH prediction with overall score >= 80
         """
         alerts = []
 
-        # Get previous run's data
-        prev_symbols = self.history.get_all_symbols_from_last_run()
-        last_run = self.history.get_latest_run()
+        try:
+            # Get previous run's data
+            prev_symbols = self.history.get_all_symbols_from_last_run()
+            last_run = self.history.get_latest_run()
 
-        for pred in current_predictions:
-            symbol = pred.symbol
+            for pred in current_predictions:
+                symbol = pred.symbol
 
-            # NEW_ENTRY: stock wasn't in the last run
-            if symbol not in prev_symbols and prev_symbols:
-                alert = {
-                    "alert_type": "NEW_ENTRY",
-                    "symbol": symbol,
-                    "message": f"{symbol} just entered the screener at ${pred.current_price:.2f} "
-                               f"(3M: +{pred.change_3m_pct:.1f}%, Score: {pred.overall_score:.0f})",
-                    "prediction": pred.prediction,
-                    "score": pred.overall_score,
-                    "price": pred.current_price,
-                }
-                alerts.append(alert)
-                self.history.save_alert(**alert)
+                # NEW_ENTRY: stock wasn't in the last run
+                if symbol not in prev_symbols and prev_symbols:
+                    alert = {
+                        "alert_type": "NEW_ENTRY",
+                        "symbol": symbol,
+                        "message": f"{symbol} just entered the screener at ${pred.current_price:.2f} "
+                                   f"(3M: +{pred.change_3m_pct:.1f}%, Score: {pred.overall_score:.0f})",
+                        "prediction": pred.prediction,
+                        "score": pred.overall_score,
+                        "price": pred.current_price,
+                    }
+                    alerts.append(alert)
+                    self.history.save_alert(**alert)
 
-            # Check for flips and surges if we have previous data
-            if last_run:
-                prev = self.history.get_prediction_by_symbol_and_run(symbol, last_run["id"])
-                if prev:
-                    # BULLISH_FLIP
-                    if pred.prediction == "BULLISH" and prev["prediction"] != "BULLISH":
-                        alert = {
-                            "alert_type": "BULLISH_FLIP",
-                            "symbol": symbol,
-                            "message": f"{symbol} flipped to BULLISH from {prev['prediction']} "
-                                       f"(Score: {prev['overall_score']:.0f} → {pred.overall_score:.0f})",
-                            "prediction": pred.prediction,
-                            "score": pred.overall_score,
-                            "price": pred.current_price,
-                        }
-                        alerts.append(alert)
-                        self.history.save_alert(**alert)
+                # Check for flips and surges if we have previous data
+                if last_run:
+                    prev = self.history.get_prediction_by_symbol_and_run(symbol, last_run.get("id") or last_run.get("run_id"))
+                    if prev:
+                        # BULLISH_FLIP
+                        if pred.prediction == "BULLISH" and prev.get("prediction") != "BULLISH":
+                            alert = {
+                                "alert_type": "BULLISH_FLIP",
+                                "symbol": symbol,
+                                "message": f"{symbol} flipped to BULLISH from {prev.get('prediction')} "
+                                           f"(Score: {float(prev.get('overall_score', 0)):.0f} → {pred.overall_score:.0f})",
+                                "prediction": pred.prediction,
+                                "score": pred.overall_score,
+                                "price": pred.current_price,
+                            }
+                            alerts.append(alert)
+                            self.history.save_alert(**alert)
 
-                    # SCORE_SURGE
-                    score_change = pred.overall_score - prev["overall_score"]
-                    if score_change >= 15:
-                        alert = {
-                            "alert_type": "SCORE_SURGE",
-                            "symbol": symbol,
-                            "message": f"{symbol} score surged +{score_change:.0f} points "
-                                       f"({prev['overall_score']:.0f} → {pred.overall_score:.0f})",
-                            "prediction": pred.prediction,
-                            "score": pred.overall_score,
-                            "price": pred.current_price,
-                        }
-                        alerts.append(alert)
-                        self.history.save_alert(**alert)
+                        # SCORE_SURGE
+                        score_change = pred.overall_score - float(prev.get("overall_score", 0))
+                        if score_change >= 15:
+                            alert = {
+                                "alert_type": "SCORE_SURGE",
+                                "symbol": symbol,
+                                "message": f"{symbol} score surged +{score_change:.0f} points "
+                                           f"({float(prev.get('overall_score', 0)):.0f} → {pred.overall_score:.0f})",
+                                "prediction": pred.prediction,
+                                "score": pred.overall_score,
+                                "price": pred.current_price,
+                            }
+                            alerts.append(alert)
+                            self.history.save_alert(**alert)
 
-            # HIGH_CONFIDENCE: always alert on very strong signals
-            if pred.prediction == "BULLISH" and pred.confidence >= 70:
-                alert = {
-                    "alert_type": "HIGH_CONFIDENCE",
-                    "symbol": symbol,
-                    "message": f"{symbol} BULLISH with {pred.confidence:.0f}% confidence "
-                               f"(Score: {pred.overall_score:.0f}, Price: ${pred.current_price:.2f})",
-                    "prediction": pred.prediction,
-                    "score": pred.overall_score,
-                    "price": pred.current_price,
-                }
-                alerts.append(alert)
-                self.history.save_alert(**alert)
+                # HIGH_CONFIDENCE: always alert on very strong signals
+                if pred.prediction == "BULLISH" and pred.overall_score >= 80:
+                    alert = {
+                        "alert_type": "HIGH_CONFIDENCE",
+                        "symbol": symbol,
+                        "message": f"{symbol} BULLISH with extreme conviction "
+                                   f"(Score: {pred.overall_score:.0f}/100, Price: ${pred.current_price:.2f})",
+                        "prediction": pred.prediction,
+                        "score": pred.overall_score,
+                        "price": pred.current_price,
+                    }
+                    alerts.append(alert)
+                    self.history.save_alert(**alert)
+
+        except Exception as e:
+            print(f"[AlertManager] Error generating alerts: {e}")
 
         return alerts
 
@@ -123,6 +127,9 @@ class AlertManager:
 
     def show_recent_alerts(self, hours: int = 24):
         """Show alerts from the last N hours."""
+        if not hasattr(self.history, 'get_recent_alerts'):
+            return
+            
         alerts = self.history.get_recent_alerts(hours)
         if not alerts:
             console.print("[dim]No alerts in the last 24 hours.[/dim]")

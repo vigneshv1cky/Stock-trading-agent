@@ -78,6 +78,8 @@ class SentimentAnalyzer:
         if not texts:
             return []
 
+        print(f"[NLP] Starting AI Batch Analysis for {len(texts)} articles...")
+        
         # Clean and truncate
         cleaned = [t[:1500] if t and t.strip() else "neutral" for t in texts]
 
@@ -93,8 +95,10 @@ class SentimentAnalyzer:
                         label=label, score=score, normalized=normalized
                     )
                 )
+            print(f"[NLP] Batch analysis successful.")
             return sentiments
-        except Exception:
+        except Exception as e:
+            print(f"[NLP] ERROR in batch analysis: {e}")
             return [
                 SentimentResult(label="neutral", score=0.5, normalized=0.0)
                 for _ in texts

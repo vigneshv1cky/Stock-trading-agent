@@ -1,417 +1,109 @@
-"""Predicts stock movement by combining this week's news sentiment with technicals."""
+"""Predicts stock movement by combining news sentiment with technical archetypes."""
 
 import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
-from stock_sentiment.market.screener import ScreenedStock
-from stock_sentiment.market.technicals import TechnicalIndicators
-
-
 @dataclass
 class StockPrediction:
-    """Full prediction for a screened stock."""
     symbol: str
     current_price: float
-
-    # 3-month performance
     change_3m_pct: float
     change_1m_pct: float
     change_1w_pct: float
-    high_3m: float
     low_3m: float
-    sparkline_3m: list  # daily closes
-
-    # This week's news
-    article_count: int
-    avg_sentiment: float  # -1 to +1
+    high_3m: float
+    sparkline_3m: list
+    archetype: str
+    prediction: str
+    confidence: float
+    overall_score: float
+    reasoning: list[str]
+    momentum_score: float
+    sentiment_score: float
+    technical_score: float
+    volume_score: float
+    volume_ratio: float
+    avg_sentiment: float
     bullish_count: int
     bearish_count: int
-    neutral_count: int
-    top_headlines: list  # [(title, score, source, url)]
-
-    # Technicals
-    rsi: Optional[float]
-    macd_crossover: str
-    trend_direction: str
-    trend_strength: float
-    volume_ratio: Optional[float]
-    price_vs_sma20: str
+    top_headlines: list 
+    rsi: float
     days_to_earnings: Optional[int]
-
-    # Prediction
-    prediction: str  # "BULLISH", "BEARISH", "NEUTRAL"
-    confidence: float  # 0-100
-    predicted_move: str  # e.g. "+2-5%", "-1-3%", "sideways"
-    reasoning: list  # List of reasoning strings
-
-    # Composite score
-    momentum_score: float  # 0-100 based on 3m/1m/1w returns
-    sentiment_score: float  # 0-100 based on news
-    technical_score: float  # 0-100 based on indicators
-    overall_score: float  # weighted combination
-
+    predicted_move: str
 
 class StockPredictor:
-    """Predicts stock movement from screened stocks + news + technicals."""
+    """Combines sentiment, technicals, and volume with archetype scoring."""
 
-    def predict(
-        self,
-        stock: ScreenedStock,
-        articles: list,  # ScoredArticle or dicts
-        technicals: Optional[TechnicalIndicators],
-    ) -> StockPrediction:
-        """Generate a prediction for a single stock."""
-        print(f"[StockPredictor] Scoring {stock.symbol}...")
+    def predict(self, stock, articles, technicals) -> StockPrediction:
+        symbol = stock.symbol
+        print(f"[StockPredictor] Scoring {symbol} ({stock.archetype}) | RVOL: {stock.volume_ratio:.2f}")
 
-        # --- Parse articles ---
-        sentiments = []
-        headlines = []
-        bullish = bearish = neutral = 0
+        # --- 1. Sentiment Analysis ---
+        avg_sentiment = 0.0
+        bullish_count = 0
+        bearish_count = 0
+        top_headlines = []
+        if articles:
+            scores = [a.normalized_score for a in articles]
+            avg_sentiment = sum(scores) / len(scores)
+            bullish_count = sum(1 for s in scores if s > 0.2)
+            bearish_count = sum(1 for s in scores if s < -0.2)
+            sorted_articles = sorted(articles, key=lambda x: abs(x.normalized_score), reverse=True)
+            for a in sorted_articles[:3]:
+                top_headlines.append((a.article.title, a.normalized_score, a.article.source, a.article.url))
+        
+        sent_score = (avg_sentiment + 1) * 50
+        if bullish_count >= 3: sent_score += 15
+        sent_score = min(100.0, sent_score)
 
-        # Recency weighting
-        now = datetime.now(timezone.utc)
-        weighted_sentiment_sum = 0.0
-        total_weight = 0.0
+        # --- 2. Volume Bonus ---
+        vol_score = 50.0 + (min(2.0, stock.volume_ratio - 1.0) * 30.0)
+        vol_score = max(0.0, min(100.0, vol_score))
 
-        for a in articles:
-            if hasattr(a, "normalized_score"):
-                score = a.normalized_score
-                title = a.article.title
-                source = a.article.source
-                url = a.article.url
-                published_at = a.article.published_at
-            else:
-                score = a.get("normalized_score", 0.0)
-                title = a.get("title", "")
-                source = a.get("source", "")
-                url = a.get("url", "#")
-                published_at = a.get("published_at")
+        # --- 3. Momentum & Technicals ---
+        mom_score = 0.0
+        tech_score = 50.0 
+        rsi = technicals.rsi_14 if technicals else 50.0
 
-            # Calculate age-based weight
-            weight = 0.2  # Default for old articles
-            if published_at:
-                if isinstance(published_at, str):
-                    try:
-                        published_at = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
-                    except ValueError:
-                        published_at = None
-                
-                if published_at:
-                    # Ensure timezone awareness for comparison
-                    if published_at.tzinfo is None:
-                        published_at = published_at.replace(tzinfo=timezone.utc)
-                    
-                    try:
-                        age_hours = (now - published_at).total_seconds() / 3600
-                        if age_hours < 12:
-                            weight = 1.0
-                        elif age_hours < 24:
-                            weight = 0.8
-                        elif age_hours < 72:  # 1-3 days
-                            weight = 0.5
-                        elif age_hours < 168:  # 3-7 days
-                            weight = 0.2
-                        else:
-                            weight = 0.1
-                    except (TypeError, ValueError):
-                        weight = 0.5 # Fallback
+        if stock.archetype == "MOMENTUM":
+            mom_score = min(100.0, stock.change_3m_pct * 1.5)
+            tech_score = 70.0 if rsi < 70 else 40.0
+        elif stock.archetype == "BREAKOUT":
+            mom_score = min(100.0, (stock.change_1w_pct * 4) + (stock.change_1m_pct * 1))
+            tech_score = 90.0 if stock.volume_ratio > 2.0 else 60.0
+        elif stock.archetype == "RECOVERY":
+            mom_score = 60.0 + min(40.0, stock.change_1w_pct * 5)
+            if rsi < 35: tech_score = 95.0
+            elif rsi < 45: tech_score = 80.0
+            else: tech_score = 50.0
 
-            weighted_sentiment_sum += score * weight
-            total_weight += weight
+        overall = (mom_score * 0.30) + (vol_score * 0.20) + (tech_score * 0.25) + (sent_score * 0.25)
+        
+        # --- 4. Logic & Rating ---
+        rating = "NEUTRAL"
+        if overall >= 60: rating = "BULLISH"
+        if overall <= 40: rating = "BEARISH"
+        reasoning = [f"Archetype: {stock.archetype}", f"RVOL: {stock.volume_ratio:.1f}x"]
+        if stock.days_to_earnings is not None:
+            reasoning.append(f"Earnings in {stock.days_to_earnings} days")
 
-            sentiments.append(score)
-            headlines.append((title, score, source, url))
-
-            if score > 0.1:
-                bullish += 1
-            elif score < -0.1:
-                bearish += 1
-            else:
-                neutral += 1
-
-        avg_sentiment = weighted_sentiment_sum / total_weight if total_weight > 0 else 0.0
-        # Sort headlines by absolute sentiment (most impactful first)
-        headlines.sort(key=lambda x: abs(x[1]), reverse=True)
-
-        # --- Momentum score (0-100) ---
-        # Rewards consistent gains across timeframes
-        momentum = self._compute_momentum_score(stock)
-
-        # --- Sentiment score (0-100) ---
-        sent_score = self._compute_sentiment_score(
-            avg_sentiment, len(articles), bullish, bearish
-        )
-
-        # --- Technical score (0-100) ---
-        tech_score = self._compute_technical_score(technicals)
-
-        # --- Overall score: momentum 40% + sentiment 30% + technical 30% ---
-        overall = momentum * 0.40 + sent_score * 0.30 + tech_score * 0.30
-
-        # --- Prediction ---
-        prediction, confidence, predicted_move = self._classify(
-            overall, avg_sentiment, stock, technicals
-        )
-
-        # --- Reasoning ---
-        reasoning = self._build_reasoning(
-            stock, avg_sentiment, bullish, bearish, technicals, momentum
-        )
-
-        print(f"[StockPredictor] {stock.symbol}: Score={overall:.1f}, Prediction={prediction}")
+        # Range and Chart Data
+        low_3m = min(stock.daily_closes_3m) if stock.daily_closes_3m else stock.current_price
+        high_3m = max(stock.daily_closes_3m) if stock.daily_closes_3m else stock.current_price
+        sparkline = stock.daily_closes_3m if stock.daily_closes_3m else [stock.current_price]
 
         return StockPrediction(
-            symbol=stock.symbol,
-            current_price=stock.current_price,
-            change_3m_pct=stock.change_3m_pct,
-            change_1m_pct=stock.change_1m_pct,
-            change_1w_pct=stock.change_1w_pct,
-            high_3m=stock.high_3m,
-            low_3m=stock.low_3m,
-            sparkline_3m=stock.daily_closes_3m,
-            article_count=len(articles),
-            avg_sentiment=avg_sentiment,
-            bullish_count=bullish,
-            bearish_count=bearish,
-            neutral_count=neutral,
-            top_headlines=headlines[:5],
-            rsi=technicals.rsi_14 if technicals else None,
-            macd_crossover=technicals.macd_crossover if technicals else "none",
-            trend_direction=technicals.trend_direction if technicals else "unknown",
-            trend_strength=technicals.trend_strength if technicals else 0,
-            volume_ratio=technicals.volume_ratio if technicals else None,
-            price_vs_sma20=technicals.price_vs_sma20 if technicals else "unknown",
-            days_to_earnings=technicals.days_to_earnings if technicals else None,
-            prediction=prediction,
-            confidence=confidence,
-            predicted_move=predicted_move,
-            reasoning=reasoning,
-            momentum_score=momentum,
-            sentiment_score=sent_score,
-            technical_score=tech_score,
-            overall_score=overall,
+            symbol=symbol, current_price=stock.current_price,
+            change_3m_pct=stock.change_3m_pct, change_1m_pct=stock.change_1m_pct, change_1w_pct=stock.change_1w_pct,
+            low_3m=low_3m, high_3m=high_3m, sparkline_3m=sparkline,
+            archetype=stock.archetype, prediction=rating, confidence=overall, overall_score=overall,
+            momentum_score=mom_score, sentiment_score=sent_score, technical_score=tech_score, volume_score=vol_score,
+            volume_ratio=stock.volume_ratio,
+            avg_sentiment=avg_sentiment, bullish_count=bullish_count, bearish_count=bearish_count,
+            top_headlines=top_headlines, rsi=rsi, 
+            days_to_earnings=stock.days_to_earnings,
+            predicted_move="+5-12% (Oversold Bounce)" if rating == "BULLISH" and rsi < 35 else "+3-7% (Standard)",
+            reasoning=reasoning + [f"Sent: {avg_sentiment:.2f}", f"RSI: {rsi:.0f}"]
         )
-
-    def _compute_momentum_score(self, stock: ScreenedStock) -> float:
-        """Score 0-100 based on multi-timeframe returns."""
-        score = 0.0
-
-        # 3-month return contribution (0-40)
-        if stock.change_3m_pct > 50:
-            score += 40
-        elif stock.change_3m_pct > 30:
-            score += 35
-        elif stock.change_3m_pct > 20:
-            score += 28
-        elif stock.change_3m_pct > 10:
-            score += 20
-        else:
-            score += 10
-
-        # 1-month return contribution (0-35)
-        if stock.change_1m_pct > 20:
-            score += 35
-        elif stock.change_1m_pct > 10:
-            score += 28
-        elif stock.change_1m_pct > 5:
-            score += 20
-        elif stock.change_1m_pct > 0:
-            score += 12
-        else:
-            score += 5  # Negative month but positive 3m — pullback
-
-        # 1-week return (0-25) — recent momentum matters most
-        if stock.change_1w_pct > 10:
-            score += 25
-        elif stock.change_1w_pct > 5:
-            score += 22
-        elif stock.change_1w_pct > 2:
-            score += 18
-        elif stock.change_1w_pct > 0:
-            score += 12
-        elif stock.change_1w_pct > -3:
-            score += 8  # Mild pullback, could be buying opportunity
-        else:
-            score += 3  # Sharp pullback
-
-        return min(100, score)
-
-    def _compute_sentiment_score(
-        self, avg: float, count: int, bullish: int, bearish: int
-    ) -> float:
-        """Score 0-100 based on news sentiment."""
-        if count == 0:
-            return 50.0  # No news = neutral
-
-        # Base: map -1..+1 to 0..100
-        base = (avg + 1) / 2 * 100
-
-        # Consensus bonus: if overwhelmingly one direction
-        total = bullish + bearish
-        if total > 0:
-            consensus = max(bullish, bearish) / total
-            if consensus > 0.8:
-                # Strong consensus — boost toward the direction
-                base = base * 0.8 + (100 if bullish > bearish else 0) * 0.2
-
-        # Volume of coverage bonus (more articles = more reliable)
-        coverage_factor = min(1.0, count / 5)
-        # Pull toward 50 if few articles
-        base = base * coverage_factor + 50 * (1 - coverage_factor)
-
-        return max(0, min(100, base))
-
-    def _compute_technical_score(
-        self, ti: Optional[TechnicalIndicators]
-    ) -> float:
-        """Score 0-100 from technical indicators."""
-        if not ti or ti.rsi_14 is None:
-            return 50.0
-
-        score = 0.0
-
-        # RSI (0-30 contribution to total technical score)
-        if ti.rsi_14 < 30:
-            score += 30  # Oversold = high reward
-        elif ti.rsi_14 < 70:
-            score += 15  # Normal range
-        else:
-            score -= 20  # Overbought = heavy punishment
-
-        # MACD (0-25)
-        if ti.macd_crossover == "bullish":
-            score += 25
-        elif ti.macd_histogram and ti.macd_histogram > 0:
-            score += 18
-        elif ti.macd_crossover == "bearish":
-            score += 5
-        else:
-            score += 12
-
-        # Trend (0-25)
-        if ti.trend_direction == "up":
-            score += 15 + ti.trend_strength * 10
-        elif ti.trend_direction == "sideways":
-            score += 12
-        else:
-            score += 5
-
-        # Price vs MA (0-20)
-        if ti.price_vs_sma20 == "above":
-            score += 20
-        else:
-            score += 8
-
-        # Relative Volume (The "Fuel" Check) - New!
-        if ti.volume_ratio:
-            if ti.volume_ratio > 2.0:
-                score += 15  # Massive surge
-            elif ti.volume_ratio > 1.2:
-                score += 5   # Healthy interest
-            elif ti.volume_ratio < 0.7:
-                score -= 10  # Sleepy / low conviction
-
-        return max(0, min(100, score))
-
-    def _classify(
-        self, overall: float, sentiment: float,
-        stock: ScreenedStock, ti: Optional[TechnicalIndicators]
-    ) -> tuple[str, float, str]:
-        """Classify into prediction, confidence, and predicted move range."""
-
-        if overall >= 72:
-            prediction = "BULLISH"
-            confidence = min(95, 60 + (overall - 72) * 1.5)
-            if stock.change_1w_pct > 5:
-                predicted_move = "+3-8% (strong momentum continuing)"
-            else:
-                predicted_move = "+2-5% (breakout potential)"
-        elif overall >= 58:
-            prediction = "BULLISH"
-            confidence = min(75, 45 + (overall - 58) * 1.5)
-            predicted_move = "+1-3% (moderate upside)"
-        elif overall >= 45:
-            prediction = "NEUTRAL"
-            confidence = 30 + abs(overall - 50) * 2
-            predicted_move = "+/- 1-2% (sideways / consolidation)"
-        elif overall >= 35:
-            prediction = "BEARISH"
-            confidence = min(70, 40 + (45 - overall) * 2)
-            predicted_move = "-1-3% (short-term weakness)"
-        else:
-            prediction = "BEARISH"
-            confidence = min(85, 55 + (35 - overall) * 1.5)
-            predicted_move = "-3-5%+ (caution advised)"
-
-        # Adjust for overbought/oversold
-        if ti and ti.rsi_14 is not None:
-            if ti.rsi_14 > 80 and prediction == "BULLISH":
-                predicted_move += " [overbought risk]"
-                confidence *= 0.85
-            elif ti.rsi_14 < 25 and prediction == "BEARISH":
-                predicted_move += " [oversold bounce possible]"
-                confidence *= 0.85
-
-        # Earnings Avoidance
-        if ti and ti.days_to_earnings is not None and ti.days_to_earnings <= 3:
-            prediction = "BEARISH"
-            confidence *= 0.5
-            predicted_move = "Sidelines [Earnings approaching in {} days]".format(ti.days_to_earnings)
-
-        return prediction, round(confidence, 1), predicted_move
-
-    def _build_reasoning(
-        self, stock, sentiment, bullish, bearish, ti, momentum
-    ) -> list[str]:
-        reasons = []
-
-        # Momentum
-        if stock.change_3m_pct > 30:
-            reasons.append(f"Strong 3-month rally (+{stock.change_3m_pct:.1f}%)")
-        elif stock.change_3m_pct > 15:
-            reasons.append(f"Solid 3-month gains (+{stock.change_3m_pct:.1f}%)")
-
-        if stock.change_1w_pct > 5:
-            reasons.append(f"Surging this week (+{stock.change_1w_pct:.1f}%)")
-        elif stock.change_1w_pct < -3:
-            reasons.append(f"Pulling back this week ({stock.change_1w_pct:.1f}%)")
-
-        # Sentiment
-        if bullish + bearish > 0:
-            if bullish > bearish * 2:
-                reasons.append(f"News overwhelmingly bullish ({bullish}B/{bearish}b)")
-            elif bearish > bullish * 2:
-                reasons.append(f"News predominantly bearish ({bullish}B/{bearish}b)")
-            elif sentiment > 0.2:
-                reasons.append("Positive news sentiment this week")
-            elif sentiment < -0.2:
-                reasons.append("Negative news sentiment this week")
-
-        # Technicals
-        if ti:
-            if ti.rsi_14 is not None:
-                if ti.rsi_14 < 30:
-                    reasons.append(f"Oversold (RSI {ti.rsi_14:.0f})")
-                elif ti.rsi_14 > 70:
-                    reasons.append(f"Overbought (RSI {ti.rsi_14:.0f})")
-
-            if ti.macd_crossover == "bullish":
-                reasons.append("MACD bullish crossover")
-            elif ti.macd_crossover == "bearish":
-                reasons.append("MACD bearish crossover")
-
-            if ti.trend_direction == "up" and ti.trend_strength > 0.6:
-                reasons.append("Strong uptrend")
-
-            if ti.volume_ratio and ti.volume_ratio > 1.5:
-                reasons.append(f"Previous day volume surge ({ti.volume_ratio:.1f}x avg)")
-
-            if ti.days_to_earnings is not None and ti.days_to_earnings <= 3:
-                reasons.append(f"High Volatility Risk: Earnings in {ti.days_to_earnings} days")
-
-        if not reasons:
-            reasons.append("Mixed signals — proceed with caution")
-
-        return reasons

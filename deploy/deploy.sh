@@ -116,7 +116,7 @@ POLICY_DOC=$(cat <<POLICY
     "Statement": [
         {"Effect": "Allow", "Action": ["s3:PutObject", "s3:GetObject"], "Resource": "arn:aws:s3:::${S3_BUCKET}/*"},
         {"Effect": "Allow", "Action": ["ses:SendEmail", "ses:SendRawEmail"], "Resource": "*"},
-        {"Effect": "Allow", "Action": ["dynamodb:ListTables"], "Resource": "*"},
+        {"Effect": "Allow", "Action": ["dynamodb:ListTables", "dynamodb:DescribeTable"], "Resource": "*"},
         {"Effect": "Allow", "Action": ["dynamodb:CreateTable","dynamodb:DescribeTable","dynamodb:GetItem","dynamodb:PutItem","dynamodb:UpdateItem","dynamodb:DeleteItem","dynamodb:Query","dynamodb:Scan","dynamodb:BatchWriteItem"], "Resource": "arn:aws:dynamodb:${AWS_REGION}:*:table/PROD_*"}
     ]
 }
@@ -150,7 +150,9 @@ TASK_DEF=$(cat <<TASKDEF
                 {"name": "ALPACA_API_KEY", "value": "${ALPACA_API_KEY}"},
                 {"name": "ALPACA_SECRET_KEY", "value": "${ALPACA_SECRET_KEY}"},
                 {"name": "S3_BUCKET", "value": "${S3_BUCKET}"},
-                {"name": "AWS_REGION", "value": "${AWS_REGION}"}
+                {"name": "AWS_REGION", "value": "${AWS_REGION}"},
+                {"name": "ADMIN_USERNAME", "value": "${ADMIN_USERNAME}"},
+                {"name": "ADMIN_PASSWORD", "value": "${ADMIN_PASSWORD}"}
             ],
             "logConfiguration": {
                 "logDriver": "awslogs",

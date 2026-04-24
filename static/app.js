@@ -1,284 +1,170 @@
-// Global error logging to server terminal
+let lastScanTime = null;
+let lastHeartbeatTime = null;
+let nextRunTime = null;
+let tickerInterval = null;
+
 async function remoteLog(message, level = "INFO") {
-    console.log(`[${level}] ${message}`);
-    try {
-        await fetch('/api/log', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ level, message })
-        });
-    } catch (e) {
-        console.error("Failed to send remote log", e);
-    }
+    try { await fetch('/api/log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ level, message }) });
+    } catch (e) {}
 }
 
-window.onerror = function(message, source, lineno, colno, error) {
-    remoteLog(`JS Error: ${message} at ${source}:${lineno}:${colno}`, "ERROR");
-    return false;
-};
-
-window.onunhandledrejection = function(event) {
-    remoteLog(`Unhandled Promise Rejection: ${event.reason}`, "ERROR");
-};
+window.onerror = (m, s, l, c, e) => { remoteLog(`JS Error: ${m} at ${s}:${l}:${c}`, "ERROR"); return false; };
 
 function switchTab(tabId) {
     document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
-    
-    event.target.classList.add('active');
+    if (event && event.target) { event.target.classList.add('active'); }
     document.getElementById(tabId + '-tab').classList.add('active');
+    if (tabId === 'performance') { loadPerformance(); } 
+    else if (tabId === 'history') { loadHistory(); }
+}
+
+async function loadHistory() {
+    const tableBody = document.getElementById('history-table-body');
+    const spinner = document.getElementById('history-spinner');
+    spinner.style.display = 'block';
+    tableBody.innerHTML = '';
+    try {
+        const response = await fetch('/api/history');
+        const data = await response.json();
+        if (data.history && data.history.length > 0) {
+            data.history.forEach(trade => {
+                const plColor = trade.pl_dollars >= 0 ? "bullish" : "bearish";
+                const plPrefix = trade.pl_dollars >= 0 ? "+" : "";
+                tableBody.innerHTML += `<tr><td><strong>${trade.symbol}</strong></td><td>$${trade.entry_price.toFixed(2)}</td><td>$${trade.exit_price.toFixed(2)}</td><td>${trade.qty.toFixed(2)}</td><td class="${plColor}">${plPrefix}$${trade.pl_dollars.toFixed(2)}</td><td class="${plColor}">${plPrefix}${trade.pl_pct.toFixed(2)}%</td><td>${trade.exit_time}</td><td><span class="badge ${trade.status.toLowerCase()}">${trade.status}</span></td></tr>`;
+            });
+        } else { tableBody.innerHTML = '<tr><td colspan="8" style="text-align:center; color:#8b949e">No matched trade pairs found.</td></tr>'; }
+    } catch (e) { remoteLog("Error loading history: " + e.message, "ERROR"); } 
+    finally { spinner.style.display = 'none'; }
+}
+
+function startTicker() {
+    if (tickerInterval) clearInterval(tickerInterval);
+    tickerInterval = setInterval(updateTickers, 1000);
+}
+
+function updateTickers() {
+    const now = new Date();
     
-    if (tabId === 'performance') {
-        loadPerformance();
+    if (lastScanTime) {
+        const diff = Math.floor((now - lastScanTime) / 1000);
+        let timeAgo = diff < 60 ? `${diff}s ago` : diff < 3600 ? `${Math.floor(diff / 60)}m ago` : `${Math.floor(diff / 3600)}h ago`;
+        const displayTime = lastScanTime.toLocaleString("en-US", { timeZone: "America/New_York", hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+        document.getElementById('last-run-time').innerText = displayTime;
+        document.getElementById('ticker-display').innerText = `(${timeAgo})`;
+    }
+
+    if (nextRunTime) {
+        const diff = Math.floor((nextRunTime - now) / 1000);
+        if (diff > 0) {
+            let timeLeft = diff < 60 ? `${diff}s` : diff < 3600 ? `${Math.floor(diff / 60)}m ${diff % 60}s` : `${Math.floor(diff / 3600)}h ${Math.floor((diff % 3600) / 60)}m`;
+            document.getElementById('bot-message').innerText = `Sleeping. Next scan in: ${timeLeft}`;
+        } else {
+            document.getElementById('bot-message').innerText = `Waking up for next scan...`;
+        }
+    } else if (lastHeartbeatTime) {
+        const diff = Math.floor((now - lastHeartbeatTime) / 1000);
+        const prevMsg = document.getElementById('bot-message').dataset.rawMessage || "System confirmed active";
+        document.getElementById('bot-message').innerText = `${prevMsg} (${diff}s ago)`;
     }
 }
 
 async function loadPerformance() {
-    const spinner = document.getElementById('perf-spinner');
-    const metrics = document.getElementById('perf-metrics');
-    const positions = document.getElementById('perf-positions');
-    const picks = document.getElementById('perf-picks');
-    const initialMsg = document.getElementById('initial-load-msg');
-    
-    spinner.style.display = 'block';
-    initialMsg.style.display = 'none';
-    metrics.style.display = 'none';
-    positions.style.display = 'none';
-    picks.style.display = 'none';
-
     try {
-        remoteLog("Fetching performance data...");
         const response = await fetch('/api/performance');
-        if (!response.ok) throw new Error('Failed to fetch performance data: ' + response.statusText);
-        
         const data = await response.json();
-        remoteLog("Received performance data successfully.");
         
-        // Format heartbeat / status
-        let botStatusHtml = `<span style="color: #8b949e">Unknown</span>`;
         if (data.bot_status) {
-            const statusColor = data.bot_status.status === "Active" ? "#3fb950" : (data.bot_status.status === "Sleeping" ? "#58a6ff" : "#8b949e");
-            botStatusHtml = `<span style="color: ${statusColor}; font-weight: bold;">${data.bot_status.status}</span><br/><small style="color: #8b949e; font-size: 11px;">${data.bot_status.message}</small>`;
-        }
-
-        // Format last run time
-        let lastRunStr = "Never";
-        if (data.latest_run && data.latest_run.last_run_at) {
-            try {
-                const rawDate = data.latest_run.last_run_at;
-                // If it doesn't have Z or a + offset, it's likely UTC from Python, so add Z
-                const dateToParse = (rawDate.includes("Z") || rawDate.includes("+")) ? rawDate : rawDate + "Z";
-                const lastRunDate = new Date(dateToParse);
-                
-                if (!isNaN(lastRunDate)) {
-                    // Show Date and Time
-                    const timeStr = lastRunDate.toLocaleDateString([], { month: 'short', day: 'numeric' }) + " " + 
-                                   lastRunDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-                    
-                    const trigger = data.latest_run.trigger || "UNKNOWN";
-                    const triggerLabels = {
-                        "SCHEDULED": "(Bot)",
-                        "MANUAL": "(Manual)",
-                        "FORCE_TRADE": "(Force)",
-                        "CLI": "(CLI)",
-                        "UNKNOWN": ""
-                    };
-                    const triggerStr = triggerLabels[trigger] || "";
-                    
-                    lastRunStr = `${timeStr} <small style="color: #8b949e; font-weight: normal;">${triggerStr}</small>`;
-                } else {
-                    remoteLog(`Failed to parse date: ${rawDate}`, "ERROR");
-                }
-            } catch (e) {
-                remoteLog(`JS Date Error: ${e.message}`, "ERROR");
+            document.getElementById('bot-status').innerText = data.bot_status.status || "Idle";
+            if (data.bot_status.last_ping) {
+                lastHeartbeatTime = new Date(data.bot_status.last_ping);
             }
+            
+            let rawMsg = data.bot_status.message || "No recent activity";
+            if (data.bot_status.status === "Sleeping" && rawMsg.includes("|")) {
+                const parts = rawMsg.split("|");
+                rawMsg = parts[0];
+                nextRunTime = new Date(parts[1]);
+            } else {
+                nextRunTime = null;
+            }
+            document.getElementById('bot-message').dataset.rawMessage = rawMsg;
+            document.getElementById('bot-message').innerText = rawMsg;
+        }
+        
+        if (data.latest_run && data.latest_run.at) {
+            lastScanTime = new Date(data.latest_run.at);
+            let sourceLabel = "Automatic Bot";
+            if (data.latest_run.trigger === "FORCE_EXEC") sourceLabel = "Manual Override";
+            if (data.latest_run.trigger === "MANUAL") sourceLabel = "Dashboard Scan";
+            document.getElementById('last-run-id').innerText = `${sourceLabel} (Market NY)`;
         }
 
-        // Metrics
-        const metricsHtml = `
-            <div class="card">
-                <h3>Account Equity</h3>
-                <div class="value">${data.alpaca.equity !== null ? "$" + parseFloat(data.alpaca.equity).toLocaleString(undefined, {minimumFractionDigits: 2}) : "N/A"}</div>
-                <div class="sub-value">Buying Power: ${data.alpaca.buying_power !== null ? "$" + parseFloat(data.alpaca.buying_power).toLocaleString(undefined, {minimumFractionDigits: 2}) : "N/A"}</div>
-            </div>
-            <div class="card">
-                <h3>Backtest Accuracy</h3>
-                <div class="value">${data.backtest.accuracy !== null ? data.backtest.accuracy.toFixed(1) + "%" : "Calculating..."}</div>
-                <div class="sub-value">Based on historical runs</div>
-            </div>
-            <div class="card">
-                <h3>Current Bot Status</h3>
-                <div class="value">${botStatusHtml}</div>
-                <div class="sub-value">Last active: ${lastRunStr}</div>
-            </div>
-            <div class="card">
-                <h3>Avg 10D Return (Backtest)</h3>
-                <div class="value" style="color: ${data.backtest.total_return >= 0 ? "#3fb950" : (data.backtest.total_return < 0 ? "#f85149" : "")}">
-                    ${data.backtest.total_return !== null ? (data.backtest.total_return >= 0 ? "+" : "") + data.backtest.total_return.toFixed(2) + "%" : "N/A"}
-                </div>
-            </div>
+        const summary = data.summary;
+        const plColor = summary.daily_pl >= 0 ? "#3fb950" : "#f85149";
+        const unrealColor = summary.unrealized_pl >= 0 ? "#3fb950" : "#f85149";
+
+        document.getElementById("perf-metrics").innerHTML = `
+            <div class="card"><h3>Total Equity</h3><div class="value">$${summary.equity.toLocaleString(undefined, {minimumFractionDigits: 2})}</div><div class="sub-value">Cash: $${summary.cash.toLocaleString(undefined, {minimumFractionDigits: 2})}</div></div>
+            <div class="card"><h3>Daily P/L</h3><div class="value" style="color: ${plColor}">${summary.daily_pl >= 0 ? "+" : ""}$${summary.daily_pl.toFixed(2)}</div><div class="sub-value">${summary.daily_pl_pct.toFixed(2)}% today</div></div>
+            <div class="card"><h3>Unrealized P/L</h3><div class="value" style="color: ${unrealColor}">${summary.unrealized_pl >= 0 ? "+" : ""}$${summary.unrealized_pl.toFixed(2)}</div><div class="sub-value">${summary.unrealized_pl >= 0 ? "+" : ""}${summary.unrealized_pl_pct.toFixed(2)}% total return</div></div>
+            <div class="card"><h3>Backtest Accuracy</h3><div class="value">${data.backtest.accuracy ? (data.backtest.accuracy * 100).toFixed(1) + "%" : "N/A"}</div><div class="sub-value">Based on ${data.backtest.total || 0} predictions</div></div>
         `;
-        document.getElementById("perf-metrics").innerHTML = metricsHtml;
 
-        // Positions
-        let positionsHtml = "";
-        if (data.alpaca.positions && data.alpaca.positions.length > 0) {
-            data.alpaca.positions.forEach(p => {
-                const plColor = parseFloat(p.unrealized_plpc) >= 0 ? "bullish" : "bearish";
-                const plPrefix = parseFloat(p.unrealized_plpc) >= 0 ? "+" : "";
-                positionsHtml += `
-                    <div class="list-item">
-                        <strong>${p.symbol}</strong>
-                        <span>${p.qty} shares @ $${parseFloat(p.avg_entry_price).toFixed(2)}</span>
-                        <span class="${plColor}">${plPrefix}${(parseFloat(p.unrealized_plpc) * 100).toFixed(2)}%</span>
-                    </div>
-                `;
+        let posHtml = "";
+        if (data.positions && data.positions.length > 0) {
+            data.positions.forEach(p => {
+                const color = p.unrealized_pl >= 0 ? "bullish" : "bearish";
+                posHtml += `<div class="list-item"><strong>${p.symbol}</strong><span>${p.qty.toFixed(2)} @ $${p.avg_entry_price.toFixed(2)}</span><span class="${color}">${p.unrealized_pl >= 0 ? "+" : ""}${p.unrealized_plpc.toFixed(2)}%</span></div>`;
             });
-        } else if (data.alpaca.error) {
-            positionsHtml = `<div class="list-item" style="color:#8b949e">${data.alpaca.error}</div>`;
-        } else {
-            positionsHtml = "<div class=\"list-item\" style=\"color:#8b949e\">No active positions.</div>";
-        }
-        document.getElementById("positions-list").innerHTML = positionsHtml;
+        } else { posHtml = "<div class='list-item' style='color:#8b949e'>No active positions.</div>"; }
+        document.getElementById("positions-list").innerHTML = posHtml;
 
-        // Top Picks
-        document.getElementById("perf-picks").querySelector("h3").innerHTML = `Last Run's Top Picks (${lastRunStr})`;
-        let picksHtml = "";
-        if (data.latest_run.picks && data.latest_run.picks.length > 0) {
-            data.latest_run.picks.forEach(pick => {
-                const scoreColor = pick.prediction === "BULLISH" ? "bullish" : (pick.prediction === "BEARISH" ? "bearish" : "");
-                picksHtml += `
-                    <div class="list-item">
-                        <strong>${pick.symbol}</strong>
-                        <span class="${scoreColor}">${pick.prediction} (${pick.overall_score.toFixed(1)})</span>
-                    </div>
-                `;
-            });
-        } else {
-            picksHtml = "<div class=\"list-item\" style=\"color:#8b949e\">No recent picks found.</div>";
-        }
-        document.getElementById("picks-list").innerHTML = picksHtml;
-
-        spinner.style.display = "none";
-        metrics.style.display = "grid";
-        positions.style.display = "block";
-        picks.style.display = "block";
-
-    } catch (error) {
-        remoteLog(`Error loading performance data: ${error.message}`, "ERROR");
-        document.getElementById("perf-metrics").innerHTML = `<p style="color: #f85149">Error loading data: ${error.message}</p>`;
-        spinner.style.display = "none";
-        initialMsg.style.display = "block";
-    }
+        document.getElementById('perf-spinner').style.display = "none";
+        document.getElementById('initial-load-msg').style.display = "none";
+        document.getElementById('perf-metrics').style.display = "grid";
+        document.getElementById('perf-positions').style.display = "block";
+        updateTickers();
+        startTicker();
+    } catch (e) { remoteLog(`Error: ${e.message}`, "ERROR"); }
 }
 
 async function runScreener() {
     const btn = document.getElementById('run-btn');
     const spinner = document.getElementById('manual-spinner');
-    const resultDiv = document.getElementById('result');
-    const minReturn = parseFloat(document.getElementById('min_return').value);
-    const topN = parseInt(document.getElementById('top_n').value);
-
-    btn.disabled = true;
+    btn.style.display = 'none';
     spinner.style.display = 'block';
-    resultDiv.innerHTML = '';
-    
+    document.getElementById('result').innerHTML = '<p style="color: #8b949e; text-align: center;">Initializing Decision Engine...</p>';
     try {
-        remoteLog(`Manually running screener (min_return=${minReturn}, top_n=${topN})...`);
-        const response = await fetch('/api/screen', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ min_return: minReturn, top_n: topN })
-        });
-
-        if (!response.ok) {
-            throw new Error('Server error: ' + response.statusText);
-        }
-
-        const htmlReport = await response.text();
-        resultDiv.innerHTML = htmlReport;
-        remoteLog("Manual screener finished successfully.");
-    } catch (error) {
-        remoteLog(`Manual screener error: ${error.message}`, "ERROR");
-        resultDiv.innerHTML = `<p style="color: #f85149;">Error: ${error.message}</p>`;
-    } finally {
-        btn.disabled = false;
-        spinner.style.display = 'none';
-    }
+        const response = await fetch('/api/screen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+        document.getElementById('result').innerHTML = await response.text();
+    } catch (e) { document.getElementById('result').innerHTML = `<p style="color: #f85149;">Error: ${e.message}</p>`; } 
+    finally { btn.style.display = 'block'; spinner.style.display = 'none'; }
 }
 
 async function forceTrade() {
+    if (!confirm("Are you sure? This will place real paper trades using autonomous logic.")) return;
+    document.getElementById('last-run-time').innerText = "SCANNING NOW...";
+    document.getElementById('ticker-display').innerText = "";
+    document.getElementById('last-run-id').innerText = "Brain is working...";
     const btn = document.getElementById('force-btn');
     const spinner = document.getElementById('force-spinner');
-    const resultDiv = document.getElementById('result');
-    
-    if (!confirm("Are you sure you want to force a trade cycle? This will place real paper trades.")) {
-        return;
-    }
-
-    btn.disabled = true;
+    btn.style.display = 'none';
     spinner.style.display = 'block';
-    resultDiv.innerHTML = '';
-    
+    document.getElementById('result').innerHTML = '<p style="color: #ff7b72; text-align: center;">Executing Full AI Cycle...</p>';
     try {
-        remoteLog("Force Bot Execution triggered...");
-        const response = await fetch('/api/force-trade', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ min_return: 10.0, top_n: 30 })
-        });
-
-        if (!response.ok) {
-            throw new Error('Server error: ' + response.statusText);
-        }
-
-        const htmlFragment = await response.text();
-        resultDiv.innerHTML = htmlFragment;
-        remoteLog("Force Bot Execution finished.");
-        
-        // Refresh performance data after trade
-        loadPerformance();
-    } catch (error) {
-        remoteLog(`Force trade error: ${error.message}`, "ERROR");
-        resultDiv.innerHTML = `<p style="color: #f85149;">Error: ${error.message}</p>`;
-    } finally {
-        btn.disabled = false;
-        spinner.style.display = 'none';
-    }
+        const response = await fetch('/api/force-trade', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+        document.getElementById('result').innerHTML = await response.text();
+        await loadPerformance();
+    } catch (e) { document.getElementById('result').innerHTML = `<p style="color: #f85149;">Error: ${e.message}</p>`; } 
+    finally { btn.style.display = 'block'; spinner.style.display = 'none'; }
 }
 
-// Sidebar Resizer Logic
 const resizer = document.getElementById('resizer');
 const sidebar = document.getElementById('sidebar');
 let isResizing = false;
+resizer.addEventListener('mousedown', (e) => { isResizing = true; document.body.style.cursor = 'ew-resize'; resizer.classList.add('active'); e.preventDefault(); });
+document.addEventListener('mousemove', (e) => { if (!isResizing) return; let newWidth = e.clientX; if (newWidth < 150) newWidth = 150; if (newWidth > 800) newWidth = 800; sidebar.style.width = newWidth + 'px'; });
+document.addEventListener('mouseup', () => { if (isResizing) { isResizing = false; document.body.style.cursor = ''; resizer.classList.remove('active'); } });
 
-resizer.addEventListener('mousedown', (e) => {
-    isResizing = true;
-    document.body.style.cursor = 'ew-resize';
-    resizer.classList.add('active');
-    e.preventDefault();
-});
-
-document.addEventListener('mousemove', (e) => {
-    if (!isResizing) return;
-    let newWidth = e.clientX;
-    if (newWidth < 150) newWidth = 150;
-    if (newWidth > 800) newWidth = 800;
-    sidebar.style.width = newWidth + 'px';
-});
-
-document.addEventListener('mouseup', () => {
-    if (isResizing) {
-        isResizing = false;
-        document.body.style.cursor = '';
-        resizer.classList.remove('active');
-    }
-});
-
-// Auto-load data when the page finishes loading
-window.onload = () => {
-    remoteLog("Page loaded, triggering initial data fetch...");
-    if (document.getElementById('performance-tab').classList.contains('active')) {
-        loadPerformance();
-    }
-};
+window.onload = () => { if (document.getElementById('performance-tab').classList.contains('active')) { loadPerformance(); } };

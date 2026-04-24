@@ -18,14 +18,11 @@ from stock_sentiment.nlp.sentiment import SentimentAnalyzer
 
 console = Console()
 
-
 class ScreenerApp:
-    """Orchestrates the stock screener pipeline."""
+    """Orchestrates the stock screener pipeline based on Brain Analysis."""
 
-    def __init__(self, min_return: float = 10.0, top_n: int = 30):
-        self.screener = StockScreener(
-            min_3m_return=min_return, top_n=top_n
-        )
+    def __init__(self, top_n: int = 40):
+        self.screener = StockScreener(top_n=top_n)
         self.price_fetcher = PriceFetcher(cache_ttl_seconds=600)
         self.tech_analyzer = TechnicalAnalyzer()
         self.predictor = StockPredictor()
@@ -34,49 +31,35 @@ class ScreenerApp:
 
     def run(self, cloud_mode: bool = False, trigger: str = "MANUAL"):
         """Full pipeline: screen → fetch news → analyze → predict → display."""
-        print(f"[ScreenerApp] Starting full pipeline run (Trigger: {trigger})...")
-        console.print("\n[bold cyan]Starting Stock Screener & Predictor...[/bold cyan]\n")
-        console.print(f"  Criteria: 3-month return > {self.screener.min_3m_return}%")
-        console.print(f"  News window: This week only")
+        print(f"[ScreenerApp] Starting Brain Analysis Run (Trigger: {trigger})...")
+        console.print("\n[bold cyan]Starting AI Decision Engine...[/bold cyan]\n")
+        console.print(f"  Strategy: Aggressive Hybrid (OR Logic)")
+        console.print(f"  Barricades: Institutional RVOL + Earnings Pre-Filter")
         console.print(f"  Output: {'Cloud (S3 + Email)' if cloud_mode else 'Terminal'}")
         console.print()
 
-        # Step 1: Screen stocks
-        print("[ScreenerApp] Step 1: Screening stocks via StockScreener...")
+        # Step 1: Screen/Filter stocks
+        print("[ScreenerApp] Step 1: Passing universe through Institutional Barricades...")
         screened = self.screener.screen()
         if not screened:
-            print("[ScreenerApp] No stocks matched criteria.")
-            console.print("[red]No stocks matched the criteria. Try lowering the minimum return.[/red]")
             return ([], 0, [])
 
         symbols = [s.symbol for s in screened]
-        print(f"[ScreenerApp] Found {len(symbols)} candidate stocks: {', '.join(symbols[:10])}")
-        console.print(f"\n  Top performers: {', '.join(symbols[:10])}{'...' if len(symbols) > 10 else ''}\n")
-
-        # Step 2: Fetch this week's news for each screened stock
-        print(f"[ScreenerApp] Step 2: Fetching news for {len(symbols)} stocks...")
-        console.print("[cyan]Fetching this week's news for screened stocks...[/cyan]")
+        
+        # Step 2: Fetch this week's news
+        print(f"[ScreenerApp] Step 2: Fetching news for {len(symbols)} active candidates...")
         stock_articles = self._fetch_weekly_news(symbols)
         total_articles = sum(len(a) for a in stock_articles.values())
-        print(f"[ScreenerApp] Fetched {total_articles} total articles.")
-        console.print(f"  Fetched {total_articles} articles for {len(stock_articles)} stocks")
+        console.print(f"  Fetched {total_articles} articles for analysis.")
 
         # Step 3: Analyze sentiment
-        print("[ScreenerApp] Step 3: Analyzing sentiment with FinBERT...")
-        console.print("[cyan]Analyzing sentiment...[/cyan]")
         scored_articles = self._analyze_sentiment(stock_articles)
-        print(f"[ScreenerApp] Sentiment analysis complete for {len(scored_articles)} stocks.")
 
-        # Step 4: Get technicals (reuse the 3-month data from screener where possible)
-        print("[ScreenerApp] Step 4: Computing technical indicators...")
-        console.print("[cyan]Computing technical indicators...[/cyan]")
+        # Step 4: Get technicals
         stock_prices = self.price_fetcher.fetch_batch(symbols, period="3mo")
         technicals = self.tech_analyzer.analyze_batch(stock_prices)
-        print(f"[ScreenerApp] Technical analysis complete for {len(technicals)} stocks.")
 
-        # Step 5: Generate predictions
-        print("[ScreenerApp] Step 5: Generating final predictions/scoring...")
-        console.print("[cyan]Generating predictions...[/cyan]")
+        # Step 5: Generate predictions (The Brain)
         predictions = []
         for stock in screened:
             articles = scored_articles.get(stock.symbol, [])
@@ -84,54 +67,35 @@ class ScreenerApp:
             pred = self.predictor.predict(stock, articles, ti)
             predictions.append(pred)
 
-        # Sort by overall score
         predictions.sort(key=lambda p: p.overall_score, reverse=True)
-        print(f"[ScreenerApp] Generated {len(predictions)} predictions.")
 
         # Step 6: Save to history + check alerts
-        print("[ScreenerApp] Step 6: Saving to history and checking alerts...")
         alerts = []
         history = None
         try:
             from stock_sentiment.history import History
             from stock_sentiment.alerts import AlertManager
-
             history = History()
-            print("[ScreenerApp] Saving run to history storage...")
-            history.save_run(
-                predictions,
-                self.screener.min_3m_return, self.screener.top_n,
-                trigger_type=trigger
-            )
-
-            print("[ScreenerApp] Triggering AlertManager...")
+            history.save_run(predictions, 0.0, self.screener.top_n, trigger_type=trigger)
             alert_mgr = AlertManager(history, disable_notifications=True)
             alerts = alert_mgr.check_and_alert(predictions)
-            print(f"[ScreenerApp] History/Alerts done. {len(alerts)} alerts generated.")
         except Exception as e:
-            print(f"[ScreenerApp] ERROR in History/Alerts step: {e}")
+            import traceback
+            print(f"[ScreenerApp] ERROR in data persistence: {e}")
+            traceback.print_exc()
         finally:
-            if history:
-                history.close()
-
-        console.print("[green]Done![/green]\n")
+            if history: history.close()
 
         # Step 7: Output
-        print(f"[ScreenerApp] Step 7: Outputting results (cloud_mode={cloud_mode})...")
         if cloud_mode:
             from stock_sentiment.cloud_output import run_cloud_mode
             run_cloud_mode(predictions, len(screened), alerts)
         else:
             self.dashboard.render(predictions, len(screened))
-            if alerts:
-                from stock_sentiment.alerts import AlertManager
-                AlertManager(disable_notifications=True).display_alerts(alerts)
 
-        print("[ScreenerApp] Pipeline execution finished.")
         return (predictions, len(screened), alerts)
 
     def _fetch_weekly_news(self, symbols: list[str]) -> dict[str, list[Article]]:
-        """Fetch this week's news for each stock symbol via Google News RSS."""
         result = {}
         today = datetime.now(timezone.utc)
         week_ago = today - timedelta(days=7)
@@ -141,97 +105,53 @@ class ScreenerApp:
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
-        opener = urllib.request.build_opener(
-            urllib.request.HTTPSHandler(context=ctx)
-        )
+        opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx))
 
         for symbol in symbols:
             try:
-                # Search for stock by ticker and company context
                 query = f"{symbol} stock after:{after_str} before:{before_str}"
-                url = (
-                    f"https://news.google.com/rss/search"
-                    f"?q={urllib.request.quote(query)}&hl=en-US&gl=US&ceid=US:en"
-                )
-
+                url = f"https://news.google.com/rss/search?q={urllib.request.quote(query)}&hl=en-US&gl=US&ceid=US:en"
                 response = opener.open(url, timeout=10)
-                raw = response.read()
-                feed = feedparser.parse(raw)
+                feed = feedparser.parse(response.read())
 
                 articles = []
                 for entry in feed.entries[:10]:
                     try:
-                        pub_str = entry.get("published", "")
-                        if pub_str:
-                            from dateutil import parser as dp
-                            published = dp.parse(pub_str).astimezone(timezone.utc)
-                        else:
-                            published = today
-
                         title = entry.get("title", "").strip()
-                        summary = self._clean_html(entry.get("summary", ""))
-                        source = entry.get("source", {}).get("title", "Unknown")
-                        link = entry.get("link", "")
-
                         if title:
                             articles.append(Article(
                                 title=title,
-                                summary=summary,
-                                source=source,
-                                url=link,
-                                published_at=published,
+                                summary=self._clean_html(entry.get("summary", "")),
+                                source=entry.get("source", {}).get("title", "Unknown"),
+                                url=entry.get("link", ""),
+                                published_at=today, # Fallback
                             ))
-                    except Exception:
-                        continue
-
-                if articles:
-                    result[symbol] = articles
-
-                # Rate limit: ~1 request per second
-                time.sleep(0.5)
-
-            except Exception:
-                continue
-
+                    except: continue
+                if articles: result[symbol] = articles
+                time.sleep(0.1)
+            except: continue
         return result
 
-    def _analyze_sentiment(
-        self, stock_articles: dict[str, list[Article]]
-    ) -> dict[str, list]:
-        """Run FinBERT on all articles, grouped by stock."""
+    def _analyze_sentiment(self, stock_articles: dict[str, list[Article]]) -> dict[str, list]:
         result = {}
-
-        # Flatten for batch processing
         all_articles = []
-        index_map = []  # (symbol, index_in_list)
-
+        index_map = []
         for symbol, articles in stock_articles.items():
             for a in articles:
                 all_articles.append(a)
                 index_map.append(symbol)
-
-        if not all_articles:
-            return result
-
+        if not all_articles: return result
         texts = [a.raw_text for a in all_articles]
         sentiments = self.sentiment.analyze_batch(texts)
-
         for article, sentiment, symbol in zip(all_articles, sentiments, index_map):
-            scored = ScoredArticle(
-                article=article,
-                sentiment_label=sentiment.label,
-                sentiment_score=sentiment.score,
-                normalized_score=sentiment.normalized,
-            )
-            if symbol not in result:
-                result[symbol] = []
+            scored = ScoredArticle(article=article, sentiment_label=sentiment.label,
+                                  sentiment_score=sentiment.score, normalized_score=sentiment.normalized)
+            if symbol not in result: result[symbol] = []
             result[symbol].append(scored)
-
         return result
 
     @staticmethod
     def _clean_html(text: str) -> str:
         import re
-        clean = re.sub(r"<[^>]+>", " ", text)
-        clean = re.sub(r"\s+", " ", clean)
+        clean = re.sub(r"<[^>]+>", " ", text); clean = re.sub(r"\s+", " ", clean)
         return clean.strip()
