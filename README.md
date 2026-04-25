@@ -1,99 +1,104 @@
 # Institutional-Grade Automated Swing Trading Platform
 
-A quantitative, serverless algorithmic trading platform built in Python. This system operates autonomously in the cloud, screening equities, analyzing financial news via NLP, computing technical indicators, and executing risk-managed trades through the Alpaca Brokerage API.
+A quantitative, serverless algorithmic trading platform built in Python. This system operates autonomously in the cloud, utilizing a sophisticated pipeline that screens a curated universe of equities, analyzes financial news sentiment via NLP (FinBERT), calculates technical momentum indicators, and executes mathematically risk-managed trades through the Alpaca Brokerage API.
+
+It also features a real-time Web Command Center built with FastAPI for performance tracking, manual overrides, and seamless cloud deployment.
 
 ---
 
 ## 1. Core Services (The Decision Stack)
 
-### 1.1 HuggingFace & FinBERT (Artificial Intelligence)
-*   **Inference Engine:** Utilizes the `transformers` library to load the `ProsusAI/finbert` model—a BERT architecture fine-tuned specifically for financial sentiment.
-*   **Sentiment Logic:** Classifies news headlines into three labels (Positive, Negative, Neutral) and produces a normalized score between `-1.0` and `+1.0`.
-*   **Exponential Time Decay:** Implements a recency-bias algorithm for news analysis:
-    *   **< 12h old:** 1.0x weight multiplier.
-    *   **12h - 24h:** 0.8x weight multiplier.
-    *   **1d - 3d:** 0.5x weight multiplier.
-    *   **3d - 7d:** 0.2x weight multiplier.
-*   **Consensus Scaling:** Final sentiment scores are scaled based on consensus; a directional alignment of >80% across multiple sources triggers a conviction boost.
+### 1.1 The Screener (Gatekeeper Logic)
+The `StockScreener` processes a static `SCREEN_UNIVERSE` of roughly 200+ high-alpha, liquid equities (e.g., TSLA, NVDA, PLTR, CRWD) and subjects them to rigorous institutional barricades:
 
-### 1.2 Yahoo Finance API (Market Ingestion)
-*   **Data Fetching:** Uses `yfinance` to retrieve 90-day OHLCV (Open, High, Low, Close, Volume) data packets in batch mode for performance.
-*   **Gatekeeper Screening:** An algorithmic "culling" process that instantly discards any symbol failing the **10.0% 3-month return** threshold, conserving compute resources for momentum leaders.
-*   **Volatility Avoidance:** Queries the earnings calendar. If a reporting date is detected within a **3-day window**, the engine executes a hard override, forcing a BEARISH rating to avoid overnight gap-risk.
+*   **Filter 1: Volume Requirement:** Rejects any stock with a Relative Volume (RVOL) `< 1.0`. The current daily volume must exceed its 20-day average to guarantee institutional interest.
+*   **Filter 2: Earnings Avoidance:** Rejects any stock reporting earnings within the next **3 days** to avoid overnight gap-risk and extreme volatility.
+*   **Filter 3: Archetype Classification (The "OR" Gate):** A stock must fit into one of three specific swing-trading archetypes to proceed:
+    *   **Breakout Star:** 1-week price change $\ge$ 10.0% OR 1-month change $\ge$ 15.0%.
+    *   **Recovery Phoenix:** 3-month drawdown $\le$ -15.0% AND recent 3-day bounce $\ge$ 4.0% AND RVOL > 1.1.
+    *   **Momentum King:** 3-month change $\ge$ 7.0%.
 
-### 1.3 Alpaca Trading API (Execution Layer)
-*   **SDK:** Built on the `alpaca-py` library utilizing the `TradingClient` and `MarketOrderRequest` classes.
-*   **Standardized Sizing:** Implements a "Slot-Based" portfolio model:
-    *   **Capacity:** Strictly capped at **10 active positions**.
-    *   **Notional Value:** Executes fractional share orders for exactly **$1,000 per slot**.
-    *   **Total Exposure:** Mathematically constrained to a maximum of $10,000.
-*   **Risk Management:** Continuous monitoring of held assets. If a conviction score is downgraded to "Neutral" or "Bearish," the broker triggers an immediate market liquidation.
+The top 40 stocks (ranked by RVOL and 1-week performance) are passed to the Brain.
 
----
+### 1.2 The Predictor (The Brain)
+The `StockPredictor` calculates a normalized conviction score (0 to 100) using a dynamically weighted formula. A score $\ge$ 60 yields a **BULLISH** rating, while $\le$ 40 yields **BEARISH**. 
+The final score is composed of four pillars:
 
-## 2. Cloud Infrastructure (The AWS Stack)
+*   **Sentiment (25% Weight):** Utilizes `ProsusAI/finbert` (HuggingFace) to analyze recent news headlines. Scores are normalized to -1.0 to +1.0 and scaled. A bonus of +15 points is awarded if a stock has $\ge$ 3 highly bullish headlines.
+*   **Technicals (25% Weight):** Context-aware RSI scoring. For example, a "Recovery" stock gets a 95% technical score if its 14-day RSI is < 35 (oversold), whereas a "Momentum" stock relies on RSI < 70 to confirm room to run.
+*   **Volume (20% Weight):** Direct scaling based on RVOL. 
+*   **Momentum (30% Weight):** Archetype-specific momentum grading (e.g., heavily weighting the 1-week change for Breakouts, and 3-month change for Momentum Kings).
 
-### 2.1 Amazon ECS Fargate (Compute)
-*   **Deployment Model:** Managed Service (Desired Count: 1).
-*   **Resources:** Provisioned at **1 vCPU and 4GB RAM** to accommodate the FinBERT model's memory footprint (~1.2GB).
-*   **Lifecycle:** The container is "Always On" and self-healing. AWS Elastic Network Interfaces (ENI) ensure high-speed connectivity for real-time API calls.
-*   **Concurrency:** Employs a `ThreadPoolExecutor(max_workers=2)` to manage parallel AI inference while preventing CPU saturation.
+### 1.3 The Broker (Execution Layer & Smart Swapping)
+The `PaperBroker` integrates directly with the Alpaca API using `alpaca-py`.
 
-### 2.2 Application Load Balancer (ALB)
-*   **Routing:** Maps public Port 80 traffic to the container's Port 8080.
-*   **Health Checks:** Automatically pings the `/health` endpoint every 30 seconds.
-*   **Network Security:** Deployed with a "Surgical" Security Group model:
-    *   **ALB-SG:** Accepts inbound traffic from `0.0.0.0/0`.
-    *   **Task-SG:** Accepts inbound traffic **only** from the ALB-SG.
-
-### 2.3 Amazon DynamoDB (Persistence)
-*   **Architecture:** Dual-Backend system that defaults to **Managed NoSQL** in production.
-*   **Tables:**
-    *   `PROD_StockScreenerRuns`: Metadata for every 30-minute cycle.
-    *   `PROD_StockScreenerPredictions`: Detailed scoring metrics for every stock screened.
-    *   `PROD_StockScreenerStatus`: A single-item table tracking the real-time **Bot Heartbeat**.
-*   **Migration Logic:** The application handles its own schema evolution, automatically adding columns (like `trigger_type`) if they are missing from existing tables.
-
-### 2.4 Amazon S3 & SES (Reporting)
-*   **S3 Archival:** Generates high-fidelity HTML reports for every cycle, saved with a `/YYYY/MM/DD/` prefix.
-*   **SES (Simple Email Service):** For verified identities, the bot sends automated trade alerts and daily performance summaries.
-
-### 2.5 Amazon ECR & CloudWatch (Ops)
-*   **Image Hosting:** Private ECR repository stores Intel-compatible (linux/amd64) Docker images.
-*   **Centralized Logging:** Verbose bot activity is streamed to `/ecs/stock-screener`. This includes the "Brain" logs (`[StockPredictor]`) and "Hands" logs (`[PaperBroker]`).
+*   **Portfolio Sizing:** Capped at exactly **10 active positions**. Each position is allocated a fixed **$1,000 slot**.
+*   **Order Execution:** Executes Market Orders using *whole shares* (derived from the $1,000 budget) rather than fractional notionals to ensure compatibility with advanced order types.
+*   **Risk Management:** Immediately wraps every new position in a **3.0% Trailing Stop Order** (GTC). 
+*   **Forced Liquidation:** If the AI downgrades an existing holding to "BEARISH", all open orders (stops) are canceled and the position is liquidated at market price.
+*   **Smart Conviction Swapping:** If the bot discovers a new BULLISH pick but the portfolio is full (or lacks cash), it checks the lowest-scoring asset currently held. If the new pick outscores the weakest link by **> 5 points**, the bot automatically sells the weak holding to fund the upgrade.
 
 ---
 
-## 3. Local Development
+## 2. System Architecture & Operation
 
-### 3.1 Local Setup (DEV Mode)
-In local mode, the bot is zero-cost and uses a local file for history.
+### 2.1 The Autonomous Scheduler
+The `Scheduler` module wakes up every 30 minutes, checks the Alpaca Market Clock, and only executes its cycle if the market is Open (or in extended hours, depending on config). It coordinates the ingestion, analysis, prediction, and execution phases entirely autonomously.
+
+### 2.2 Web Command Center (FastAPI)
+The project includes `web.py`, a FastAPI dashboard providing real-time oversight:
+*   **Background Execution:** The 30-minute scheduler runs continuously in a daemon background thread.
+*   **Authentication:** Secured via an `ADMIN_USERNAME` and `ADMIN_PASSWORD` (defaults to `admin` / `changeme`).
+*   **Capabilities:** View real-time Alpaca portfolio performance, equity curves, history, and trigger manual/forced screening cycles.
+*   **Dual-Backend Persistence:** Uses SQLite for local development and Amazon DynamoDB for cloud production (auto-migrating schemas).
+
+---
+
+## 3. Cloud Infrastructure (The AWS Stack)
+
+The entire platform is configured for zero-downtime, serverless deployment on AWS via `./deploy/deploy.sh`.
+
+### 3.1 Amazon ECS Fargate (Compute)
+*   **Deployment Model:** 1 vCPU and 4GB RAM to accommodate the FinBERT model's ~1.2GB memory footprint.
+*   **Concurrency:** Employs a `ThreadPoolExecutor` to handle API requests and background processes without CPU saturation.
+
+### 3.2 Networking (VPC & ALB)
+*   **Application Load Balancer (ALB):** Maps public HTTP traffic (Port 80) to the Fargate container (Port 8080).
+*   **Security Groups:** Strictly isolates the container, allowing inbound traffic *only* from the ALB security group.
+
+### 3.3 Amazon DynamoDB & S3 (Persistence & Reporting)
+*   **DynamoDB Tables:** Auto-provisioned tables including `PROD_StockScreenerRuns`, `PROD_StockScreenerPredictions`, and `PROD_StockScreenerStatus` (acting as a heartbeat monitor).
+*   **S3 Archival:** Automatically buckets HTML snapshots of every execution cycle, grouped by date prefixes (`/YYYY/MM/DD/`).
+*   **SES Alerts:** Sends critical trade executions and downgrades to verified email identities.
+
+---
+
+## 4. Local Development
+
+### 4.1 Local Setup (DEV Mode)
+In local mode, the bot operates at zero-cost using SQLite.
+
 ```bash
-# Set Alpaca keys in .env
+# 1. Install dependencies
 pip install -r requirements.txt
 
-# Start the dashboard + bot locally (uses SQLite)
+# 2. Configure environment (Create a .env file)
+# ALPACA_API_KEY=your_key
+# ALPACA_SECRET_KEY=your_secret
+# ADMIN_PASSWORD=your_secure_password
+
+# 3. Start the dashboard + bot locally
 uvicorn web:app --reload --port 8000
 ```
 
-### 3.2 Production Deployment (PROD Mode)
+### 4.2 Production Deployment (PROD Mode)
 The entire AWS infrastructure is provisioned via the master deployment script.
 
 **Workflow:**
-1.  **Refresh Login:** `aws sso login --profile vignesh-sso-profile`
+1.  **Refresh Login:** `aws sso login --profile your-sso-profile`
 2.  **Deploy:** `./run_aws_bot.sh`
 
-*(The script automatically detects the `AWS_PROFILE` from your `.env` file).*
-
----
-
-## 4. Technical Architecture Flow
-1.  **Poll:** Scheduler wakes up every 30 minutes and checks the **Alpaca Market Clock**.
-2.  **Screen:** Fetch technicals for 300 stocks; filter for top performers.
-3.  **Analyze:** Fetch news; run FinBERT inference on 200+ articles.
-4.  **Score:** Calculate weighted average of Sentiment (30%), Technicals (30%), and Momentum (40%).
-5.  **Trade:** Submit API orders if score >= 75 and slot is available.
-6.  **Persist:** Write full state to DynamoDB and update Heartbeat.
+*(The deployment script automatically reads your `.env` file, builds the Intel `linux/amd64` Docker image, pushes to ECR, and updates the ECS Service).*
 
 ---
 
