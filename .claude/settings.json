@@ -1,0 +1,105 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python *)",
+      "Bash(aws configure *)",
+      "WebSearch",
+      "WebFetch(domain:awslabs.github.io)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "statusMessage": "Checking Python syntax...",
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath // empty' | { read -r f; [[ -z \"$f\" || ! -f \"$f\" || \"$f\" != *.py ]] && exit 0; out=$(python -m py_compile \"$f\" 2>&1); if [[ -n \"$out\" ]]; then msg=$(printf 'SYNTAX ERROR in %s: %s' \"$f\" \"$out\"); jq -n --arg ctx \"$msg\" '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":$ctx}}'; else echo \"✓ syntax OK: $f\"; fi; } 2>/dev/null || true"
+          },
+          {
+            "type": "command",
+            "statusMessage": "Running ruff lint...",
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath // empty' | { read -r f; [[ -z \"$f\" || ! -f \"$f\" || \"$f\" != *.py ]] && exit 0; out=$(ruff check \"$f\" 2>&1); if [[ -n \"$out\" ]]; then msg=$(printf 'RUFF in %s: %s' \"$f\" \"$out\"); jq -n --arg ctx \"$msg\" '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":$ctx}}'; fi; } 2>/dev/null || true"
+          },
+          {
+            "type": "command",
+            "statusMessage": "Type-checking with mypy...",
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath // empty' | { read -r f; [[ -z \"$f\" || ! -f \"$f\" || \"$f\" != *.py ]] && exit 0; out=$(mypy \"$f\" --ignore-missing-imports --no-error-summary 2>&1 | grep ': error:'); if [[ -n \"$out\" ]]; then msg=$(printf 'MYPY in %s: %s' \"$f\" \"$out\"); jq -n --arg ctx \"$msg\" '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":$ctx}}'; fi; } 2>/dev/null || true"
+          },
+          {
+            "type": "command",
+            "statusMessage": "Scanning for secrets...",
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath // empty' | { read -r f; [[ -z \"$f\" || ! -f \"$f\" ]] && exit 0; hits=$(grep -nE '(ALPACA_API_KEY|ALPACA_SECRET_KEY|aws_access_key_id|aws_secret_access_key)[[:space:]]*=[[:space:]]*[A-Za-z0-9/+]{10,}' \"$f\" 2>/dev/null); aws_hits=$(grep -nE 'AKIA[0-9A-Z]{16}' \"$f\" 2>/dev/null); combined=$(printf '%s\\n%s' \"$hits\" \"$aws_hits\" | sed '/^$/d'); if [[ -n \"$combined\" ]]; then msg=$(printf 'SECRET LEAK in %s: %s' \"$f\" \"$combined\"); jq -n --arg ctx \"$msg\" '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":$ctx}}'; fi; } 2>/dev/null || true"
+          },
+          {
+            "type": "command",
+            "statusMessage": "Validating JSON...",
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath // empty' | { read -r f; [[ -z \"$f\" || ! -f \"$f\" || \"$f\" != *.json ]] && exit 0; python -m json.tool \"$f\" > /dev/null 2>&1 || { jq -n --arg ctx \"INVALID JSON: $f\" '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":$ctx}}'; }; } 2>/dev/null || true"
+          },
+          {
+            "type": "command",
+            "statusMessage": "Checking for debug markers...",
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath // empty' | { read -r f; [[ -z \"$f\" || ! -f \"$f\" || \"$f\" != *.py ]] && exit 0; hits=$(grep -nE '#\\s*(TODO|FIXME|HACK|XXX|BUG|TEMP)\\b' \"$f\" 2>/dev/null); if [[ -n \"$hits\" ]]; then msg=$(printf 'Debug markers in %s (FYI): %s' \"$f\" \"$hits\"); jq -n --arg ctx \"$msg\" '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":$ctx}}'; fi; } 2>/dev/null || true"
+          },
+          {
+            "type": "command",
+            "statusMessage": "Checking requirements...",
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath // empty' | { read -r f; [[ \"$f\" == *requirements*.txt ]] && jq -n '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":\"requirements.txt changed — run: pip install -r requirements.txt\"}}'; } 2>/dev/null || true"
+          },
+          {
+            "type": "command",
+            "statusMessage": "Checking shell script syntax...",
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath // empty' | { read -r f; [[ -z \"$f\" || ! -f \"$f\" || \"$f\" != *.sh ]] && exit 0; out=$(bash -n \"$f\" 2>&1); if [[ -n \"$out\" ]]; then msg=$(printf 'SHELL SYNTAX ERROR in %s:\\n%s' \"$f\" \"$out\"); jq -n --arg ctx \"$msg\" '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":$ctx}}'; else echo \"✓ shell OK: $f\"; fi; } 2>/dev/null || true"
+          },
+          {
+            "type": "command",
+            "statusMessage": "Checking Dockerfile safety...",
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath // empty' | { read -r f; [[ -z \"$f\" || ! -f \"$f\" ]] && exit 0; [[ \"$(basename \"$f\")\" != \"Dockerfile\" ]] && exit 0; hits=$(grep -nE '^(COPY|ADD)\\s+\\.?(env|aws|ssh|netrc)' \"$f\" 2>/dev/null); if [[ -n \"$hits\" ]]; then msg=$(printf 'DOCKERFILE: sensitive file baked into image:\\n%s\\nAdd to .dockerignore!' \"$hits\"); jq -n --arg ctx \"$msg\" '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":$ctx}}'; else echo \"✓ Dockerfile: no sensitive file copies\"; fi; } 2>/dev/null || true"
+          },
+          {
+            "type": "command",
+            "statusMessage": "Running core predictor tests...",
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath // empty' | { read -r f; echo \"$f\" | grep -qE '(stock_predictor|weight_optimizer|sentiment)\\.py$' || exit 0; out=$(cd /Users/vignesh/GitHub/Projects/2026-04-April/Stock-trading-app-1-Finbert && python verify_weighting.py 2>&1); rc=$?; if [[ $rc -ne 0 ]]; then msg=$(printf 'VERIFY FAILED after editing %s:\\n%s' \"$(basename \"$f\")\" \"$out\"); jq -n --arg ctx \"$msg\" '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":$ctx}}'; else echo \"✓ verify_weighting passed\"; fi; } 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cmd=$(jq -r '.tool_input.command' 2>/dev/null); echo \"[$(date '+%Y-%m-%d %H:%M:%S')] $cmd\" >> ~/.stock_screener/claude_bash_log.txt 2>/dev/null; echo \"$cmd\" | grep -qE '^\\s*(rm\\s+-[rRf]*f[rRf]*\\s+/|git\\s+push\\s+--force\\s+origin\\s+(main|master)|DROP\\s+TABLE|TRUNCATE\\s+TABLE)' && echo '{\"continue\":false,\"stopReason\":\"Dangerous command blocked — confirm manually before proceeding.\"}' || true"
+          },
+          {
+            "type": "command",
+            "statusMessage": "Checking AWS SSO session...",
+            "command": "cmd=$(jq -r '.tool_input.command' 2>/dev/null); echo \"$cmd\" | grep -qE '^\\s*aws\\s' || exit 0; aws sts get-caller-identity --profile vignesh-sso-profile --output text > /dev/null 2>&1 || jq -n '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"additionalContext\":\"AWS SSO session expired. Run: aws sso login --profile vignesh-sso-profile\"}}'"
+          },
+          {
+            "type": "command",
+            "statusMessage": "Running deployment pre-flight...",
+            "command": "cmd=$(jq -r '.tool_input.command' 2>/dev/null); echo \"$cmd\" | grep -qE '(deploy\\.sh|run_aws_bot\\.sh)' || exit 0; issues=\"\"; docker info > /dev/null 2>&1 || issues=\"${issues}Docker daemon not running.\\n\"; [[ -f /Users/vignesh/GitHub/Projects/2026-04-April/Stock-trading-app-1-Finbert/.env ]] || issues=\"${issues}.env file missing.\\n\"; if [[ -n \"$issues\" ]]; then msg=$(printf 'DEPLOYMENT PRE-FLIGHT FAILED:\\n%s' \"$issues\"); jq -n --arg ctx \"$msg\" '{\"continue\":false,\"stopReason\":\"Fix deployment issues before proceeding.\",\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"additionalContext\":$ctx}}'; fi"
+          },
+          {
+            "type": "command",
+            "statusMessage": "Checking for staged .env...",
+            "command": "cmd=$(jq -r '.tool_input.command' 2>/dev/null); echo \"$cmd\" | grep -qE 'git\\s+(commit|add)' || exit 0; staged=$(git -C /Users/vignesh/GitHub/Projects/2026-04-April/Stock-trading-app-1-Finbert diff --cached --name-only 2>/dev/null | grep -E '^\\.env'); if [[ -n \"$staged\" ]]; then jq -n --arg ctx \"BLOCKED: .env staged for commit: $staged — remove with: git restore --staged .env\" '{\"continue\":false,\"stopReason\":\"Refusing to commit .env — secrets exposed in git history.\",\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"additionalContext\":$ctx}}'; fi"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ts=$(date '+%Y-%m-%d %H:%M:%S'); summary=$(git -C /Users/vignesh/GitHub/Projects/2026-04-April/Stock-trading-app-1-Finbert diff --stat HEAD 2>/dev/null | tail -1); echo \"[$ts] Session ended. Changes: ${summary:-none}\" >> ~/.stock_screener/claude_sessions.log 2>/dev/null; true"
+          }
+        ]
+      }
+    ]
+  }
+}

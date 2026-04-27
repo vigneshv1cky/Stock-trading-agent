@@ -1,36 +1,37 @@
-"""Scheduler: auto-run the screener on a daily/weekly schedule.
+"""Scheduler: auto-run the screener on a schedule and monitor live news between cycles."""
 
-Runs the full screener pipeline on a loop, saves results to history,
-checks alerts, and optionally runs backtests.
-"""
-
-import time
-from datetime import datetime, timezone, timedelta
 import os
+import time
+from datetime import datetime, timedelta, timezone
+
 from rich.console import Console
 
 from stock_sentiment.alerts import AlertManager
 from stock_sentiment.backtester import Backtester
 from stock_sentiment.history import History
-from stock_sentiment.screener_app import ScreenerApp
 from stock_sentiment.market.broker import PaperBroker
+from stock_sentiment.market.news_monitor import NewsMonitor
+from stock_sentiment.screener_app import ScreenerApp
 
 console = Console()
 
+
 class Scheduler:
-    """Runs the screener on a schedule with alerts and history tracking."""
+    """Runs the screener on a schedule with real-time news monitoring between cycles."""
 
     def __init__(
         self,
         top_n: int = 40,
         interval_hours: float = 0.5,
         run_backtest: bool = True,
+        min_return: float = 10.0,
     ):
-        self.app = ScreenerApp(top_n=top_n)
+        self.app = ScreenerApp(top_n=top_n, min_return=min_return)
         self.history = History()
         self.alerts = AlertManager(self.history, disable_notifications=True)
         self.backtester = Backtester(self.history)
         self.broker = PaperBroker()
+        self.monitor = NewsMonitor(broker=self.broker)
         self.interval_hours = interval_hours
         self.run_backtest = run_backtest
         self.top_n = top_n
@@ -41,79 +42,113 @@ class Scheduler:
         console.print("\n[bold cyan]Starting AI Trading Bot[/bold cyan]\n")
         console.print(f"  Schedule: Every {self._format_interval()}")
         console.print(f"  Scan Depth: Top {self.top_n} active stocks")
-        console.print(f"  Strategy: Brain-Only (Institutional Filters)")
-        
-        storage_type = "Amazon DynamoDB" if os.environ.get("ENV") == "PROD" else f"SQLite (~/.stock_screener/local_history.db)"
+        console.print("  Strategy: Brain-Only (Institutional Filters)")
+
+        storage_type = (
+            "Amazon DynamoDB"
+            if os.environ.get("ENV") == "PROD"
+            else "SQLite (~/.stock_screener/local_history.db)"
+        )
         console.print(f"  History:  {storage_type}")
         console.print()
+
+        # Start real-time news monitor in background
+        self.monitor.start()
 
         try:
             while True:
                 time.sleep(1)
                 self.run_count += 1
                 now = datetime.now(timezone.utc)
-                
-                print(f"[Brain] Step 1: Market Check... (Run #{self.run_count})")
+
                 market_open = True
                 status_msg = "Market Open - Initializing Cycle"
-                
-                if hasattr(self, 'broker') and self.broker and self.broker.client:
+                clock = None
+
+                if self.broker and self.broker.client:
                     try:
                         clock = self.broker.client.get_clock()
                         market_open = clock.is_open
                         time_to_open = (clock.next_open - clock.timestamp).total_seconds()
-                        
+
                         if market_open:
                             time_to_close = (clock.next_close - clock.timestamp).total_seconds()
+                            mins_to_close = int(time_to_close // 60)
                             if time_to_close < 1800:
                                 market_open = False
                                 status_msg = "Market Closing Soon - Skipping"
-                        elif time_to_open > 0 and time_to_open <= 900:
-                            # PRE-MARKET: Wake up 15 minutes before the bell
+                                console.print(
+                                    f"[yellow]⏰  Market closes in {mins_to_close}m — skipping cycle.[/yellow]"
+                                )
+                        elif 0 < time_to_open <= 900:
                             market_open = True
                             status_msg = "Pre-Market Open - Preparing Orders"
-                            print("[Brain] PRE-MARKET window detected. Waking up to prepare orders.")
-                            
-                        if not market_open:
-                            next_open = clock.next_open.strftime('%Y-%m-%d %H:%M:%S UTC')
+                            console.print(
+                                f"[cyan]🔔  Pre-market window ({int(time_to_open//60)}m to open) — preparing orders.[/cyan]"
+                            )
+
+                        if not market_open and status_msg.startswith("Market Closed"):
+                            next_open = clock.next_open.strftime("%H:%M UTC")
                             status_msg = f"Market Closed until {next_open}"
-                            print(f"[Brain] Step 2: Market CLOSED. Flowing to SLEEP.")
                     except Exception as e:
-                        console.print(f"[yellow]Warning: Market check failed: {e}[/yellow]")
+                        console.print(f"[yellow]⚠  Market check failed: {e}[/yellow]")
 
                 self.history.save_heartbeat("Checking Market", status_msg)
 
                 if market_open:
-                    print(f"[Brain] Step 2: Market OPEN (or Pre-Market). Initiating Core Pipeline.")
-                    console.print(f"\n[bold]{'='*60}[/bold]")
-                    console.print(f"[bold cyan]  Run #{self.run_count} — {now.strftime('%Y-%m-%d %H:%M:%S UTC')}[/bold cyan]")
-                    console.print(f"[bold]{'='*60}[/bold]\n")
+                    console.print(f"\n[bold]{'─' * 60}[/bold]")
+                    console.print(
+                        f"[bold cyan]  Cycle #{self.run_count}[/bold cyan]"
+                        f"  [dim]{now.strftime('%Y-%m-%d %H:%M UTC')}[/dim]"
+                        + (
+                            f"  [dim]· closes in {int((clock.next_close - clock.timestamp).total_seconds() // 60)}m[/dim]"
+                            if clock and clock.is_open else ""
+                        )
+                    )
+                    console.print(f"[bold]{'─' * 60}[/bold]\n")
 
                     self.history.save_heartbeat("Active", f"Executing Cycle #{self.run_count}")
-                    self.execute_cycle(trigger="BOT SCAN")
+                    predictions, _, _ = self.execute_cycle(trigger="BOT SCAN")
+
+                    if predictions and self.broker.client:
+                        try:
+                            positions = self.broker.client.get_all_positions()
+                            held = {p.symbol for p in positions}
+                        except Exception:
+                            held = set()
+                        self.monitor.update_watchlist(predictions, held)
 
                 # Calculate sleep time
                 interval_seconds = self.interval_hours * 3600
-                if hasattr(self, 'broker') and self.broker and self.broker.client:
+                if self.broker and self.broker.client:
                     try:
                         clock = self.broker.client.get_clock()
+                        time_to_open = (clock.next_open - clock.timestamp).total_seconds()
                         if not clock.is_open or (clock.next_close - clock.timestamp).total_seconds() < 1800:
-                            time_to_open = (clock.next_open - clock.timestamp).total_seconds()
                             if time_to_open > 900:
-                                # Sleep until exactly 15 minutes before market open
                                 interval_seconds = time_to_open - 900
                             elif time_to_open > 0:
-                                # In pre-market window: sleep until 1 minute after the bell rings
                                 interval_seconds = time_to_open + 60
-                    except Exception: pass
+                    except Exception:
+                        pass
 
                 next_run_dt = datetime.now(timezone.utc) + timedelta(seconds=interval_seconds)
+                mins = int(interval_seconds // 60)
 
                 if interval_seconds == self.interval_hours * 3600:
-                    print(f"[Brain] Step 3: Cycle complete. Sleeping until {next_run_dt.strftime('%H:%M:%S UTC')}.")
+                    console.print(
+                        f"\n[dim]  💤  Next cycle in {mins}m"
+                        f" ({next_run_dt.strftime('%H:%M UTC')})[/dim]"
+                    )
                     self.history.save_heartbeat("Sleeping", f"Standard Sleep|{next_run_dt.isoformat()}")
                 else:
-                    print(f"[Brain] Step 3: Market closed. Deep Sleep initiated.")
+                    hrs = mins // 60
+                    rem = mins % 60
+                    duration_str = f"{hrs}h {rem}m" if hrs else f"{mins}m"
+                    console.print(
+                        f"\n[dim]  🌙  Market closed — deep sleep {duration_str}"
+                        f" (opens ~{next_run_dt.strftime('%H:%M UTC')})[/dim]"
+                    )
                     self.history.save_heartbeat("Sleeping", f"Market Closed|{next_run_dt.isoformat()}")
 
                 time.sleep(interval_seconds)
@@ -126,25 +161,22 @@ class Scheduler:
     def execute_cycle(self, trigger: str = "BOT SCAN"):
         """Run one full cycle: screen → predict → trade → alert → backtest."""
         print(f"[Scheduler] Starting execution cycle (Trigger: {trigger})...")
-        
-        # In production, enable cloud_mode to generate S3 reports and send emails
-        is_prod = os.environ.get("ENV") == "PROD"
-        predictions, screened_count, alerts = self.app.run(cloud_mode=is_prod, trigger=trigger)
+
+        predictions, screened_count, alerts = self.app.run(trigger=trigger)
 
         if not predictions:
             return [], 0, []
 
-        print("[Scheduler] Checking Trade Execution...")
-        if hasattr(self, 'broker') and self.broker:
-            self.broker.execute_trades(predictions)
+        # NOTE: broker.execute_trades is called inside app.run() — do not call again here.
 
         if self.run_backtest:
             print("[Scheduler] Running Backtester...")
             self.backtester.run(min_age_days=5)
-            
+
         print(f"[Bot] Successfully completed cycle #{self.run_count}")
         return predictions, screened_count, alerts
 
     def _format_interval(self) -> str:
-        if self.interval_hours >= 24: return f"{self.interval_hours / 24:.0f} days"
+        if self.interval_hours >= 24:
+            return f"{self.interval_hours / 24:.0f} days"
         return "30 minutes" if self.interval_hours == 0.5 else f"{self.interval_hours} hours"

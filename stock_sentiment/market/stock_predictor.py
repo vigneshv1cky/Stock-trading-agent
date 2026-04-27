@@ -1,9 +1,65 @@
-"""Predicts stock movement by combining news sentiment with technical archetypes."""
+"""Predicts stock movement by combining sub-scores with a single Bedrock LLM call (Option A)."""
 
+import json
 import math
+import os
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
+
+import boto3
+
+from stock_sentiment.market.weight_optimizer import load_weights
+
+# Tier multipliers applied to each article's weight before averaging.
+# Keywords matched case-insensitively against article.source.
+_SOURCE_TIERS: list[tuple[str, float]] = [
+    ("reuters", 1.5),
+    ("bloomberg", 1.5),
+    ("wall street journal", 1.5),
+    ("wsj", 1.5),
+    ("financial times", 1.5),
+    ("ft.com", 1.5),
+    ("associated press", 1.4),
+    ("ap news", 1.4),
+    ("cnbc", 1.4),
+    ("marketwatch", 1.3),
+    ("barron", 1.3),
+    ("fortune", 1.2),
+    ("seeking alpha", 1.2),
+    ("business insider", 1.1),
+    ("motley fool", 1.1),
+    ("benzinga", 1.1),
+    ("forbes", 1.1),
+]
+_SOURCE_DEFAULT = 1.0
+_RECENCY_HALF_LIFE_H = 48.0   # score halves every 48 hours
+
+
+def _source_weight(source: str) -> float:
+    s = source.lower()
+    for keyword, weight in _SOURCE_TIERS:
+        if keyword in s:
+            return weight
+    return _SOURCE_DEFAULT
+
+
+def _recency_weight(published_at: datetime) -> float:
+    age_h = max(0.0, (datetime.now(timezone.utc) - published_at).total_seconds() / 3600)
+    return math.exp(-age_h * math.log(2) / _RECENCY_HALF_LIFE_H)
+
+_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+_SYSTEM_PROMPT = (
+    "You are a qualitative news analyst for equity swing trading. "
+    "For each numbered stock, evaluate ONLY the headlines provided — ignore price momentum numbers. "
+    "Identify: (1) Catalysts (earnings beat, contract win, product launch, analyst upgrade, M&A). "
+    "(2) Red flags (SEC investigation, lawsuit, guidance cut, CEO departure, recall, bankruptcy risk). "
+    "Score 0-100 where 50=neutral/no news, >60=positive catalyst present, <40=negative news risk. "
+    "BULLISH≥60, BEARISH≤40, NEUTRAL otherwise. "
+    'Return ONLY valid JSON: {"results": [{"score": 65, "rating": "BULLISH", "red_flag": false, "reasoning": "one sentence"}]}'
+)
+
 
 @dataclass
 class StockPrediction:
@@ -28,82 +84,203 @@ class StockPrediction:
     avg_sentiment: float
     bullish_count: int
     bearish_count: int
-    top_headlines: list 
+    top_headlines: list
     rsi: float
     days_to_earnings: Optional[int]
     predicted_move: str
 
+
 class StockPredictor:
-    """Combines sentiment, technicals, and volume with archetype scoring."""
+    """Combines sentiment, technicals, and volume with learned weights, then calls
+    Claude (Bedrock) once for all stocks to get holistic conviction scores."""
 
-    def predict(self, stock, articles, technicals) -> StockPrediction:
-        symbol = stock.symbol
-        print(f"[StockPredictor] Scoring {symbol} ({stock.archetype}) | RVOL: {stock.volume_ratio:.2f}")
+    def __init__(self):
+        self._weights = load_weights()
+        self._bedrock = None
+        self._region = os.environ.get("AWS_REGION", "us-east-1")
 
-        # --- 1. Sentiment Analysis ---
+    def _get_bedrock(self):
+        if self._bedrock is None:
+            self._bedrock = boto3.client("bedrock-runtime", region_name=self._region)
+        return self._bedrock
+
+    def predict_all(self, stocks, scored_articles_map: dict, technicals_map: dict) -> list[StockPrediction]:
+        """Score all stocks in one Bedrock call. Main entry point for the screener pipeline."""
+        partials = [
+            self._compute_sub_scores(stock, scored_articles_map.get(stock.symbol, []), technicals_map.get(stock.symbol))
+            for stock in stocks
+        ]
+        llm_results = self._llm_score_batch(stocks, partials)
+
+        predictions = []
+        for stock, sub, llm in zip(stocks, partials, llm_results):
+            formula_score = sub["formula_score"]
+            llm_qual = float(llm.get("score", formula_score))
+            red_flag = bool(llm.get("red_flag", False))
+
+            # 70% quantitative formula + 30% qualitative LLM news assessment
+            score = formula_score * 0.70 + llm_qual * 0.30
+
+            # Hard red-flag override: bad news caps conviction below BEARISH threshold
+            if red_flag:
+                score = min(score, 35.0)
+                print(f"[StockPredictor] RED FLAG {stock.symbol}: {llm.get('reasoning', '')}")
+
+            if score >= 60:
+                rating = "BULLISH"
+            elif score <= 40:
+                rating = "BEARISH"
+            else:
+                rating = "NEUTRAL"
+
+            reasoning = [f"Archetype: {stock.archetype}", f"RVOL: {stock.volume_ratio:.1f}x"]
+            if stock.days_to_earnings is not None:
+                reasoning.append(f"Earnings in {stock.days_to_earnings} days")
+            if llm.get("reasoning"):
+                reasoning.append(llm["reasoning"])
+            reasoning.append(f"Sent: {sub['avg_sentiment']:.2f} | RSI: {sub['rsi']:.0f}")
+            if red_flag:
+                reasoning.append("RED FLAG: negative news override applied")
+
+            predictions.append(self._build_prediction(stock, sub, score, rating, reasoning))
+
+        return predictions
+
+    def predict(self, stock, articles, ti) -> StockPrediction:
+        """Single-stock formula-only prediction (fallback, no LLM call)."""
+        sub = self._compute_sub_scores(stock, articles, ti)
+        score = sub["formula_score"]
+        rating = "BULLISH" if score >= 60 else ("BEARISH" if score <= 40 else "NEUTRAL")
+        reasoning = [
+            f"Archetype: {stock.archetype}", f"RVOL: {stock.volume_ratio:.1f}x",
+            f"Sent: {sub['avg_sentiment']:.2f}", f"RSI: {sub['rsi']:.0f}",
+        ]
+        if stock.days_to_earnings is not None:
+            reasoning.append(f"Earnings in {stock.days_to_earnings} days")
+        return self._build_prediction(stock, sub, score, rating, reasoning)
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _compute_sub_scores(self, stock, articles, ti) -> dict:
+        """Compute all sub-scores using current (possibly learned) weights."""
+        # --- Sentiment (recency-decay × source-quality weighted average) ---
         avg_sentiment = 0.0
         bullish_count = 0
         bearish_count = 0
         top_headlines = []
         if articles:
-            scores = [a.normalized_score for a in articles]
-            avg_sentiment = sum(scores) / len(scores)
-            bullish_count = sum(1 for s in scores if s > 0.2)
-            bearish_count = sum(1 for s in scores if s < -0.2)
-            sorted_articles = sorted(articles, key=lambda x: abs(x.normalized_score), reverse=True)
-            for a in sorted_articles[:3]:
-                top_headlines.append((a.article.title, a.normalized_score, a.article.source, a.article.url))
-        
-        sent_score = (avg_sentiment + 1) * 50
-        if bullish_count >= 3: sent_score += 15
-        sent_score = min(100.0, sent_score)
+            weights = [
+                _recency_weight(a.article.published_at) * _source_weight(a.article.source)
+                for a in articles
+            ]
+            total_w = sum(weights)
+            avg_sentiment = (
+                sum(a.normalized_score * w for a, w in zip(articles, weights)) / total_w
+                if total_w > 0 else 0.0
+            )
+            bullish_count = sum(1 for a in articles if a.normalized_score > 0.2)
+            bearish_count = sum(1 for a in articles if a.normalized_score < -0.2)
+            # Rank headlines by (weight × abs score) so the most recent + reputable surface first
+            ranked = sorted(
+                zip(articles, weights),
+                key=lambda aw: abs(aw[0].normalized_score) * aw[1],
+                reverse=True,
+            )
+            top_headlines = [
+                (a.article.title, a.normalized_score, a.article.source, a.article.url)
+                for a, _ in ranked[:3]
+            ]
 
-        # --- 2. Volume Bonus ---
-        vol_score = 50.0 + (min(2.0, stock.volume_ratio - 1.0) * 30.0)
-        vol_score = max(0.0, min(100.0, vol_score))
+        sent_score = min(100.0, (avg_sentiment + 1) * 50 + (15 if bullish_count >= 3 else 0))
 
-        # --- 3. Momentum & Technicals ---
-        mom_score = 0.0
-        tech_score = 50.0 
-        rsi = technicals.rsi_14 if technicals else 50.0
+        # --- Volume ---
+        vol_score = max(0.0, min(100.0, 50.0 + min(2.0, stock.volume_ratio - 1.0) * 30.0))
+
+        # --- Momentum + Technicals (archetype-aware) ---
+        rsi = ti.rsi_14 if ti else 50.0
 
         if stock.archetype == "MOMENTUM":
             mom_score = min(100.0, stock.change_3m_pct * 1.5)
             tech_score = 70.0 if rsi < 70 else 40.0
         elif stock.archetype == "BREAKOUT":
-            mom_score = min(100.0, (stock.change_1w_pct * 4) + (stock.change_1m_pct * 1))
+            mom_score = min(100.0, (stock.change_1w_pct * 4) + stock.change_1m_pct)
             tech_score = 90.0 if stock.volume_ratio > 2.0 else 60.0
         elif stock.archetype == "RECOVERY":
             mom_score = 60.0 + min(40.0, stock.change_1w_pct * 5)
-            if rsi < 35: tech_score = 95.0
-            elif rsi < 45: tech_score = 80.0
-            else: tech_score = 50.0
+            tech_score = 95.0 if rsi < 35 else (80.0 if rsi < 45 else 50.0)
+        else:
+            mom_score = 0.0
+            tech_score = 50.0
 
-        overall = (mom_score * 0.30) + (vol_score * 0.20) + (tech_score * 0.25) + (sent_score * 0.25)
-        
-        # --- 4. Logic & Rating ---
-        rating = "NEUTRAL"
-        if overall >= 60: rating = "BULLISH"
-        if overall <= 40: rating = "BEARISH"
-        reasoning = [f"Archetype: {stock.archetype}", f"RVOL: {stock.volume_ratio:.1f}x"]
-        if stock.days_to_earnings is not None:
-            reasoning.append(f"Earnings in {stock.days_to_earnings} days")
+        w = self._weights.get(stock.archetype, self._weights.get("default", [0.30, 0.20, 0.25, 0.25]))
+        formula_score = (mom_score * w[0]) + (vol_score * w[1]) + (tech_score * w[2]) + (sent_score * w[3])
 
-        # Range and Chart Data
+        return {
+            "mom_score": mom_score, "vol_score": vol_score, "tech_score": tech_score,
+            "sent_score": sent_score, "formula_score": formula_score, "rsi": rsi,
+            "avg_sentiment": avg_sentiment, "bullish_count": bullish_count, "bearish_count": bearish_count,
+            "top_headlines": top_headlines,
+        }
+
+    def _llm_score_batch(self, stocks, partials: list[dict]) -> list[dict]:
+        """Send all stocks to Claude in a single Bedrock call for qualitative news assessment."""
+        lines = []
+        for i, (stock, sub) in enumerate(zip(stocks, partials), 1):
+            if sub["top_headlines"]:
+                headline_parts = []
+                for title, _score, source, _url in sub["top_headlines"][:3]:
+                    headline_parts.append(f'"{title[:200]}" ({source})')
+                headlines_str = " | ".join(headline_parts)
+            else:
+                headlines_str = "No recent news"
+            earnings = (
+                f" | Earnings in {stock.days_to_earnings}d"
+                if stock.days_to_earnings is not None and stock.days_to_earnings <= 14
+                else ""
+            )
+            lines.append(
+                f"{i}. {stock.symbol} | {stock.archetype}{earnings}"
+                f"\n   Headlines: {headlines_str}"
+            )
+
+        print(f"[StockPredictor] Calling Claude Haiku 4.5 (Bedrock Converse) for {len(stocks)} stocks...")
+        try:
+            resp = self._get_bedrock().converse(
+                modelId=_MODEL_ID,
+                system=[{"text": _SYSTEM_PROMPT}],
+                messages=[{"role": "user", "content": [{"text": "\n".join(lines)}]}],
+                inferenceConfig={"maxTokens": 4096, "temperature": 0},
+            )
+            content = resp.get("output", {}).get("message", {}).get("content", [])
+            text = content[0]["text"].strip() if content else ""
+            # Strip markdown code fences if present
+            if text.startswith("```"):
+                text = re.sub(r"^```[a-z]*\n?", "", text).rstrip("`").strip()
+            items = json.loads(text)["results"]
+            while len(items) < len(stocks):
+                items.append({})
+            print(f"[StockPredictor] Haiku scoring complete: {len(items)} results received.")
+            return items[: len(stocks)]
+        except Exception as e:
+            print(f"[StockPredictor] LLM scoring failed ({e}), falling back to formula scores.")
+            return [{"score": sub["formula_score"], "rating": "", "reasoning": "", "red_flag": False} for sub in partials]
+
+    def _build_prediction(self, stock, sub: dict, score: float, rating: str, reasoning: list[str]) -> StockPrediction:
         low_3m = min(stock.daily_closes_3m) if stock.daily_closes_3m else stock.current_price
         high_3m = max(stock.daily_closes_3m) if stock.daily_closes_3m else stock.current_price
-        sparkline = stock.daily_closes_3m if stock.daily_closes_3m else [stock.current_price]
-
         return StockPrediction(
-            symbol=symbol, current_price=stock.current_price,
+            symbol=stock.symbol, current_price=stock.current_price,
             change_3m_pct=stock.change_3m_pct, change_1m_pct=stock.change_1m_pct, change_1w_pct=stock.change_1w_pct,
-            low_3m=low_3m, high_3m=high_3m, sparkline_3m=sparkline,
-            archetype=stock.archetype, prediction=rating, confidence=overall, overall_score=overall,
-            momentum_score=mom_score, sentiment_score=sent_score, technical_score=tech_score, volume_score=vol_score,
+            low_3m=low_3m, high_3m=high_3m, sparkline_3m=stock.daily_closes_3m or [stock.current_price],
+            archetype=stock.archetype, prediction=rating, confidence=score, overall_score=score,
+            momentum_score=sub["mom_score"], sentiment_score=sub["sent_score"],
+            technical_score=sub["tech_score"], volume_score=sub["vol_score"],
             volume_ratio=stock.volume_ratio,
-            avg_sentiment=avg_sentiment, bullish_count=bullish_count, bearish_count=bearish_count,
-            top_headlines=top_headlines, rsi=rsi, 
+            avg_sentiment=sub["avg_sentiment"], bullish_count=sub["bullish_count"], bearish_count=sub["bearish_count"],
+            top_headlines=sub["top_headlines"], rsi=sub["rsi"],
             days_to_earnings=stock.days_to_earnings,
-            predicted_move="+5-12% (Oversold Bounce)" if rating == "BULLISH" and rsi < 35 else "+3-7% (Standard)",
-            reasoning=reasoning + [f"Sent: {avg_sentiment:.2f}", f"RSI: {rsi:.0f}"]
+            predicted_move=("+5-12% (Oversold Bounce)" if rating == "BULLISH" and sub["rsi"] < 35 else "+3-7% (Standard)"),
+            reasoning=reasoning,
         )

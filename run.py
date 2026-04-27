@@ -63,11 +63,10 @@ It does NOT constitute financial advice.
         help="Show recent alerts from past runs",
     )
     parser.add_argument(
-        "--cloud",
+        "--optimize",
         action="store_true",
-        help="Cloud mode: save HTML report to S3 + send email via SES",
+        help="Fit scoring weights from backtest outcomes (needs 50+ checked predictions)",
     )
-
     # Screener options
     parser.add_argument(
         "--min-return",
@@ -102,7 +101,7 @@ It does NOT constitute financial advice.
     console.print("[bold cyan]╔══════════════════════════════════════════════╗[/bold cyan]")
     console.print("[bold cyan]║     📊 Stock Screener & Predictor           ║[/bold cyan]")
     console.print("[bold cyan]║  Find hot stocks + predict moves            ║[/bold cyan]")
-    console.print("[bold cyan]║  Powered by FinBERT NLP + Technical Analysis║[/bold cyan]")
+    console.print("[bold cyan]║  Powered by Claude AI + Technical Analysis  ║[/bold cyan]")
     console.print("[bold cyan]╚══════════════════════════════════════════════╝[/bold cyan]")
     console.print()
     console.print(
@@ -114,6 +113,8 @@ It does NOT constitute financial advice.
         _run_backtest()
     elif args.alerts:
         _show_alerts()
+    elif args.optimize:
+        _run_optimize()
     elif args.schedule:
         _run_scheduled(args)
     else:
@@ -128,7 +129,7 @@ def _run_once(args):
         min_return=args.min_return,
         top_n=args.top,
     )
-    app.run(cloud_mode=args.cloud, trigger="CLI")
+    app.run(trigger="CLI")
 
 
 def _run_scheduled(args):
@@ -158,6 +159,18 @@ def _show_alerts():
 
     alert_mgr = AlertManager()
     alert_mgr.show_recent_alerts(hours=72)
+
+
+def _run_optimize():
+    """Fit scoring weights from backtest outcomes."""
+    from stock_sentiment.market.weight_optimizer import WeightOptimizer
+    from stock_sentiment.history import History
+
+    history = History()
+    try:
+        WeightOptimizer(history).optimize()
+    finally:
+        history.close()
 
 
 if __name__ == "__main__":

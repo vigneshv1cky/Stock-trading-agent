@@ -1,13 +1,7 @@
 """Alert system: detects new stocks, BULLISH flips, and score changes.
 
 Compares current run against previous run to generate alerts.
-Supports desktop notifications on macOS/Linux/Windows.
 """
-
-import os
-import subprocess
-import sys
-from datetime import datetime, timezone
 
 from rich.console import Console
 from rich.panel import Panel
@@ -24,7 +18,7 @@ class AlertManager:
 
     def __init__(self, history: History = None, disable_notifications: bool = False):
         self.history = history or History()
-        self.disable_notifications = disable_notifications
+        # disable_notifications kept for call-site compat; desktop notifications removed
 
     def check_and_alert(self, current_predictions: list) -> list[dict]:
         """Compare current predictions against previous run and generate alerts.
@@ -119,17 +113,11 @@ class AlertManager:
         console.print(self._render_alerts_panel(alerts))
         console.print()
 
-        # Send desktop notification for important alerts
-        if not self.disable_notifications:
-            important = [a for a in alerts if a["alert_type"] in ("BULLISH_FLIP", "HIGH_CONFIDENCE", "SCORE_SURGE")]
-            if important:
-                self._send_desktop_notification(important)
-
     def show_recent_alerts(self, hours: int = 24):
         """Show alerts from the last N hours."""
         if not hasattr(self.history, 'get_recent_alerts'):
             return
-            
+
         alerts = self.history.get_recent_alerts(hours)
         if not alerts:
             console.print("[dim]No alerts in the last 24 hours.[/dim]")
@@ -193,26 +181,3 @@ class AlertManager:
             title=f"[bold yellow]⚡ {len(alerts)} Alert{'s' if len(alerts) != 1 else ''}[/bold yellow]",
             border_style="yellow",
         )
-
-    def _send_desktop_notification(self, alerts: list[dict]):
-        """Send a desktop notification (macOS/Linux)."""
-        count = len(alerts)
-        symbols = ", ".join(set(a["symbol"] for a in alerts[:5]))
-        title = f"Stock Screener: {count} Alert{'s' if count != 1 else ''}"
-        body = f"{symbols}"
-
-        try:
-            if sys.platform == "darwin":
-                # macOS
-                subprocess.run(
-                    ["osascript", "-e",
-                     f'display notification "{body}" with title "{title}"'],
-                    capture_output=True, timeout=5,
-                )
-            elif sys.platform == "linux":
-                subprocess.run(
-                    ["notify-send", title, body],
-                    capture_output=True, timeout=5,
-                )
-        except Exception:
-            pass  # Notifications are best-effort

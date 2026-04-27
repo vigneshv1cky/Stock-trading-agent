@@ -32,13 +32,14 @@ def _from_decimal(obj):
 
 class BaseStorage:
     def save_run(self, predictions: list, min_return: float, top_n: int, trigger_type: str = "MANUAL") -> str: raise NotImplementedError
-    def get_latest_run(self) -> Optional[dict]: raise NotImplementedError
+    def get_latest_run(self, exclude_triggers: list | None = None) -> Optional[dict]: raise NotImplementedError
     def get_predictions_for_run(self, run_id: str) -> list[dict]: raise NotImplementedError
     def save_heartbeat(self, status: str, message: str = ""): raise NotImplementedError
     def get_heartbeat(self) -> Optional[dict]: raise NotImplementedError
     def get_backtest_stats(self) -> dict: raise NotImplementedError
     def get_predictions_needing_backtest(self, min_age_days: int = 5) -> list[dict]: raise NotImplementedError
-    def save_outcome(self, prediction_id: str, symbol: str, price_at_pred: float, prices: dict, prediction_correct: bool): raise NotImplementedError
+    def save_outcome(self, prediction_id: str, symbol: str, price_at_pred: float, prices: dict, prediction_correct: bool, ret_5d_pct: Optional[float] = None): raise NotImplementedError
+    def get_outcomes_with_subscores(self) -> list[dict]: raise NotImplementedError
     def close(self): pass
 
     def get_all_symbols_from_last_run(self) -> list[str]:
@@ -79,13 +80,19 @@ class DynamoDBStorage(BaseStorage):
                     'price_at_prediction': p.current_price, 'prediction': p.prediction,
                     'overall_score': p.overall_score, 'archetype': p.archetype,
                     'volume_ratio': p.volume_ratio, 'rsi': p.rsi, 'predicted_move': p.predicted_move,
-                    'reasoning': json.dumps(p.reasoning)
+                    'reasoning': json.dumps(p.reasoning),
+                    'momentum_score': p.momentum_score, 'volume_score': p.volume_score,
+                    'technical_score': p.technical_score, 'sentiment_score': p.sentiment_score,
+                    'avg_sentiment': p.avg_sentiment, 'bullish_count': p.bullish_count,
                 }))
         return run_id
 
-    def get_latest_run(self) -> Optional[dict]:
+    def get_latest_run(self, exclude_triggers: list | None = None) -> Optional[dict]:
         try:
             items = self.runs_table.scan().get('Items', [])
+            if not items: return None
+            if exclude_triggers:
+                items = [i for i in items if i.get('trigger_type') not in exclude_triggers]
             if not items: return None
             latest = max(items, key=lambda x: x['run_at'])
             res = _from_decimal(latest)
@@ -126,12 +133,27 @@ class DynamoDBStorage(BaseStorage):
         response = self.preds_table.scan(FilterExpression=Attr('predicted_at').lt(cutoff) & Attr('checked_at').not_exists())
         return [_from_decimal(item) for item in response.get('Items', [])]
 
-    def save_outcome(self, prediction_id: str, symbol: str, price_at_pred: float, prices: dict, prediction_correct: bool):
+    def save_outcome(self, prediction_id: str, symbol: str, price_at_pred: float, prices: dict, prediction_correct: bool, ret_5d_pct: Optional[float] = None):
+        update_expr = "SET checked_at = :now, prediction_correct = :correct"
+        attr_vals: dict = {':now': datetime.now(timezone.utc).isoformat(), ':correct': prediction_correct}
+        if ret_5d_pct is not None:
+            update_expr += ", ret_5d_pct = :ret5d"
+            attr_vals[':ret5d'] = _to_decimal(ret_5d_pct)
         self.preds_table.update_item(
             Key={'symbol': symbol, 'predicted_at': prediction_id},
-            UpdateExpression="SET checked_at = :now, prediction_correct = :correct",
-            ExpressionAttributeValues={':now': datetime.now(timezone.utc).isoformat(), ':correct': prediction_correct}
+            UpdateExpression=update_expr,
+            ExpressionAttributeValues=attr_vals,
         )
+
+    def get_outcomes_with_subscores(self) -> list[dict]:
+        try:
+            from boto3.dynamodb.conditions import Attr
+            response = self.preds_table.scan(
+                FilterExpression=Attr('checked_at').exists() & Attr('momentum_score').exists()
+            )
+            return [_from_decimal(i) for i in response.get('Items', [])]
+        except Exception:
+            return []
 
 class SQLiteStorage(BaseStorage):
     def __init__(self, db_path="~/.stock_screener/local_history.db"):
@@ -166,7 +188,14 @@ class SQLiteStorage(BaseStorage):
             "rsi": "REAL",
             "reasoning": "TEXT",
             "prediction_correct": "INTEGER",
-            "checked_at": "TEXT"
+            "checked_at": "TEXT",
+            "momentum_score": "REAL",
+            "volume_score": "REAL",
+            "technical_score": "REAL",
+            "sentiment_score": "REAL",
+            "avg_sentiment": "REAL",
+            "bullish_count": "INTEGER",
+            "ret_5d_pct": "REAL",
         }
         for col, col_type in new_columns.items():
             try:
@@ -183,15 +212,29 @@ class SQLiteStorage(BaseStorage):
         self.conn.execute("INSERT INTO runs (run_id, run_at, min_return, stock_count, top_n, trigger_type) VALUES (?, ?, ?, ?, ?, ?)", 
                           (now, now, min_return, len(predictions), top_n, trigger_type))
         for p in predictions:
-            self.conn.execute("INSERT INTO predictions (symbol, predicted_at, run_id, price_at_prediction, prediction, overall_score, archetype, volume_ratio, rsi, reasoning) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                              (p.symbol, now, now, p.current_price, p.prediction, p.overall_score, p.archetype, p.volume_ratio, p.rsi, json.dumps(p.reasoning)))
+            self.conn.execute(
+                "INSERT INTO predictions (symbol, predicted_at, run_id, price_at_prediction, prediction, "
+                "overall_score, archetype, volume_ratio, rsi, reasoning, "
+                "momentum_score, volume_score, technical_score, sentiment_score, avg_sentiment, bullish_count) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (p.symbol, now, now, p.current_price, p.prediction, p.overall_score, p.archetype,
+                 p.volume_ratio, p.rsi, json.dumps(p.reasoning),
+                 p.momentum_score, p.volume_score, p.technical_score, p.sentiment_score,
+                 p.avg_sentiment, p.bullish_count)
+            )
         self.conn.commit()
         print(f"[SQLite] {trigger_type} saved at {now}")
         return now
 
-    def get_latest_run(self) -> Optional[dict]:
-        # Using ROWID ensures we get the absolute last inserted row, bypassing string sort issues
-        row = self.conn.execute("SELECT * FROM runs ORDER BY ROWID DESC LIMIT 1").fetchone()
+    def get_latest_run(self, exclude_triggers: list | None = None) -> Optional[dict]:
+        if exclude_triggers:
+            placeholders = ",".join("?" * len(exclude_triggers))
+            row = self.conn.execute(
+                f"SELECT * FROM runs WHERE trigger_type NOT IN ({placeholders}) ORDER BY ROWID DESC LIMIT 1",
+                exclude_triggers,
+            ).fetchone()
+        else:
+            row = self.conn.execute("SELECT * FROM runs ORDER BY ROWID DESC LIMIT 1").fetchone()
         if not row: return None
         res = dict(row); res['id'] = res['run_id']
         return res
@@ -222,10 +265,18 @@ class SQLiteStorage(BaseStorage):
         rows = self.conn.execute("SELECT * FROM predictions WHERE predicted_at < ? AND checked_at IS NULL", (cutoff,)).fetchall()
         return [dict(r) for r in rows]
 
-    def save_outcome(self, prediction_id: str, symbol: str, price_at_pred: float, prices: dict, prediction_correct: bool):
-        self.conn.execute("UPDATE predictions SET checked_at = ?, prediction_correct = ? WHERE symbol = ? AND predicted_at = ?",
-                          (datetime.now(timezone.utc).isoformat(), 1 if prediction_correct else 0, symbol, prediction_id))
+    def save_outcome(self, prediction_id: str, symbol: str, price_at_pred: float, prices: dict, prediction_correct: bool, ret_5d_pct: Optional[float] = None):
+        self.conn.execute(
+            "UPDATE predictions SET checked_at = ?, prediction_correct = ?, ret_5d_pct = ? WHERE symbol = ? AND predicted_at = ?",
+            (datetime.now(timezone.utc).isoformat(), 1 if prediction_correct else 0, ret_5d_pct, symbol, prediction_id)
+        )
         self.conn.commit()
+
+    def get_outcomes_with_subscores(self) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM predictions WHERE checked_at IS NOT NULL AND momentum_score IS NOT NULL"
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     def close(self): self.conn.close()
 

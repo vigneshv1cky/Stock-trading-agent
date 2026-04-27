@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bot Command Center</title>
+    <title>Sentinel</title>
     <link rel="stylesheet" href="/static/style.css">
     <style>
         .container {
@@ -15,11 +15,12 @@
 
 <body>
     <div class="sidebar" id="sidebar">
-        <h1>📊 Bot Command Center</h1>
+        <h1>Sentinel</h1>
         <div class="tabs">
             <button class="tab-btn active" onclick="switchTab('performance')">Performance</button>
             <button class="tab-btn" onclick="switchTab('history')">Trade History</button>
             <button class="tab-btn" onclick="switchTab('manual')">Screener</button>
+            <button class="tab-btn" id="settings-tab-btn" onclick="switchTab('settings')">Settings</button>
         </div>
     </div>
 
@@ -61,17 +62,35 @@
                         <div id="positions-list"></div>
                     </div>
 
+                    <!-- LAST EXECUTION -->
+                    <div id="last-execution-section"
+                        style="display:none; margin-top:2rem; border:1px solid var(--border-color); border-radius:8px; background:#0d1117; padding:1.5rem;">
+                        <div
+                            style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:1rem;">
+                            <h3 style="margin:0; color:var(--accent-color);">Last Execution</h3>
+                            <span id="exec-meta" style="font-size:12px; color:#8b949e;"></span>
+                        </div>
+                        <div id="exec-regime" style="font-size:12px; color:#8b949e; margin-bottom:1rem;"></div>
+                        <div id="exec-bought"></div>
+                        <div id="exec-sold"></div>
+                        <div id="exec-swapped"></div>
+                        <div id="exec-empty" style="display:none; color:#8b949e; font-size:13px;">No trades were placed
+                            in this cycle.</div>
+                    </div>
+
                     <!-- FORCE EXECUTION ZONE -->
                     <div
                         style="margin-top: 2rem; padding: 1.5rem; border: 1px solid var(--border-color); border-radius: 8px; background: #0d1117; text-align: center;">
                         <h3 style="color: var(--accent-color); margin-top: 0;">Manual Trade Execution</h3>
                         <p style="font-size: 13px; color: #8b949e; margin-bottom: 1rem;">Execute a full AI cycle and
                             place paper trades immediately.</p>
-                        <div class="action-area" style="min-height: 80px; display: flex; flex-direction: column; justify-content: center; align-items: center;">
+                        <div class="action-area"
+                            style="min-height: 80px; display: flex; flex-direction: column; justify-content: center; align-items: center;">
                             <button class="action-btn" id="force-btn" onclick="forceTrade()">Force Execution</button>
                             <div class="spinner" id="force-spinner" style="display: none; margin-top: 20px;"></div>
                         </div>
                     </div>
+                    <div id="trade-result" style="text-align: left; margin-top: 1rem;"></div>
                 </div>
                 <div style="text-align: left; margin-top: 1rem;">
                     <button class="action-btn" onclick="loadPerformance()">Refresh Metrics</button>
@@ -107,13 +126,108 @@
                 <p style="color: #8b949e; font-size: 14px; margin-bottom: 1.5rem;">
                     Run the "Triple-Door" logic to find Momentum, Breakout, and Recovery plays.
                 </p>
-                <div class="action-area" style="min-height: 80px; display: flex; flex-direction: column; justify-content: center; align-items: center;">
+                <div class="action-area"
+                    style="min-height: 80px; display: flex; flex-direction: column; justify-content: center; align-items: center;">
                     <button class="action-btn" id="run-btn" onclick="runScreener()">Scan Market Now</button>
                     <div class="spinner" id="manual-spinner" style="display: none; margin-top: 20px;"></div>
                 </div>
+                <div id="screener-result" style="text-align: left; margin-top: 1rem;"></div>
+            </div>
+
+            <!-- SETTINGS TAB -->
+            <div id="settings-tab" class="tab-content">
+                <h3 style="margin-bottom: 0.25rem;">Bot Settings</h3>
+                <p style="color: #8b949e; font-size: 13px; margin-bottom: 2rem;">
+                    Changes take effect on the next screener cycle (within 30 minutes).
+                </p>
+
+                <div
+                    style="border:1px solid var(--border-color); border-radius:8px; padding:1.5rem; background:#0d1117; margin-bottom:1rem;">
+                    <h4 style="margin-top:0; color:var(--accent-color);">Trading Mode</h4>
+
+                    <div style="margin-bottom:1.25rem;">
+                        <label style="display:block; font-size:13px; color:#8b949e; margin-bottom:0.5rem;">Mode</label>
+                        <select id="trading-mode-select" style="
+                            width:100%; padding:0.5rem 0.75rem; border-radius:6px;
+                            border:1px solid var(--border-color); background:#161b22;
+                            color:#e6edf3; font-size:14px; cursor:pointer;">
+                            <option value="paper">Paper Trading (simulated, no real money)</option>
+                            <option value="live">Live Trading (real money)</option>
+                        </select>
+                    </div>
+
+                    <div id="live-trading-warning" style="display:none; margin-bottom:1.25rem;
+                        padding:0.75rem 1rem; border-radius:6px; background:#2d1616;
+                        border:1px solid #f85149; font-size:13px; color:#f85149;">
+                        ⚠ Live trading uses real money. Orders will be placed against your actual Alpaca account. Takes
+                        effect on the next trade cycle.
+                    </div>
+
+                    <div id="live-keys-section" style="display:none;">
+                        <div style="margin-bottom:0.75rem;">
+                            <label style="display:block; font-size:13px; color:#8b949e; margin-bottom:0.4rem;">Live API
+                                Key</label>
+                            <input id="live-api-key-input" type="text" autocomplete="off"
+                                placeholder="Enter live API key…" style="width:100%; padding:0.5rem 0.75rem; border-radius:6px;
+                                border:1px solid var(--border-color); background:#161b22;
+                                color:#e6edf3; font-size:13px; box-sizing:border-box;">
+                        </div>
+                        <div>
+                            <label style="display:block; font-size:13px; color:#8b949e; margin-bottom:0.4rem;">Live
+                                Secret Key</label>
+                            <input id="live-secret-key-input" type="password" autocomplete="new-password"
+                                placeholder="Enter live secret key…" style="width:100%; padding:0.5rem 0.75rem; border-radius:6px;
+                                border:1px solid var(--border-color); background:#161b22;
+                                color:#e6edf3; font-size:13px; box-sizing:border-box;">
+                        </div>
+                    </div>
+                </div>
+
+                <div
+                    style="border:1px solid var(--border-color); border-radius:8px; padding:1.5rem; background:#0d1117;">
+                    <h4 style="margin-top:0; color:var(--accent-color);">News Provider</h4>
+
+                    <div style="margin-bottom:1.25rem;">
+                        <label
+                            style="display:block; font-size:13px; color:#8b949e; margin-bottom:0.5rem;">Provider</label>
+                        <select id="news-provider-select" style="
+                            width:100%; padding:0.5rem 0.75rem; border-radius:6px;
+                            border:1px solid var(--border-color); background:#161b22;
+                            color:#e6edf3; font-size:14px; cursor:pointer;">
+                            <option value="rss">Google News RSS (default — free, ~2 min lag)</option>
+                            <option value="alpaca">Alpaca News (paid plan required)</option>
+                            <option value="none">Disabled</option>
+                        </select>
+                    </div>
+
+                    <!-- Alpaca info -->
+                    <div id="alpaca-info-section" style="display:none; margin-bottom:1.25rem;
+                        padding:0.75rem 1rem; border-radius:6px; background:#161b22;
+                        border:1px solid var(--border-color); font-size:13px; color:#8b949e;">
+                        Alpaca news uses the <code>ALPACA_API_KEY</code> and <code>ALPACA_SECRET_KEY</code>
+                        environment variables already set for trading. A paid Algo Trader Plus subscription
+                        is required for the news stream.
+                    </div>
+
+                    <div style="display:flex; gap:0.75rem; align-items:center;">
+                        <button class="action-btn" onclick="saveSettings()" id="settings-save-btn">
+                            Save Settings
+                        </button>
+                        <span id="settings-save-status" style="font-size:13px; color:#8b949e;"></span>
+                    </div>
+                </div>
+
+                <div style="margin-top:2rem; padding-top:1.5rem; border-top:1px solid var(--border-color);">
+                    <a href="/logout" style="
+                        display:inline-block; padding:0.5rem 1.25rem; border-radius:6px;
+                        background:#21262d; border:1px solid var(--border-color);
+                        color:#8b949e; font-size:13px; text-decoration:none; cursor:pointer;"
+                        onmouseover="this.style.color='#e6edf3'" onmouseout="this.style.color='#8b949e'">
+                        Sign out
+                    </a>
+                </div>
             </div>
         </div>
-        <div id="result"></div>
     </div>
     <script src="/static/app.js"></script>
 </body>

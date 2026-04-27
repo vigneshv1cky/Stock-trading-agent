@@ -113,7 +113,8 @@ class Backtester:
 
                 if correct is not None:
                     self.history.save_outcome(
-                        pred["id"], symbol, pred_price, prices, correct
+                        pred["id"], symbol, pred_price, prices, correct,
+                        ret_5d_pct=prices.get("ret_5d"),
                     )
                     checked += 1
 

@@ -2,7 +2,7 @@
 #
 # AWS Deployment Script for Stock Screener (Production ALB Mode)
 # ==========================================
-# Sets up: ECR, ECS Fargate, S3, IAM, Load Balancer (ALB)
+# Sets up: ECR, ECS Fargate, IAM, Load Balancer (ALB)
 #
 
 set -e
@@ -16,7 +16,6 @@ ECR_REPO="${APP_NAME}"
 ECS_CLUSTER="${APP_NAME}-cluster"
 TASK_FAMILY="${APP_NAME}-task"
 SERVICE_NAME="${APP_NAME}-service"
-S3_BUCKET="${APP_NAME}-reports-$(aws sts get-caller-identity --query Account --output text 2>/dev/null || echo 'ACCOUNT_ID')"
 TASK_CPU="1024"                          # 1 vCPU
 TASK_MEMORY="4096"                       # 4 GB
 
@@ -26,7 +25,6 @@ echo "============================================"
 echo ""
 echo "  Region:    $AWS_REGION"
 echo "  App:       $APP_NAME"
-echo "  S3 Bucket: $S3_BUCKET"
 echo ""
 
 # Check prerequisites
@@ -37,9 +35,8 @@ ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 ECR_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}"
 
 # ============================================================
-# Step 1-2: S3 and ECR (Fast Checks)
+# Step 1: ECR
 # ============================================================
-if ! aws s3 ls "s3://${S3_BUCKET}" 2>/dev/null; then aws s3 mb "s3://${S3_BUCKET}" --region "${AWS_REGION}"; fi
 if ! aws ecr describe-repositories --repository-names "${ECR_REPO}" --region "${AWS_REGION}" &>/dev/null; then
     aws ecr create-repository --repository-name "${ECR_REPO}" --region "${AWS_REGION}"
 fi
@@ -114,10 +111,13 @@ POLICY_DOC=$(cat <<POLICY
 {
     "Version": "2012-10-17",
     "Statement": [
-        {"Effect": "Allow", "Action": ["s3:PutObject", "s3:GetObject"], "Resource": "arn:aws:s3:::${S3_BUCKET}/*"},
-        {"Effect": "Allow", "Action": ["ses:SendEmail", "ses:SendRawEmail"], "Resource": "*"},
         {"Effect": "Allow", "Action": ["dynamodb:ListTables", "dynamodb:DescribeTable"], "Resource": "*"},
-        {"Effect": "Allow", "Action": ["dynamodb:CreateTable","dynamodb:DescribeTable","dynamodb:GetItem","dynamodb:PutItem","dynamodb:UpdateItem","dynamodb:DeleteItem","dynamodb:Query","dynamodb:Scan","dynamodb:BatchWriteItem"], "Resource": "arn:aws:dynamodb:${AWS_REGION}:*:table/PROD_*"}
+        {"Effect": "Allow", "Action": ["dynamodb:CreateTable","dynamodb:DescribeTable","dynamodb:GetItem","dynamodb:PutItem","dynamodb:UpdateItem","dynamodb:DeleteItem","dynamodb:Query","dynamodb:Scan","dynamodb:BatchWriteItem"], "Resource": "arn:aws:dynamodb:${AWS_REGION}:*:table/PROD_*"},
+        {"Effect": "Allow", "Action": ["bedrock:InvokeModel"], "Resource": [
+            "arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
+            "arn:aws:bedrock:*:*:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0",
+            "arn:aws:bedrock:${AWS_REGION}::foundation-model/amazon.nova-micro-v1:0"
+        ]}
     ]
 }
 POLICY
@@ -149,7 +149,6 @@ TASK_DEF=$(cat <<TASKDEF
                 {"name": "ENV", "value": "PROD"},
                 {"name": "ALPACA_API_KEY", "value": "${ALPACA_API_KEY}"},
                 {"name": "ALPACA_SECRET_KEY", "value": "${ALPACA_SECRET_KEY}"},
-                {"name": "S3_BUCKET", "value": "${S3_BUCKET}"},
                 {"name": "AWS_REGION", "value": "${AWS_REGION}"},
                 {"name": "ADMIN_USERNAME", "value": "${ADMIN_USERNAME}"},
                 {"name": "ADMIN_PASSWORD", "value": "${ADMIN_PASSWORD}"}

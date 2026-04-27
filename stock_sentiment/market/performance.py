@@ -21,8 +21,19 @@ class PerformanceTracker:
     def __init__(self):
         self.api_key = os.environ.get("ALPACA_API_KEY")
         self.secret_key = os.environ.get("ALPACA_SECRET_KEY")
-        if self.api_key and self.secret_key and TradingClient:
-            self.client = TradingClient(self.api_key, self.secret_key, paper=True)
+        if TradingClient:
+            from stock_sentiment.config import load_settings
+            settings = load_settings()
+            env_paper = os.environ.get("ALPACA_PAPER")
+            paper_mode = env_paper.lower() != "false" if env_paper is not None else settings.get("alpaca_paper", True)
+            if paper_mode:
+                api_key = self.api_key
+                secret_key = self.secret_key
+            else:
+                api_key = os.environ.get("ALPACA_LIVE_API_KEY") or settings.get("alpaca_live_api_key", "")
+                secret_key = os.environ.get("ALPACA_LIVE_SECRET_KEY") or settings.get("alpaca_live_secret_key", "")
+            if api_key and secret_key:
+                self.client = TradingClient(api_key, secret_key, paper=paper_mode)
         else:
             self.client = None
 
@@ -111,7 +122,8 @@ class PerformanceTracker:
             return []
 
     def get_equity_curve(self) -> List[Dict]:
-        if not self.client: return []
+        if not self.client:
+            return []
         try:
             print("[Analytics] Fetching 30-day Equity Curve...")
             history = self.client.get_portfolio_history(GetPortfolioHistoryRequest(period="1M", timeframe="1D"))

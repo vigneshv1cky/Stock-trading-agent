@@ -30,3 +30,6 @@ aws_creds.sh
 
 # Docker
 docker-compose.override.yml
+
+# Claude Code local settings (may contain personal overrides)
+.claude/settings.local.json

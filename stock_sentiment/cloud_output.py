@@ -1,20 +1,10 @@
-"""Cloud output: generates HTML report, uploads to S3, sends email via SES.
+"""Generates an HTML report from screener predictions."""
 
-Environment variables:
-    S3_BUCKET       - S3 bucket name for reports
-    SES_FROM_EMAIL  - Verified SES sender email
-    SES_TO_EMAIL    - Recipient email
-    AWS_REGION      - AWS region (default: us-east-1)
-"""
-
-import json
-import os
 from datetime import datetime, timezone
-from typing import Optional
 
 
 def generate_html_report(predictions: list, screened_count: int, fragment: bool = False) -> str:
-    """Generate a styled HTML email report from predictions."""
+    """Generate a styled HTML report from predictions."""
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
     bullish = [p for p in predictions if p.prediction == "BULLISH"]
@@ -35,7 +25,6 @@ def generate_html_report(predictions: list, screened_count: int, fragment: bool 
         c = pct_color(val)
         return f'<span style="color:{c}">{val:+.1f}%</span>'
 
-    # Build stock rows
     rows = ""
     for i, p in enumerate(predictions, 1):
         pred_c = color(p.prediction)
@@ -57,7 +46,6 @@ def generate_html_report(predictions: list, screened_count: int, fragment: bool 
             <td style="padding:8px;font-size:12px;color:#999">{reasoning[:60]}</td>
         </tr>"""
 
-    # Top picks detail
     top_detail = ""
     for p in bullish[:8]:
         headlines_html = ""
@@ -143,137 +131,3 @@ def generate_html_report(predictions: list, screened_count: int, fragment: bool 
 </html>"""
 
     return html
-
-
-def upload_to_s3(html: str, bucket: str, region: str = "us-east-1") -> Optional[str]:
-    """Upload HTML report to S3. Returns the S3 URL."""
-    try:
-        import boto3
-
-        s3 = boto3.client("s3", region_name=region)
-        now = datetime.now(timezone.utc)
-        key = f"reports/{now.strftime('%Y/%m/%d')}/screener-{now.strftime('%Y%m%d-%H%M%S')}.html"
-
-        s3.put_object(
-            Bucket=bucket,
-            Key=key,
-            Body=html.encode("utf-8"),
-            ContentType="text/html",
-        )
-
-        url = f"https://{bucket}.s3.{region}.amazonaws.com/{key}"
-        return url
-
-    except Exception as e:
-        print(f"S3 upload failed: {e}")
-        return None
-
-
-def send_email(
-    subject: str,
-    html_body: str,
-    from_email: str,
-    to_email: str,
-    region: str = "us-east-1",
-    s3_url: str = None,
-):
-    """Send email via AWS SES."""
-    try:
-        import boto3
-
-        ses = boto3.client("ses", region_name=region)
-
-        # Add S3 link to email if available
-        if s3_url:
-            link_section = f"""
-            <div style="text-align:center;margin:20px 0">
-                <a href="{s3_url}" style="background:#58a6ff;color:#fff;padding:12px 24px;
-                   text-decoration:none;border-radius:6px;font-weight:bold">
-                    View Full Report
-                </a>
-            </div>"""
-            html_body = html_body.replace("</body>", f"{link_section}</body>")
-
-        ses.send_email(
-            Source=from_email,
-            Destination={"ToAddresses": [to_email]},
-            Message={
-                "Subject": {"Data": subject, "Charset": "UTF-8"},
-                "Body": {
-                    "Html": {"Data": html_body, "Charset": "UTF-8"},
-                },
-            },
-        )
-        return True
-
-    except Exception as e:
-        print(f"Email send failed: {e}")
-        return False
-
-
-def run_cloud_mode(predictions: list, screened_count: int, alerts: list = None):
-    """Full cloud output: generate report and upload to S3."""
-    region = os.environ.get("AWS_REGION", "us-east-1")
-    bucket = os.environ.get("S3_BUCKET")
-
-    now = datetime.now(timezone.utc)
-    print(f"[Cloud] Generating report at {now.isoformat()}")
-
-    # Generate HTML
-    html = generate_html_report(predictions, screened_count)
-
-    # Save locally as backup
-    local_path = f"/tmp/screener-{now.strftime('%Y%m%d-%H%M%S')}.html"
-    with open(local_path, "w") as f:
-        f.write(html)
-    print(f"[Cloud] Report saved locally: {local_path}")
-
-    # Upload to S3
-    s3_url = None
-    if bucket:
-        s3_url = upload_to_s3(html, bucket, region)
-        if s3_url:
-            print(f"[Cloud] Uploaded to S3: {s3_url}")
-    else:
-        print("[Cloud] S3_BUCKET not set, skipping S3 upload")
-
-    # Save results as JSON too
-    results_json = {
-        "run_at": now.isoformat(),
-        "screened_count": screened_count,
-        "predictions": [
-            {
-                "symbol": p.symbol,
-                "price": p.current_price,
-                "prediction": p.prediction,
-                "confidence": p.confidence,
-                "overall_score": p.overall_score,
-                "change_3m_pct": p.change_3m_pct,
-                "change_1m_pct": p.change_1m_pct,
-                "change_1w_pct": p.change_1w_pct,
-                "predicted_move": p.predicted_move,
-            }
-            for p in predictions
-        ],
-        "alerts": alerts or [],
-    }
-
-    json_path = f"/tmp/screener-{now.strftime('%Y%m%d-%H%M%S')}.json"
-    with open(json_path, "w") as f:
-        json.dump(results_json, f, indent=2)
-
-    if bucket:
-        try:
-            import boto3
-            s3 = boto3.client("s3", region_name=region)
-            json_key = f"reports/{now.strftime('%Y/%m/%d')}/screener-{now.strftime('%Y%m%d-%H%M%S')}.json"
-            s3.put_object(
-                Bucket=bucket, Key=json_key,
-                Body=json.dumps(results_json, indent=2).encode(),
-                ContentType="application/json",
-            )
-            print(f"[Cloud] JSON uploaded to S3: {json_key}")
-        except Exception:
-            pass
-
-    print("[Cloud] Done!")
