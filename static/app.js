@@ -469,8 +469,6 @@ async function loadSettings() {
       modeSel.value = data.alpaca_paper === false ? "live" : "paper";
       updateTradingModeUI(modeSel.value, data.alpaca_live_key_hint || "");
     }
-    const fixedPos = document.getElementById("fixed-position-dollars");
-    if (fixedPos) fixedPos.value = data.fixed_position_dollars || 0;
   } catch (e) {
     console.error("Failed to load settings:", e);
   }
@@ -500,11 +498,9 @@ async function saveSettings() {
   const statusEl = document.getElementById("settings-save-status");
   const btn = document.getElementById("settings-save-btn");
 
-  const fixedPos = document.getElementById("fixed-position-dollars");
   const payload = {
     news_provider: provider,
     alpaca_paper: alpacaPaper,
-    fixed_position_dollars: fixedPos ? (parseFloat(fixedPos.value) || 0) : 0,
   };
 
   if (!alpacaPaper) {

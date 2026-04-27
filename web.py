@@ -257,7 +257,6 @@ def get_settings():
         "alpaca_paper": settings.get("alpaca_paper", True),
         "alpaca_live_key_set": bool(live_key),
         "alpaca_live_key_hint": f"····{live_key[-4:]}" if len(live_key) >= 4 else "",
-        "fixed_position_dollars": settings.get("fixed_position_dollars", 0),
     }
 
 
@@ -267,7 +266,6 @@ class SettingsUpdate(BaseModel):
     alpaca_paper: bool | None = None
     alpaca_live_api_key: str | None = None
     alpaca_live_secret_key: str | None = None
-    fixed_position_dollars: float | None = None
 
 
 @app.post("/api/settings", response_class=JSONResponse, dependencies=[Depends(check_auth)])

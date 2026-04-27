@@ -65,13 +65,14 @@ This is an algorithmic swing trading bot built on a **three-layer decision stack
    - BULLISH threshold: ≥ regime-adjusted value (55–70) | BEARISH: ≤40
 
 3. **Broker** (`stock_sentiment/market/broker.py`) — Executes via Alpaca API:
-   - Max 10 positions, portfolio-% slot sizing (8–15% by conviction score), whole shares only
+   - Max 10 positions, flat 9% of portfolio per position, whole shares only
    - Market orders with 3.0% trailing GTC stops; stops tighten to 1.5% at +15% gain, 0.8% at +30%
    - Smart Conviction Swapping: new pick with score >5 points above weakest holding triggers a swap
    - BEARISH downgrade → immediate liquidation; earnings ≤3 days away → pre-emptive close
-   - 4-hour re-entry cooldown after stop-out (`~/.stock_screener/cooldowns.json`)
+   - 1-hour re-entry cooldown after stop-out (`~/.stock_screener/cooldowns.json`)
+   - Paper mode is default; set `ALPACA_PAPER=false` to switch to live (uses `ALPACA_LIVE_API_KEY` / `ALPACA_LIVE_SECRET_KEY`)
 
-**Orchestrator:** `stock_sentiment/screener_app.py` wires the pipeline; `stock_sentiment/scheduler.py` runs it every 30 min, respecting Alpaca market clock.
+**Orchestrator:** `stock_sentiment/screener_app.py` wires the pipeline; `stock_sentiment/scheduler.py` runs it every 15 min by default (0.25h), respecting Alpaca market clock.
 
 ### Market Regime (`stock_sentiment/market/market_regime.py`)
 
@@ -97,9 +98,10 @@ Actions: red flag on held position → immediate close; strong catalyst on watch
 
 Provider abstraction (`stock_sentiment/market/news_providers.py`):
 
+- **RSS** (default): Google News RSS, no API key required
 - **Polygon** (`PolygonNewsProvider`): polls REST API every 60s, free tier compatible
 - **Alpaca** (`AlpacaNewsProvider`): WebSocket stream, requires paid subscription
-- Provider selection and Polygon API key stored in `~/.stock_screener/settings.json` (managed by `stock_sentiment/config.py`). Dashboard Settings tab allows changing provider at runtime — takes effect on next 30-min cycle.
+- Provider selection and Polygon API key stored in `~/.stock_screener/settings.json` (managed by `stock_sentiment/config.py`). Dashboard Settings tab allows changing provider at runtime — takes effect on next cycle.
 
 ### Storage (Dual-Backend Pattern)
 
@@ -118,9 +120,14 @@ ECS Fargate (1 vCPU, 4GB) behind an ALB. NLP runs entirely on AWS Bedrock — no
 ## Environment Variables
 
 ```ini
-# Required
+# Required (paper trading)
 ALPACA_API_KEY=...
 ALPACA_SECRET_KEY=...
+
+# Live trading (set ALPACA_PAPER=false to activate)
+ALPACA_PAPER=false
+ALPACA_LIVE_API_KEY=...
+ALPACA_LIVE_SECRET_KEY=...
 
 # AWS (local dev — SSO profile)
 AWS_PROFILE=vignesh-sso-profile
@@ -146,4 +153,4 @@ SES_TO_EMAIL=...
 - **Price data is cached 600s** in `price_fetcher.py` to avoid yfinance rate limits.
 - **Alerts detect state changes** by diffing consecutive runs in `alerts.py` — they require at least two historical runs to be meaningful.
 - **Docker target is `linux/amd64`** — specify platform when building locally on Apple Silicon.
-- **Runtime state files** live in `~/.stock_screener/`: `cooldowns.json` (stop-out re-entry blocks), `held_cache.json` (previous cycle holdings for stop-out detection), `weights.json` (learned scoring weights), `settings.json` (news provider config).
+- **Runtime state files** live in `~/.stock_screener/`: `cooldowns.json` (stop-out re-entry blocks), `held_cache.json` (previous cycle holdings for stop-out detection), `weights.json` (learned scoring weights), `settings.json` (news provider config), `last_execution.json` (most recent trade execution log).
