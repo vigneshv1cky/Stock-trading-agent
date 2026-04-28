@@ -60,8 +60,9 @@ def test_weighting():
         print("  ✗ FAILED  avg_sentiment should be positive (recent bullish > old bearish)")
         sys.exit(1)
 
-    # bullish_count: articles with normalized_score > 0.2 → 2 of 4
-    _assert("bullish_count", prediction.bullish_count, 2)
+    # bullish_count: articles with normalized_score > 0.2 AND published within last 24h → 1 of 4
+    # (5h-old bullish counts; 48h-old bullish is outside the 24h window and excluded)
+    _assert("bullish_count", prediction.bullish_count, 1)
 
     # sent_score = (avg_sentiment + 1) * 50 + bonus(0, bullish_count<3)
     expected_sent = min(100.0, (expected_avg + 1) * 50)

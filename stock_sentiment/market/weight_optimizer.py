@@ -11,10 +11,12 @@ MIN_SAMPLES = 50          # global minimum before any optimization runs
 MIN_ARCHETYPE_SAMPLES = 20  # per-archetype minimum; falls back to global below this
 
 DEFAULT_WEIGHTS: dict[str, list[float]] = {
-    "MOMENTUM": [0.30, 0.20, 0.25, 0.25],
-    "BREAKOUT":  [0.30, 0.20, 0.25, 0.25],
-    "RECOVERY":  [0.30, 0.20, 0.25, 0.25],
-    "default":   [0.30, 0.20, 0.25, 0.25],
+    "MOMENTUM":       [0.30, 0.20, 0.25, 0.25],
+    "BREAKOUT":       [0.30, 0.20, 0.25, 0.25],
+    "RECOVERY":       [0.30, 0.20, 0.25, 0.25],
+    # FRESH_BREAKOUT: intraday move is the signal — weight momentum heavily, less sentiment
+    "FRESH_BREAKOUT": [0.45, 0.25, 0.20, 0.10],
+    "default":        [0.30, 0.20, 0.25, 0.25],
 }
 
 
@@ -89,7 +91,7 @@ class WeightOptimizer:
             arch = o.get("archetype") or "default"
             by_archetype.setdefault(arch, []).append(o)
 
-        for arch in ("MOMENTUM", "BREAKOUT", "RECOVERY"):
+        for arch in ("MOMENTUM", "BREAKOUT", "RECOVERY", "FRESH_BREAKOUT"):
             arch_outcomes = by_archetype.get(arch, [])
             if len(arch_outcomes) < MIN_ARCHETYPE_SAMPLES:
                 print(f"[WeightOptimizer] {arch}: {len(arch_outcomes)}/{MIN_ARCHETYPE_SAMPLES} outcomes, using global")

@@ -7,6 +7,12 @@ import os
 import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
+
+try:
+    from zoneinfo import ZoneInfo as _ZoneInfo
+    _ET = _ZoneInfo("America/New_York")
+except ImportError:
+    _ET = timezone(timedelta(hours=-4))  # type: ignore[assignment]
 from decimal import Decimal
 from typing import Optional
 
@@ -103,7 +109,7 @@ class DynamoDBStorage(BaseStorage):
         self.status_table = self.dynamodb.Table(f"{env}_StockScreenerStatus")
 
     def save_run(self, predictions: list, min_return: float, top_n: int, trigger_type: str = "MANUAL") -> str:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(_ET).isoformat()
         run_id = now
         print(f"[DynamoDB] Saving {trigger_type} run...")
         self.runs_table.put_item(Item=_to_decimal({
@@ -150,7 +156,7 @@ class DynamoDBStorage(BaseStorage):
     def save_heartbeat(self, status: str, message: str = ""):
         self.status_table.put_item(Item=_to_decimal({
             'system_id': 'bot_heartbeat', 'status': status, 'message': message,
-            'last_updated': datetime.now(timezone.utc).isoformat()
+            'last_updated': datetime.now(_ET).isoformat()
         }))
 
     def get_heartbeat(self) -> Optional[dict]:
@@ -168,21 +174,39 @@ class DynamoDBStorage(BaseStorage):
             if total == 0:
                 return {"total": 0}
             correct = sum(1 for o in outcomes if o.get('prediction_correct'))
-            return {"total": total, "correct": correct, "accuracy": correct / total}
+            bullish = [o for o in outcomes if o.get('prediction') == 'BULLISH']
+            bullish_correct = sum(1 for o in bullish if o.get('prediction_correct'))
+            bullish_total = len(bullish)
+
+            def _avg(key):
+                vals = [float(o[key]) for o in outcomes if o.get(key) is not None]
+                return sum(vals) / len(vals) if vals else None
+
+            return {
+                "total": total, "correct": correct, "accuracy": correct / total,
+                "bullish_total": bullish_total,
+                "bullish_accuracy": bullish_correct / bullish_total if bullish_total else 0.0,
+                "avg_return_1d": _avg("ret_1d_pct"),
+                "avg_return_3d": _avg("ret_3d_pct"),
+                "avg_return_5d": _avg("ret_5d_pct"),
+                "avg_return_10d": _avg("ret_10d_pct"),
+            }
         except Exception:
             return {"total": 0}
 
     def get_predictions_needing_backtest(self, min_age_days: int = 5) -> list[dict]:
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=min_age_days)).isoformat()
+        cutoff = (datetime.now(_ET) - timedelta(days=min_age_days)).isoformat()
         response = self.preds_table.scan(FilterExpression=Attr('predicted_at').lt(cutoff) & Attr('checked_at').not_exists())
         return [_from_decimal(item) for item in response.get('Items', [])]
 
     def save_outcome(self, prediction_id: str, symbol: str, price_at_pred: float, prices: dict, prediction_correct: bool, ret_5d_pct: Optional[float] = None):
         update_expr = "SET checked_at = :now, prediction_correct = :correct"
-        attr_vals: dict = {':now': datetime.now(timezone.utc).isoformat(), ':correct': prediction_correct}
-        if ret_5d_pct is not None:
-            update_expr += ", ret_5d_pct = :ret5d"
-            attr_vals[':ret5d'] = _to_decimal(ret_5d_pct)
+        attr_vals: dict = {':now': datetime.now(_ET).isoformat(), ':correct': prediction_correct}
+        for key, attr in [("ret_1d", "ret_1d_pct"), ("ret_3d", "ret_3d_pct"), ("ret_5d", "ret_5d_pct"), ("ret_10d", "ret_10d_pct")]:
+            val = prices.get(key)
+            if val is not None:
+                update_expr += f", {attr} = :{attr}"
+                attr_vals[f":{attr}"] = _to_decimal(val)
         self.preds_table.update_item(
             Key={'symbol': symbol, 'predicted_at': prediction_id},
             UpdateExpression=update_expr,
@@ -249,7 +273,10 @@ class SQLiteStorage(BaseStorage):
             "sentiment_score": "REAL",
             "avg_sentiment": "REAL",
             "bullish_count": "INTEGER",
+            "ret_1d_pct": "REAL",
+            "ret_3d_pct": "REAL",
             "ret_5d_pct": "REAL",
+            "ret_10d_pct": "REAL",
             "trade_type": "TEXT",
             "direction": "TEXT",
         }
@@ -263,7 +290,7 @@ class SQLiteStorage(BaseStorage):
         self.conn.commit()
 
     def save_run(self, predictions: list, min_return: float, top_n: int, trigger_type: str = "MANUAL") -> str:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(_ET).isoformat()
         print(f"[SQLite] Saving {trigger_type} run...")
         self.conn.execute(
             "INSERT INTO runs (run_id, run_at, min_return, stock_count, top_n, trigger_type) VALUES (?, ?, ?, ?, ?, ?)",
@@ -306,7 +333,7 @@ class SQLiteStorage(BaseStorage):
     def save_heartbeat(self, status: str, message: str = ""):
         self.conn.execute(
             "INSERT OR REPLACE INTO system_status (system_id, status, message, last_updated) VALUES (?,?,?,?)",
-            ('bot_heartbeat', status, message, datetime.now(timezone.utc).isoformat()),
+            ('bot_heartbeat', status, message, datetime.now(_ET).isoformat()),
         )
         self.conn.commit()
 
@@ -321,10 +348,26 @@ class SQLiteStorage(BaseStorage):
         if total == 0:
             return {"total": 0}
         correct = sum(1 for o in outcomes if o.get('prediction_correct'))
-        return {"total": total, "correct": correct, "accuracy": correct / total}
+        bullish = [o for o in outcomes if o.get('prediction') == 'BULLISH']
+        bullish_correct = sum(1 for o in bullish if o.get('prediction_correct'))
+        bullish_total = len(bullish)
+
+        def _avg(key):
+            vals = [float(o[key]) for o in outcomes if o.get(key) is not None]
+            return sum(vals) / len(vals) if vals else None
+
+        return {
+            "total": total, "correct": correct, "accuracy": correct / total,
+            "bullish_total": bullish_total,
+            "bullish_accuracy": bullish_correct / bullish_total if bullish_total else 0.0,
+            "avg_return_1d": _avg("ret_1d_pct"),
+            "avg_return_3d": _avg("ret_3d_pct"),
+            "avg_return_5d": _avg("ret_5d_pct"),
+            "avg_return_10d": _avg("ret_10d_pct"),
+        }
 
     def get_predictions_needing_backtest(self, min_age_days: int = 5) -> list[dict]:
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=min_age_days)).isoformat()
+        cutoff = (datetime.now(_ET) - timedelta(days=min_age_days)).isoformat()
         rows = self.conn.execute(
             "SELECT * FROM predictions WHERE predicted_at < ? AND checked_at IS NULL", (cutoff,)
         ).fetchall()
@@ -332,8 +375,19 @@ class SQLiteStorage(BaseStorage):
 
     def save_outcome(self, prediction_id: str, symbol: str, price_at_pred: float, prices: dict, prediction_correct: bool, ret_5d_pct: Optional[float] = None):
         self.conn.execute(
-            "UPDATE predictions SET checked_at = ?, prediction_correct = ?, ret_5d_pct = ? WHERE symbol = ? AND predicted_at = ?",
-            (datetime.now(timezone.utc).isoformat(), 1 if prediction_correct else 0, ret_5d_pct, symbol, prediction_id)
+            "UPDATE predictions SET checked_at = ?, prediction_correct = ?, "
+            "ret_1d_pct = ?, ret_3d_pct = ?, ret_5d_pct = ?, ret_10d_pct = ? "
+            "WHERE symbol = ? AND predicted_at = ?",
+            (
+                datetime.now(_ET).isoformat(),
+                1 if prediction_correct else 0,
+                prices.get("ret_1d"),
+                prices.get("ret_3d"),
+                prices.get("ret_5d"),
+                prices.get("ret_10d"),
+                symbol,
+                prediction_id,
+            )
         )
         self.conn.commit()
 

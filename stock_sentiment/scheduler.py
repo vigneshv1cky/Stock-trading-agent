@@ -5,6 +5,12 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 
+try:
+    from zoneinfo import ZoneInfo as _ZoneInfo
+    _ET = _ZoneInfo("America/New_York")
+except ImportError:
+    _ET = timezone(timedelta(hours=-4))  # type: ignore[assignment]
+
 from rich.console import Console
 
 from stock_sentiment.alerts import AlertManager
@@ -58,7 +64,7 @@ class Scheduler:
             while True:
                 time.sleep(1)
                 self.run_count += 1
-                now = datetime.now(timezone.utc)
+                now = datetime.now(_ET)
 
                 market_open = True
                 status_msg = "Market Open - Initializing Cycle"
@@ -87,7 +93,7 @@ class Scheduler:
                             )
 
                         if not market_open and "Closing" not in status_msg:
-                            next_open = clock.next_open.strftime("%H:%M UTC")
+                            next_open = clock.next_open.strftime("%H:%M ET")
                             status_msg = f"Market Closed until {next_open}"
                     except Exception as e:
                         console.print(f"[yellow]⚠  Market check failed: {e}[/yellow]")
@@ -98,7 +104,7 @@ class Scheduler:
                     console.print(f"\n[bold]{'─' * 60}[/bold]")
                     console.print(
                         f"[bold cyan]  Cycle #{self.run_count}[/bold cyan]"
-                        f"  [dim]{now.strftime('%Y-%m-%d %H:%M UTC')}[/dim]"
+                        f"  [dim]{now.strftime('%Y-%m-%d %H:%M ET')}[/dim]"
                         + (
                             f"  [dim]· closes in {int((clock.next_close - clock.timestamp).total_seconds() // 60)}m[/dim]"
                             if clock and clock.is_open else ""
@@ -124,13 +130,13 @@ class Scheduler:
                     except Exception:
                         pass
 
-                next_run_dt = datetime.now(timezone.utc) + timedelta(seconds=interval_seconds)
+                next_run_dt = datetime.now(_ET) + timedelta(seconds=interval_seconds)
                 mins = int(interval_seconds // 60)
 
                 if interval_seconds == self.interval_hours * 3600:
                     console.print(
                         f"\n[dim]  💤  Next cycle in {mins}m"
-                        f" ({next_run_dt.strftime('%H:%M UTC')})[/dim]"
+                        f" ({next_run_dt.strftime('%H:%M ET')})[/dim]"
                     )
                     self.history.save_heartbeat("Sleeping", f"Standard Sleep|{next_run_dt.isoformat()}")
                 else:
@@ -139,7 +145,7 @@ class Scheduler:
                     duration_str = f"{hrs}h {rem}m" if hrs else f"{mins}m"
                     console.print(
                         f"\n[dim]  🌙  Market closed — deep sleep {duration_str}"
-                        f" (opens ~{next_run_dt.strftime('%H:%M UTC')})[/dim]"
+                        f" (opens ~{next_run_dt.strftime('%H:%M ET')})[/dim]"
                     )
                     self.history.save_heartbeat("Sleeping", f"Market Closed|{next_run_dt.isoformat()}")
 

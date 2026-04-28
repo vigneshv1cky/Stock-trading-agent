@@ -7,6 +7,12 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 
 import feedparser
+
+try:
+    from zoneinfo import ZoneInfo as _ZoneInfo
+    _ET = _ZoneInfo("America/New_York")
+except ImportError:
+    _ET = timezone(timedelta(hours=-4))  # type: ignore[assignment]
 from rich.console import Console
 
 from stock_sentiment.display.screener_dashboard import ScreenerDashboard
@@ -23,7 +29,7 @@ console = Console()
 class ScreenerApp:
     """Orchestrates the stock screener pipeline based on Brain Analysis."""
 
-    def __init__(self, top_n: int = 40, min_return: float = 10.0):
+    def __init__(self, top_n: int = 40, min_return: float = 10.0):  # noqa: ARG002
         self.screener = StockScreener(top_n=top_n)
         self.price_fetcher = PriceFetcher(cache_ttl_seconds=600)
         self.tech_analyzer = TechnicalAnalyzer()
@@ -34,7 +40,7 @@ class ScreenerApp:
     def run(self, trigger: str = "MANUAL", execute_trades: bool = True):
         """Full pipeline: screen → fetch news → analyze → predict → execute → display."""
         from datetime import datetime as _dt
-        now_str = _dt.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        now_str = _dt.now(_ET).strftime("%Y-%m-%d %H:%M ET")
 
         # ── Header ────────────────────────────────────────────────────────
         console.rule("[bold cyan]🧠  AI Decision Engine[/bold cyan]")
@@ -84,6 +90,28 @@ class ScreenerApp:
         )
         console.print()
 
+        # News feed health check — <20% coverage signals rate-limit or SSL failure
+        news_health_alert: dict | None = None
+        news_coverage = len(stock_articles) / len(symbols) if symbols else 0.0
+        if news_coverage < 0.20:
+            _status = "DEAD" if total_articles == 0 else "DEGRADED"
+            _msg = (
+                f"RSS feed {_status}: only {len(stock_articles)}/{len(symbols)} stocks returned articles "
+                f"({news_coverage:.0%} coverage, {total_articles} total). "
+                "Google may be rate-limiting this IP or an SSL/network issue occurred — "
+                "sentiment scores will trend neutral and LLM sees 'No recent news'. "
+                "Treat this cycle's predictions with caution."
+            )
+            console.print(f"  [bold red]⚠  NEWS FEED {_status}[/bold red]  [red]{_msg}[/red]\n")
+            news_health_alert = {
+                "alert_type": f"NEWS_FEED_{_status}",
+                "symbol": "SYSTEM",
+                "message": _msg,
+                "prediction": "NEUTRAL",
+                "score": 0.0,
+                "price": 0.0,
+            }
+
         # Step 3: Analyze sentiment
         console.print(f"  [dim][3/5][/dim] Scoring {total_articles} articles via Nova Micro...")
         scored_articles = self._analyze_sentiment(stock_articles)
@@ -108,8 +136,8 @@ class ScreenerApp:
         stock_prices = self.price_fetcher.fetch_batch(symbols, period="3mo")
         technicals = self.tech_analyzer.analyze_batch(stock_prices)
         near = sorted(
-            [(s, d.days_to_earnings) for s, d in stock_prices.items()
-             if d.days_to_earnings is not None and d.days_to_earnings <= 14],
+            [(s.symbol, s.days_to_earnings) for s in screened
+             if s.days_to_earnings is not None and s.days_to_earnings <= 14],
             key=lambda x: x[1],
         )
         near_str = ("  ·  Earnings: [yellow]" + "  ·  ".join(f"{s} {d}d" for s, d in near[:6]) + "[/yellow]") if near else ""
@@ -143,6 +171,12 @@ class ScreenerApp:
             run_id = history.save_run(predictions, 0.0, self.screener.top_n, trigger_type=trigger)
             alert_mgr = AlertManager(history, disable_notifications=True)
             alerts = alert_mgr.check_and_alert(predictions)
+            if news_health_alert:
+                alerts.insert(0, news_health_alert)
+                try:
+                    history.save_alert(**news_health_alert)
+                except Exception:
+                    pass
         except Exception as e:
             import traceback
             print(f"[ScreenerApp] ERROR in data persistence: {e}")

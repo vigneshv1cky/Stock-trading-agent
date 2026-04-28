@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import secrets
 import threading
@@ -172,6 +173,7 @@ async def force_trade():
     return await loop.run_in_executor(executor, _run)
 
 
+
 @app.get("/api/last-execution", response_class=JSONResponse, dependencies=[Depends(check_auth)])
 def get_last_execution():
     import json as _json
@@ -200,6 +202,15 @@ def get_performance():
         latest_run = history.get_latest_run(exclude_triggers=["MANUAL"])
         heartbeat = history.get_heartbeat()
         perf = tracker.get_performance_summary()
+        held_cache: dict = {}
+        try:
+            _hc_path = os.path.expanduser("~/.stock_screener/held_cache.json")
+            if os.path.exists(_hc_path):
+                with open(_hc_path) as _f:
+                    held_cache = json.load(_f)
+        except Exception:
+            pass
+
         positions = []
         if tracker.client:
             positions = [
@@ -211,6 +222,7 @@ def get_performance():
                     "unrealized_pl": float(p.unrealized_pl),
                     "unrealized_plpc": float(p.unrealized_plpc) * 100,
                     "side": "SHORT" if str(getattr(p, "side", "")).lower() in ("short", "positionside.short") else "LONG",
+                    "trade_type": held_cache.get(p.symbol, {}).get("type", "SWING"),
                 }
                 for p in tracker.client.get_all_positions()
             ]

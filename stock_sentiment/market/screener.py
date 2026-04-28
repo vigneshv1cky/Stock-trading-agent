@@ -1,50 +1,331 @@
 """Stock screener: filters and classifies stocks using adaptive percentile thresholds (Option B)."""
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from datetime import tzinfo as _tzinfo
 from typing import Optional
 
 import numpy as np
 import pandas as pd
 from rich.console import Console
 
+_ET: _tzinfo
+try:
+    from zoneinfo import ZoneInfo as _ZoneInfo
+
+    _ET = _ZoneInfo("America/New_York")
+except ImportError:
+    _ET = timezone(timedelta(hours=-4))  # EDT fallback
+
 console = Console()
 
 SCREEN_UNIVERSE = [
-    "PLTR", "SNAP", "U", "PINS", "RBLX", "PATH", "DDOG", "NET", "CRWD", "ZS",
-    "MDB", "SNOW", "ROKU", "HOOD", "SOFI", "AFRM", "UPST", "IONQ", "RGTI", "QUBT",
-    "LUNR", "RKLB", "ASTS", "AMD", "INTC", "QCOM", "MU", "MRVL", "ON", "SMCI",
-    "UBER", "LYFT", "DASH", "ABNB", "TWLO", "OKTA", "CFLT", "ESTC", "DOCN", "BRZE",
-    "MNDY", "GLBE", "GLOB", "TOST", "GTLB", "IOT", "AI", "BBAI", "SOUN", "GRAB",
-    "SE", "SHOP", "SPOT", "OPEN", "DUOL", "BILL", "PCOR", "DT", "FRSH", "TENB",
-    "RPD", "CRDO", "ANET", "PANW", "FTNT", "S", "QLYS", "CHKP", "GEN",
-    "NVDA", "TSM", "AVGO", "ASML", "AMAT", "LRCX", "KLAC", "ADI", "TXN", "WOLF",
-    "SLAB", "ACLS", "RMBS", "DIOD", "INDI", "SITM", "CRUS", "LSCC", "MTSI", "NVTS",
-    "POWI", "V", "MA", "GS", "JPM", "BAC", "MS", "C", "WFC",
-    "AXP", "BLK", "MSTR", "COIN", "WULF", "IREN", "MARA", "RIOT", "CLSK",
-    "HUT", "CORZ", "CIFR", "PYPL", "NU", "IBKR", "ALLY", "STNE", "SQ", "LC", "RKT",
-    "PGR", "TRV", "CB", "AFL", "MET", "PRU",
-    "BX", "KKR", "APO", "BRK-B",
-    "CME", "ICE", "CBOE", "SPGI", "MCO",
-    "USB", "PNC", "TFC", "FITB",
-    "LMT", "RTX",
-    "NOC", "GD", "BA", "LHX", "HWM", "TDG", "HII", "LDOS", "BWXT", "AXON",
-    "RKLB", "IRDM", "KTOS", "XOM", "CVX", "COP", "OXY", "EOG", "SLB", "PBR",
-    "TTE", "SHEL", "BP", "EQNR", "MPC", "PSX", "VLO", "APA", "MUR", "DVN",
-    "HAL", "OVV", "CTRA", "AR", "RRC", "EQT", "CTVA", "CF", "MOS", "ADM",
-    "BG", "NEE", "FSLR", "ENPH", "PLUG", "RUN", "SEDG", "ARRY", "BE", "VIST",
-    "SMR", "OKLO", "LEU", "CCJ", "UUUU", "ZIM", "MATX", "GNK", "DSX", "STNG",
-    "FRO", "DAC", "EGLE", "SBLK", "FCX", "AA", "CLF", "NUE", "NEM",
-    "GOLD", "AU", "HMY", "KGC", "RGLD", "FNV", "TSLA", "RACE", "UPS", "FDX",
-    "NSC", "CSX", "UNP", "LUV", "DAL", "UAL", "AAL", "F", "GM", "RIVN",
-    "LCID", "NIO", "XPEV", "LI", "JOBY", "ACHR", "PSNY", "PFE", "JNJ", "ABBV",
-    "LLY", "UNH", "MRNA", "HIMS", "DOCS", "TDOC", "DNA", "BEAM", "CRSP", "VKTX",
-    "LEGN", "GERN", "IOVA", "CORT", "ISRG", "NKE", "SBUX", "DIS", "AAPL", "AMZN",
-    "WMT", "COST", "HD", "TGT", "TJX", "CAVA", "BIRK", "SHAK", "BROS", "WING",
-    "LULU", "DECK", "CROX", "PLD", "AMT", "EQIX", "DLR", "IRM", "IIPR", "VICI",
-    "O", "SPG", "META", "GOOGL", "NFLX", "TTD", "RDDT", "DJT", "WBD",
-    "FOXA", "MTCH", "BMBL", "ZG", "APP", "CELH", "ARM", "TMDX", "GKOS", "ACLX",
-    "SAIA", "ODFL", "XPO", "PAYC", "WIX", "GFS", "NOW", "WDAY", "HUBS", "TEAM",
+    "PLTR",
+    "SNAP",
+    "U",
+    "PINS",
+    "RBLX",
+    "PATH",
+    "DDOG",
+    "NET",
+    "CRWD",
+    "ZS",
+    "MDB",
+    "SNOW",
+    "ROKU",
+    "HOOD",
+    "SOFI",
+    "AFRM",
+    "UPST",
+    "IONQ",
+    "RGTI",
+    "QUBT",
+    "LUNR",
+    "RKLB",
+    "ASTS",
+    "AMD",
+    "INTC",
+    "QCOM",
+    "MU",
+    "MRVL",
+    "ON",
+    "SMCI",
+    "UBER",
+    "LYFT",
+    "DASH",
+    "ABNB",
+    "TWLO",
+    "OKTA",
+    "CFLT",
+    "ESTC",
+    "DOCN",
+    "BRZE",
+    "MNDY",
+    "GLBE",
+    "GLOB",
+    "TOST",
+    "GTLB",
+    "IOT",
+    "AI",
+    "BBAI",
+    "SOUN",
+    "GRAB",
+    "SE",
+    "SHOP",
+    "SPOT",
+    "OPEN",
+    "DUOL",
+    "BILL",
+    "PCOR",
+    "DT",
+    "FRSH",
+    "TENB",
+    "RPD",
+    "CRDO",
+    "ANET",
+    "PANW",
+    "FTNT",
+    "S",
+    "QLYS",
+    "CHKP",
+    "GEN",
+    "NVDA",
+    "TSM",
+    "AVGO",
+    "ASML",
+    "AMAT",
+    "LRCX",
+    "KLAC",
+    "ADI",
+    "TXN",
+    "WOLF",
+    "SLAB",
+    "ACLS",
+    "RMBS",
+    "DIOD",
+    "INDI",
+    "SITM",
+    "CRUS",
+    "LSCC",
+    "MTSI",
+    "NVTS",
+    "POWI",
+    "V",
+    "MA",
+    "GS",
+    "JPM",
+    "BAC",
+    "MS",
+    "C",
+    "WFC",
+    "AXP",
+    "BLK",
+    "MSTR",
+    "COIN",
+    "WULF",
+    "IREN",
+    "MARA",
+    "RIOT",
+    "CLSK",
+    "HUT",
+    "CORZ",
+    "CIFR",
+    "PYPL",
+    "NU",
+    "IBKR",
+    "ALLY",
+    "STNE",
+    "LC",
+    "RKT",
+    "PGR",
+    "TRV",
+    "CB",
+    "AFL",
+    "MET",
+    "PRU",
+    "BX",
+    "KKR",
+    "APO",
+    "BRK-B",
+    "CME",
+    "ICE",
+    "CBOE",
+    "SPGI",
+    "MCO",
+    "USB",
+    "PNC",
+    "TFC",
+    "FITB",
+    "LMT",
+    "RTX",
+    "NOC",
+    "GD",
+    "BA",
+    "LHX",
+    "HWM",
+    "TDG",
+    "HII",
+    "LDOS",
+    "BWXT",
+    "AXON",
+    "RKLB",
+    "IRDM",
+    "KTOS",
+    "XOM",
+    "CVX",
+    "COP",
+    "OXY",
+    "EOG",
+    "SLB",
+    "PBR",
+    "TTE",
+    "SHEL",
+    "BP",
+    "EQNR",
+    "MPC",
+    "PSX",
+    "VLO",
+    "APA",
+    "MUR",
+    "DVN",
+    "HAL",
+    "OVV",
+    "CTRA",
+    "AR",
+    "RRC",
+    "EQT",
+    "CTVA",
+    "CF",
+    "MOS",
+    "ADM",
+    "BG",
+    "NEE",
+    "FSLR",
+    "ENPH",
+    "PLUG",
+    "RUN",
+    "SEDG",
+    "ARRY",
+    "BE",
+    "VIST",
+    "SMR",
+    "OKLO",
+    "LEU",
+    "CCJ",
+    "UUUU",
+    "ZIM",
+    "MATX",
+    "GNK",
+    "DSX",
+    "STNG",
+    "FRO",
+    "DAC",
+    "EGLE",
+    "SBLK",
+    "FCX",
+    "AA",
+    "CLF",
+    "NUE",
+    "NEM",
+    "GOLD",
+    "AU",
+    "HMY",
+    "KGC",
+    "RGLD",
+    "FNV",
+    "TSLA",
+    "RACE",
+    "UPS",
+    "FDX",
+    "NSC",
+    "CSX",
+    "UNP",
+    "LUV",
+    "DAL",
+    "UAL",
+    "AAL",
+    "F",
+    "GM",
+    "RIVN",
+    "LCID",
+    "NIO",
+    "XPEV",
+    "LI",
+    "JOBY",
+    "ACHR",
+    "PSNY",
+    "PFE",
+    "JNJ",
+    "ABBV",
+    "LLY",
+    "UNH",
+    "MRNA",
+    "HIMS",
+    "DOCS",
+    "TDOC",
+    "DNA",
+    "BEAM",
+    "CRSP",
+    "VKTX",
+    "LEGN",
+    "GERN",
+    "IOVA",
+    "CORT",
+    "ISRG",
+    "NKE",
+    "SBUX",
+    "DIS",
+    "AAPL",
+    "AMZN",
+    "WMT",
+    "COST",
+    "HD",
+    "TGT",
+    "TJX",
+    "CAVA",
+    "BIRK",
+    "SHAK",
+    "BROS",
+    "WING",
+    "LULU",
+    "DECK",
+    "CROX",
+    "PLD",
+    "AMT",
+    "EQIX",
+    "DLR",
+    "IRM",
+    "IIPR",
+    "VICI",
+    "O",
+    "SPG",
+    "META",
+    "GOOGL",
+    "NFLX",
+    "TTD",
+    "RDDT",
+    "DJT",
+    "WBD",
+    "FOXA",
+    "MTCH",
+    "BMBL",
+    "ZG",
+    "APP",
+    "CELH",
+    "ARM",
+    "TMDX",
+    "GKOS",
+    "ACLX",
+    "SAIA",
+    "ODFL",
+    "XPO",
+    "PAYC",
+    "WIX",
+    "GFS",
+    "NOW",
+    "WDAY",
+    "HUBS",
+    "TEAM",
 ]
 
 
@@ -60,6 +341,7 @@ class ScreenedStock:
     archetype: str
     daily_closes_3m: list
     days_to_earnings: Optional[int] = None
+    change_today_pct: float = 0.0  # intraday: current vs yesterday's close (0 when market closed)
 
 
 class StockScreener:
@@ -74,14 +356,17 @@ class StockScreener:
         print(f"[StockScreener] Downloading 3mo OHLCV for {len(symbols)} symbols via yfinance...")
 
         try:
-            data = yf.download(symbols, period="3mo", group_by="ticker", progress=False,
-                               threads=True, auto_adjust=False)
-            print(f"[StockScreener] yfinance download complete ({len(data.columns.get_level_values(0).unique())} symbols with data).")
+            data = yf.download(
+                symbols, period="3mo", group_by="ticker", progress=False, threads=True, auto_adjust=False
+            )
+            print(
+                f"[StockScreener] yfinance download complete ({len(data.columns.get_level_values(0).unique())} symbols with data)."
+            )
         except Exception as e:
             console.print(f"[red]Screen failed: {e}[/red]")
             return []
 
-        now = datetime.now(timezone.utc).date()
+        now = datetime.now(_ET).date()
         rvol_rejected = 0
         earnings_rejected = 0
         pre_screened = []
@@ -106,9 +391,7 @@ class StockScreener:
                 # Use previous session if today's bar is still partial (market open)
                 last_bar_date = volumes.index[-1].date()
                 vol_for_rvol = (
-                    float(volumes.iloc[-2])
-                    if last_bar_date >= datetime.now(timezone.utc).date() and len(volumes) >= 2
-                    else float(volumes.iloc[-1])
+                    float(volumes.iloc[-2]) if last_bar_date >= now and len(volumes) >= 2 else float(volumes.iloc[-1])
                 )
                 rvol = vol_for_rvol / avg_vol if avg_vol > 0 else 0
                 if rvol < 1.0:
@@ -156,12 +439,29 @@ class StockScreener:
                 base_3d = float(closes.iloc[-3]) if len(closes) > 3 else cur_p
                 bounce = ((cur_p - base_3d) / base_3d) * 100 if base_3d > 0 else 0.0
 
-                pre_screened.append({
-                    "symbol": symbol, "cur_p": cur_p, "avg_vol": avg_vol, "rvol": rvol,
-                    "change_3m": change_3m, "change_1m": change_1m, "change_1w": change_1w,
-                    "drawdown": drawdown, "bounce": bounce,
-                    "closes": closes, "days_to_earnings": days_to_earnings,
-                })
+                # Intraday change vs yesterday's close (only when today's partial bar is present)
+                change_today = 0.0
+                if last_bar_date >= now and len(closes) >= 2:
+                    yesterday_close = float(closes.iloc[-2])
+                    if yesterday_close > 0:
+                        change_today = ((cur_p - yesterday_close) / yesterday_close) * 100
+
+                pre_screened.append(
+                    {
+                        "symbol": symbol,
+                        "cur_p": cur_p,
+                        "avg_vol": avg_vol,
+                        "rvol": rvol,
+                        "change_3m": change_3m,
+                        "change_1m": change_1m,
+                        "change_1w": change_1w,
+                        "drawdown": drawdown,
+                        "bounce": bounce,
+                        "change_today": change_today,
+                        "closes": closes,
+                        "days_to_earnings": days_to_earnings,
+                    }
+                )
             except Exception:
                 continue
 
@@ -205,7 +505,13 @@ class StockScreener:
             closes = m["closes"]
 
             archetype = None
-            if change_1w >= thresh_break_1w or change_1m >= thresh_break_1m:
+            change_today = m["change_today"]
+            # FRESH_BREAKOUT: big move TODAY on a previously quiet stock — catches the
+            # start of a move rather than chasing one that's already 30-50% in.
+            # Requires: ≥3% intraday move, 2× volume spike, not already in a big trend.
+            if abs(change_today) >= 3.0 and rvol >= 2.0 and abs(change_1m) < 25.0:
+                archetype = "FRESH_BREAKOUT"
+            elif change_1w >= thresh_break_1w or change_1m >= thresh_break_1m:
                 archetype = "BREAKOUT"
             elif drawdown <= thresh_recovery_dd and bounce >= thresh_recovery_bounce and rvol > 1.1:
                 archetype = "RECOVERY"
@@ -216,20 +522,33 @@ class StockScreener:
                 strategy_rejected += 1
                 continue
 
-            results.append(ScreenedStock(
-                symbol=m["symbol"],
-                current_price=m["cur_p"],
-                change_3m_pct=change_3m,
-                change_1m_pct=change_1m,
-                change_1w_pct=change_1w,
-                avg_volume=m["avg_vol"],
-                volume_ratio=rvol,
-                archetype=archetype,
-                daily_closes_3m=[float(v) for v in closes.values],
-                days_to_earnings=m["days_to_earnings"],
-            ))
+            results.append(
+                ScreenedStock(
+                    symbol=m["symbol"],
+                    current_price=m["cur_p"],
+                    change_3m_pct=change_3m,
+                    change_1m_pct=change_1m,
+                    change_1w_pct=change_1w,
+                    avg_volume=m["avg_vol"],
+                    volume_ratio=rvol,
+                    archetype=archetype,
+                    daily_closes_3m=[float(v) for v in closes.values],
+                    days_to_earnings=m["days_to_earnings"],
+                    change_today_pct=m["change_today"],
+                )
+            )
 
-        results.sort(key=lambda s: (s.volume_ratio, max(0, s.change_1w_pct)), reverse=True)
+        # FRESH_BREAKOUT stocks sorted by intraday magnitude first (catching the move early).
+        # Other archetypes sorted by (RVOL, 1w return) as before.
+        results.sort(
+            key=lambda s: (
+                s.archetype == "FRESH_BREAKOUT",
+                abs(s.change_today_pct) if s.archetype == "FRESH_BREAKOUT" else 0,
+                s.volume_ratio,
+                max(0, s.change_1w_pct),
+            ),
+            reverse=True,
+        )
         top_results = results[: self.top_n]
 
         print(

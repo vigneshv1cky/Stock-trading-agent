@@ -225,7 +225,7 @@ async function loadPerformance() {
         const sign = p.unrealized_pl >= 0 ? "+" : "";
         const side = p.side || "LONG";
         const sideColor = side === "SHORT" ? "#f85149" : "#3fb950";
-        const sideBadge = `<span style="font-size:9px;background:${sideColor}22;color:${sideColor};border:1px solid ${sideColor}55;border-radius:3px;padding:1px 4px;margin-left:5px;vertical-align:middle;">${side}</span>`;
+        const sideBadge = `<span style="font-size:9px;background:${sideColor}22;color:${sideColor};border:1px solid ${sideColor}55;border-radius:3px;padding:1px 4px;margin-left:4px;vertical-align:middle;">${side}</span>`;
         posHtml += `<div class="list-item"><span><strong>${p.symbol}</strong>${sideBadge}</span><span>${p.qty.toFixed(0)} @ $${p.avg_entry_price.toFixed(2)}</span><span class="${color}">${sign}$${p.unrealized_pl.toFixed(2)}</span><span class="${color}">${sign}${p.unrealized_plpc.toFixed(2)}%</span></div>`;
       });
     } else {
@@ -428,6 +428,7 @@ async function forceTrade() {
     spinner.style.display = "none";
   }
 }
+
 
 const resizer = document.getElementById("resizer");
 const sidebar = document.getElementById("sidebar");

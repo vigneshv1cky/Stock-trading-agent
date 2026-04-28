@@ -143,6 +143,8 @@ class AlertManager:
                 "BULLISH_FLIP": "bold green",
                 "SCORE_SURGE": "bold yellow",
                 "HIGH_CONFIDENCE": "bold green",
+                "NEWS_FEED_DEAD": "bold red",
+                "NEWS_FEED_DEGRADED": "bold yellow",
             }
             color = type_colors.get(a["alert_type"], "white")
 
@@ -162,12 +164,16 @@ class AlertManager:
             "BULLISH_FLIP": "🔄",
             "SCORE_SURGE": "📈",
             "HIGH_CONFIDENCE": "🎯",
+            "NEWS_FEED_DEAD": "💀",
+            "NEWS_FEED_DEGRADED": "⚠",
         }
         colors = {
             "NEW_ENTRY": "cyan",
             "BULLISH_FLIP": "bold green",
             "SCORE_SURGE": "bold yellow",
             "HIGH_CONFIDENCE": "bold green",
+            "NEWS_FEED_DEAD": "bold red",
+            "NEWS_FEED_DEGRADED": "bold yellow",
         }
 
         lines = []

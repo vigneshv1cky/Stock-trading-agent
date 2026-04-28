@@ -1,15 +1,8 @@
-"""Fetches and caches stock price data.
-
-Price/volume/OHLCV: Alpaca StockHistoricalDataClient (official API, no rate-limit risk).
-Earnings calendar: yfinance Ticker.calendar, cached per-symbol for 24 hours so
-  the 240-symbol yfinance scan runs at most once per day regardless of how many
-  30-min screener cycles fire.
-"""
+"""Fetches and caches stock price data via Alpaca StockHistoricalDataClient."""
 
 import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Optional
 
 import pandas as pd
 from rich.console import Console
@@ -22,7 +15,9 @@ _PERIOD_TO_DAYS: dict[str, int] = {
     "6mo": 195,
     "1y": 380,
 }
-_EARNINGS_TTL_S = 86_400  # 24 hours — earnings dates change rarely
+# yfinance uses hyphens for share classes; Alpaca uses dots. Map before sending, reverse after.
+_TO_ALPACA: dict[str, str] = {"BRK-B": "BRK.B"}
+_FROM_ALPACA: dict[str, str] = {v: k for k, v in _TO_ALPACA.items()}
 
 
 @dataclass
@@ -34,16 +29,12 @@ class PriceData:
     avg_volume_20d: float
     ohlcv: pd.DataFrame
     fetched_at: datetime
-    days_to_earnings: Optional[int] = None
 
 
 class PriceFetcher:
     def __init__(self, cache_ttl_seconds: int = 900):
         self._cache: dict[str, PriceData] = {}
         self._cache_ttl = cache_ttl_seconds
-        # Earnings: lazily fetched per symbol, refreshed at most once per 24h
-        self._earnings_cache: dict[str, Optional[int]] = {}
-        self._earnings_ts: dict[str, datetime] = {}
         self._alpaca: object = None  # StockHistoricalDataClient, lazy init
 
     # ------------------------------------------------------------------
@@ -84,9 +75,11 @@ class PriceFetcher:
             days = _PERIOD_TO_DAYS.get(period, 100)
             start = datetime.now(timezone.utc) - timedelta(days=days)
 
-            console.print(f"[cyan]Fetching prices for {len(symbols)} symbols via Alpaca...[/cyan]")
+            # Translate symbols to Alpaca notation (e.g. BRK-B → BRK.B)
+            alpaca_symbols = [_TO_ALPACA.get(s, s) for s in symbols]
+            console.print(f"[cyan]Fetching prices for {len(alpaca_symbols)} symbols via Alpaca...[/cyan]")
             request = StockBarsRequest(
-                symbol_or_symbols=symbols,
+                symbol_or_symbols=alpaca_symbols,
                 timeframe=TimeFrame.Day,
                 start=start,
                 adjustment=Adjustment.SPLIT,
@@ -100,7 +93,8 @@ class PriceFetcher:
 
         for symbol in symbols:
             try:
-                symbol_bars = bars[symbol]
+                alpaca_sym = _TO_ALPACA.get(symbol, symbol)
+                symbol_bars = bars[alpaca_sym]
                 if not symbol_bars or len(symbol_bars) < 2:
                     print(f"[PriceFetcher] {symbol}: insufficient bars ({len(symbol_bars) if symbol_bars else 0}), skipping")
                     continue
@@ -137,38 +131,10 @@ class PriceFetcher:
                     avg_volume_20d=avg_vol,
                     ohlcv=df,
                     fetched_at=now,
-                    days_to_earnings=self._get_earnings(symbol),
                 )
             except Exception as e:
                 print(f"[PriceFetcher] {symbol}: parse error — {e}")
                 continue
-
-    # ------------------------------------------------------------------
-    # Earnings calendar — yfinance only, 24h per-symbol TTL
-    # ------------------------------------------------------------------
-
-    def _get_earnings(self, symbol: str) -> Optional[int]:
-        now = datetime.now(timezone.utc)
-        last = self._earnings_ts.get(symbol)
-        if last is not None and (now - last).total_seconds() < _EARNINGS_TTL_S:
-            return self._earnings_cache.get(symbol)
-
-        days: Optional[int] = None
-        try:
-            import yfinance as yf
-            cal = yf.Ticker(symbol).calendar
-            if isinstance(cal, dict) and "Earnings Date" in cal:
-                dates = cal.get("Earnings Date", [])
-                normalized = [dt.date() if hasattr(dt, "date") else dt for dt in dates]
-                future = [dt for dt in normalized if dt >= now.date()]
-                if future:
-                    days = (future[0] - now.date()).days
-        except Exception:
-            pass
-
-        self._earnings_cache[symbol] = days
-        self._earnings_ts[symbol] = now
-        return days
 
     # ------------------------------------------------------------------
     # Helpers

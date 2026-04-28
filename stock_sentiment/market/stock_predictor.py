@@ -5,58 +5,55 @@ import math
 import os
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
+
+try:
+    from zoneinfo import ZoneInfo as _ZoneInfo
+    _ET = _ZoneInfo("America/New_York")
+except ImportError:
+    _ET = timezone(timedelta(hours=-4))  # type: ignore[assignment]
 
 import boto3
 
 from stock_sentiment.market.weight_optimizer import load_weights
 
-# Tier multipliers applied to each article's weight before averaging.
-# Keywords matched case-insensitively against article.source.
-_SOURCE_TIERS: list[tuple[str, float]] = [
-    ("reuters", 1.5),
-    ("bloomberg", 1.5),
-    ("wall street journal", 1.5),
-    ("wsj", 1.5),
-    ("financial times", 1.5),
-    ("ft.com", 1.5),
-    ("associated press", 1.4),
-    ("ap news", 1.4),
-    ("cnbc", 1.4),
-    ("marketwatch", 1.3),
-    ("barron", 1.3),
-    ("fortune", 1.2),
-    ("seeking alpha", 1.2),
-    ("business insider", 1.1),
-    ("motley fool", 1.1),
-    ("benzinga", 1.1),
-    ("forbes", 1.1),
-]
-_SOURCE_DEFAULT = 1.0
-_RECENCY_HALF_LIFE_H = 48.0   # score halves every 48 hours
+_RECENCY_HALF_LIFE_H = 8.0    # score halves every 8 hours — today's news dominates
+
+_COUNT_WINDOW_H = 24.0        # only count bullish/bearish articles from last 24h
 
 
-def _source_weight(source: str) -> float:
-    s = source.lower()
-    for keyword, weight in _SOURCE_TIERS:
-        if keyword in s:
-            return weight
-    return _SOURCE_DEFAULT
+def _source_weight(_: str) -> float:
+    return 1.0
 
 
 def _recency_weight(published_at: datetime) -> float:
-    age_h = max(0.0, (datetime.now(timezone.utc) - published_at).total_seconds() / 3600)
+    age_h = max(0.0, (datetime.now(_ET) - published_at).total_seconds() / 3600)
     return math.exp(-age_h * math.log(2) / _RECENCY_HALF_LIFE_H)
 
 _MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 _SYSTEM_PROMPT = (
     "You are a qualitative news analyst for equity swing trading. "
-    "For each numbered stock, evaluate ONLY the headlines provided — ignore price momentum numbers. "
-    "Identify: (1) Catalysts (earnings beat, contract win, product launch, analyst upgrade, M&A). "
-    "(2) Red flags (SEC investigation, lawsuit, guidance cut, CEO departure, recall, bankruptcy risk). "
-    "Score 0-100 where 50=neutral/no news, >60=positive catalyst present, <40=negative news risk. "
-    "BULLISH≥60, BEARISH≤40, NEUTRAL otherwise. "
+    "For each numbered stock, headlines are listed newest-first with age labels. "
+    "CRITICAL: Prioritise headlines from the last 4 hours above all others. "
+    "If today's breaking news contradicts older bullish momentum, override with today's signal. "
+    "Identify: (1) Catalysts — earnings beat, contract win, product launch, analyst upgrade, M&A. "
+    "(2) Red flags — SEC probe, lawsuit, guidance cut, CEO departure, recall, bankruptcy risk. "
+    "(3) SECOND-ORDER RISKS — reason through supplier/customer/sector chains even when the stock's "
+    "own headline looks positive. Examples of connections to apply: "
+    "AI customer misses revenue or cuts capex (OpenAI, Microsoft, Google) → GPU/chip suppliers bearish (NVDA, AMD, ARM, AVGO, INTC). "
+    "Hyperscaler slows data centre build-out → server/networking hardware bearish (DELL, HPE, SMCI, ANET, CSCO). "
+    "EV demand miss or automaker cuts production → battery/cell bearish (ENVX, WOLF, QS), power semi bearish (ON, WOLF). "
+    "Smartphone shipments disappoint → display/memory/AP suppliers bearish (MU, QCOM, SWKS, QRVO). "
+    "Oil price spike or refinery outage → airlines and logistics bearish (DAL, UAL, UPS, FDX). "
+    "Rising interest rates or credit-tightening news → homebuilders and REITs bearish (LEN, DHI, NVR). "
+    "Retail sales miss or consumer confidence drop → discretionary and ad-spend bearish (META, SNAP, PINS, ETSY). "
+    "Biotech FDA rejection → sector sentiment bearish for clinical-stage peers in the same indication. "
+    "Flag the affected stock BEARISH for second-order risk even if its own headline looks neutral or positive. "
+    "Archetypes: FRESH_BREAKOUT=big intraday move just starting (weight today's news heavily), "
+    "BREAKOUT=multi-day surge, MOMENTUM=sustained trend, RECOVERY=bouncing from drawdown. "
+    "Score 0-100: 50=neutral/no news, >60=positive catalyst, <40=negative risk. "
+    "BULLISH≥60 | BEARISH≤40 | NEUTRAL otherwise. "
     'Return ONLY valid JSON: {"results": [{"score": 65, "rating": "BULLISH", "red_flag": false, "reasoning": "one sentence"}]}'
 )
 
@@ -88,6 +85,7 @@ class StockPrediction:
     rsi: float
     days_to_earnings: Optional[int]
     predicted_move: str
+    change_today_pct: float = 0.0
 
 
 class StockPredictor:
@@ -110,7 +108,7 @@ class StockPredictor:
             self._compute_sub_scores(stock, scored_articles_map.get(stock.symbol, []), technicals_map.get(stock.symbol))
             for stock in stocks
         ]
-        llm_results = self._llm_score_batch(stocks, partials)
+        llm_results = self._llm_score_batch(stocks, partials, scored_articles_map)
 
         predictions = []
         for stock, sub, llm in zip(stocks, partials, llm_results):
@@ -119,7 +117,7 @@ class StockPredictor:
             red_flag = bool(llm.get("red_flag", False))
 
             # 70% quantitative formula + 30% qualitative LLM news assessment
-            score = formula_score * 0.70 + llm_qual * 0.30
+            score = formula_score * 0.50 + llm_qual * 0.50
 
             # Hard red-flag override: bad news caps conviction below BEARISH threshold
             if red_flag:
@@ -180,17 +178,18 @@ class StockPredictor:
                 sum(a.normalized_score * w for a, w in zip(articles, weights)) / total_w
                 if total_w > 0 else 0.0
             )
-            bullish_count = sum(1 for a in articles if a.normalized_score > 0.2)
-            bearish_count = sum(1 for a in articles if a.normalized_score < -0.2)
-            # Rank headlines by (weight × abs score) so the most recent + reputable surface first
+            count_cutoff = datetime.now(_ET) - timedelta(hours=_COUNT_WINDOW_H)
+            bullish_count = sum(1 for a in articles if a.normalized_score > 0.2 and a.article.published_at >= count_cutoff)
+            bearish_count = sum(1 for a in articles if a.normalized_score < -0.2 and a.article.published_at >= count_cutoff)
+            # Rank headlines by recency first so the dashboard surfaces today's news
             ranked = sorted(
                 zip(articles, weights),
-                key=lambda aw: abs(aw[0].normalized_score) * aw[1],
+                key=lambda aw: aw[0].article.published_at,
                 reverse=True,
             )
             top_headlines = [
                 (a.article.title, a.normalized_score, a.article.source, a.article.url)
-                for a, _ in ranked[:3]
+                for a, _ in ranked[:5]
             ]
 
         sent_score = min(100.0, (avg_sentiment + 1) * 50 + (15 if bullish_count >= 3 else 0))
@@ -201,7 +200,12 @@ class StockPredictor:
         # --- Momentum + Technicals (archetype-aware) ---
         rsi = ti.rsi_14 if ti else 50.0
 
-        if stock.archetype == "MOMENTUM":
+        if stock.archetype == "FRESH_BREAKOUT":
+            # Today's intraday move IS the catalyst — score by magnitude of the day's move
+            # 5% today → 75 mom_score; intraday_adj below adds ±50 on top
+            mom_score = min(100.0, abs(stock.change_today_pct) * 15)
+            tech_score = 90.0 if stock.volume_ratio >= 3.0 else 70.0
+        elif stock.archetype == "MOMENTUM":
             mom_score = min(100.0, stock.change_3m_pct * 1.5)
             tech_score = 70.0 if rsi < 70 else 40.0
         elif stock.archetype == "BREAKOUT":
@@ -217,6 +221,16 @@ class StockPredictor:
         w = self._weights.get(stock.archetype, self._weights.get("default", [0.30, 0.20, 0.25, 0.25]))
         formula_score = (mom_score * w[0]) + (vol_score * w[1]) + (tech_score * w[2]) + (sent_score * w[3])
 
+        # Intraday momentum modifier — makes today's price action visible to the formula.
+        # Multi-week returns bury a 2% single-day drop; this surfaces it directly.
+        # Symmetric quadratic: -2% → -32pts, +2% → +32pts, ±2.5%+ → ±50pts (capped)
+        today = stock.change_today_pct
+        if today < 0:
+            intraday_adj = -min(50.0, abs(today) ** 2 * 8)
+        else:
+            intraday_adj = min(50.0, today ** 2 * 8)
+        formula_score = max(0.0, min(100.0, formula_score + intraday_adj))
+
         return {
             "mom_score": mom_score, "vol_score": vol_score, "tech_score": tech_score,
             "sent_score": sent_score, "formula_score": formula_score, "rsi": rsi,
@@ -224,17 +238,65 @@ class StockPredictor:
             "top_headlines": top_headlines,
         }
 
-    def _llm_score_batch(self, stocks, partials: list[dict]) -> list[dict]:
+    def _llm_score_batch(self, stocks, partials: list[dict], scored_articles_map: dict) -> list[dict]:
         """Send all stocks to Claude in a single Bedrock call for qualitative news assessment."""
+        now = datetime.now(_ET)
+
+        # Collect bullish and bearish signals from the last 4 hours across all stocks
+        macro_cutoff = now - timedelta(hours=4)
+        macro_bullish: list[tuple[datetime, str, str]] = []
+        macro_bearish: list[tuple[datetime, str, str]] = []
+        seen_titles: set[str] = set()
+        for stock in stocks:
+            for a in scored_articles_map.get(stock.symbol, []):
+                if a.article.published_at < macro_cutoff:
+                    continue
+                title = a.article.title[:120]
+                if title in seen_titles:
+                    continue
+                seen_titles.add(title)
+                if a.normalized_score > 0.15:
+                    macro_bullish.append((a.article.published_at, title, a.article.source))
+                elif a.normalized_score < -0.15:
+                    macro_bearish.append((a.article.published_at, title, a.article.source))
+        macro_bullish.sort(key=lambda x: x[0], reverse=True)
+        macro_bearish.sort(key=lambda x: x[0], reverse=True)
+
+        macro_block = ""
+        if macro_bullish or macro_bearish:
+            sections = []
+            if macro_bullish:
+                lines_bull = [f'  + "{t}" ({src})' for _, t, src in macro_bullish[:6]]
+                sections.append("BULLISH:\n" + "\n".join(lines_bull))
+            if macro_bearish:
+                lines_bear = [f'  - "{t}" ({src})' for _, t, src in macro_bearish[:6]]
+                sections.append("BEARISH:\n" + "\n".join(lines_bear))
+            macro_block = (
+                "TODAY'S MACRO SIGNALS (last 4h across all tracked stocks):\n"
+                + "\n".join(sections)
+                + "\n\nApply this sector context when scoring each stock below — "
+                "catalysts and risks affecting one name ripple to suppliers, customers, and peers.\n\n"
+            )
+
         lines = []
-        for i, (stock, sub) in enumerate(zip(stocks, partials), 1):
-            if sub["top_headlines"]:
+        for i, stock in enumerate(stocks, 1):
+            # Sort this stock's articles newest-first and label with age
+            articles = sorted(
+                scored_articles_map.get(stock.symbol, []),
+                key=lambda a: a.article.published_at,
+                reverse=True,
+            )[:5]
+
+            if articles:
                 headline_parts = []
-                for title, _score, source, _url in sub["top_headlines"][:3]:
-                    headline_parts.append(f'"{title[:200]}" ({source})')
-                headlines_str = " | ".join(headline_parts)
+                for a in articles:
+                    age_h = (now - a.article.published_at).total_seconds() / 3600
+                    age_str = f"{age_h * 60:.0f}m ago" if age_h < 1 else f"{age_h:.0f}h ago"
+                    headline_parts.append(f'[{age_str}] "{a.article.title[:180]}" ({a.article.source})')
+                headlines_str = "\n     ".join(headline_parts)
             else:
                 headlines_str = "No recent news"
+
             earnings = (
                 f" | Earnings in {stock.days_to_earnings}d"
                 if stock.days_to_earnings is not None and stock.days_to_earnings <= 14
@@ -242,15 +304,18 @@ class StockPredictor:
             )
             lines.append(
                 f"{i}. {stock.symbol} | {stock.archetype}{earnings}"
-                f"\n   Headlines: {headlines_str}"
+                f"\n   Headlines (newest first):\n     {headlines_str}"
             )
+
+        now_str = now.strftime("%Y-%m-%d %H:%M ET")
+        user_text = f"Current time: {now_str}\n\n{macro_block}" + "\n\n".join(lines)
 
         print(f"[StockPredictor] Calling Claude Haiku 4.5 (Bedrock Converse) for {len(stocks)} stocks...")
         try:
             resp = self._get_bedrock().converse(
                 modelId=_MODEL_ID,
                 system=[{"text": _SYSTEM_PROMPT}],
-                messages=[{"role": "user", "content": [{"text": "\n".join(lines)}]}],
+                messages=[{"role": "user", "content": [{"text": user_text}]}],
                 inferenceConfig={"maxTokens": 4096, "temperature": 0},
             )
             content = resp.get("output", {}).get("message", {}).get("content", [])
@@ -283,4 +348,5 @@ class StockPredictor:
             days_to_earnings=stock.days_to_earnings,
             predicted_move=("+5-12% (Oversold Bounce)" if rating == "BULLISH" and sub["rsi"] < 35 else "+3-7% (Standard)"),
             reasoning=reasoning,
+            change_today_pct=stock.change_today_pct,
         )

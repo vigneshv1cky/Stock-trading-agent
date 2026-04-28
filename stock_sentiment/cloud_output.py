@@ -1,11 +1,17 @@
 """Generates an HTML report from screener predictions."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+
+try:
+    from zoneinfo import ZoneInfo as _ZoneInfo
+    _ET = _ZoneInfo("America/New_York")
+except ImportError:
+    _ET = timezone(timedelta(hours=-4))  # type: ignore[assignment]
 
 
 def generate_html_report(predictions: list, screened_count: int, fragment: bool = False) -> str:
     """Generate a styled HTML report from predictions."""
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    now = datetime.now(_ET).strftime("%Y-%m-%d %H:%M ET")
 
     bullish = [p for p in predictions if p.prediction == "BULLISH"]
     neutral = [p for p in predictions if p.prediction == "NEUTRAL"]

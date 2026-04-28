@@ -1,7 +1,12 @@
 """Dashboard for the stock screener / predictor mode."""
 
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import datetime, timedelta, timezone
+
+try:
+    from zoneinfo import ZoneInfo as _ZoneInfo
+    _ET = _ZoneInfo("America/New_York")
+except ImportError:
+    _ET = timezone(timedelta(hours=-4))  # type: ignore[assignment]
 
 from rich.console import Console
 from rich.panel import Panel
@@ -62,9 +67,9 @@ class ScreenerDashboard:
             border_style="cyan",
         ))
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(_ET)
         self.console.print(
-            f"  [dim]Generated:[/dim] {now.strftime('%Y-%m-%d %H:%M UTC')}"
+            f"  [dim]Generated:[/dim] {now.strftime('%Y-%m-%d %H:%M ET')}"
             f"  [dim]|  Screened:[/dim] {screened_count} stocks passed filters"
             f"  [dim]|  Predictions:[/dim] {len(predictions)}\n"
         )
@@ -181,7 +186,7 @@ class ScreenerDashboard:
         seen = set()
 
         for p in predictions:
-            for title, score, source, url in p.top_headlines[:2]:
+            for title, score, source, _ in p.top_headlines[:2]:
                 if title in seen:
                     continue
                 seen.add(title)

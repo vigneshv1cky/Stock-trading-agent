@@ -2,6 +2,7 @@ import json
 import math
 import os
 import re
+import time
 from datetime import datetime, timedelta, timezone, tzinfo
 
 from rich.console import Console
@@ -11,7 +12,7 @@ console = Console()
 try:
     from alpaca.trading.client import TradingClient
     from alpaca.trading.requests import (
-        MarketOrderRequest, TrailingStopOrderRequest, StopOrderRequest,
+        MarketOrderRequest, StopOrderRequest,
         GetOrdersRequest,
     )
     from alpaca.trading.enums import OrderSide, TimeInForce, QueryOrderStatus
@@ -21,10 +22,9 @@ except ImportError:
     TradingClient = None  # type: ignore[assignment,misc]
     StockHistoricalDataClient = None  # type: ignore[assignment,misc]
 
-_COOLDOWN_FILE = os.path.expanduser("~/.stock_screener/cooldowns.json")
 _HELD_CACHE_FILE = os.path.expanduser("~/.stock_screener/held_cache.json")
 _EXECUTION_LOG_FILE = os.path.expanduser("~/.stock_screener/last_execution.json")
-_COOLDOWN_HOURS = 1
+_STOP_SKIPPED_FILE = os.path.expanduser("~/.stock_screener/stop_skipped.json")
 _SHORT_ENTRY_MAX_SCORE = 35
 
 _ET: tzinfo
@@ -43,7 +43,6 @@ class PaperBroker:
     """Automated paper trading executor using Alpaca with Smart Conviction Swapping."""
 
     def __init__(self):
-        self.trail_percent = 3.0
         self.max_positions = 10        # total portfolio cap
         self.max_short_cap = 8         # never go more than 8 shorts (keeps at least 2 long slots)
         self.buy_threshold = 60.0
@@ -80,6 +79,31 @@ class PaperBroker:
                 self.client = None
 
     # ------------------------------------------------------------------
+    # VIX regime
+    # ------------------------------------------------------------------
+
+    def _get_vix(self) -> float:
+        """Fetch latest VIX close via yfinance. Returns 20.0 on failure (normal regime)."""
+        try:
+            import yfinance as yf
+            hist = yf.Ticker("^VIX").history(period="1d")
+            if not hist.empty:
+                return float(hist["Close"].iloc[-1])
+        except Exception:
+            pass
+        return 20.0
+
+    def _threshold_from_vix(self, vix: float) -> float:
+        """Map VIX level to buy threshold."""
+        if vix < 15:
+            return 55.0   # calm   — more aggressive
+        if vix < 25:
+            return 60.0   # normal — baseline
+        if vix < 35:
+            return 70.0   # volatile — defensive
+        return 85.0        # panic   — near-cash
+
+    # ------------------------------------------------------------------
     # Sizing
     # ------------------------------------------------------------------
 
@@ -91,60 +115,21 @@ class PaperBroker:
         return max(50.0, round(portfolio_value * 0.09, 2))
 
     # ------------------------------------------------------------------
-    # Profit-tier stop tightening
+    # Hard stop price calculation (stepped tiers)
     # ------------------------------------------------------------------
 
-    def _desired_trail_pct(self, position, trade_type: str = "SWING") -> float:
-        """Return trailing stop % for a position.
-        Day trades: fixed 1.5% (closed EOD anyway).
-        Swing trades: tighten on large gains."""
-        if trade_type == "DAY":
-            return 1.5
+    def _desired_stop_price(self, position) -> float:
+        """Return the intraday hard stop price: long –1.5%, short +0.8%."""
+        is_long = _is_long_position(position)
         try:
-            gain_pct = float(position.unrealized_plpc) * 100
+            entry = float(position.avg_entry_price)
         except (AttributeError, ValueError, TypeError):
-            return self.trail_percent
-        if gain_pct >= 30:
-            return 0.8
-        if gain_pct >= 15:
-            return 1.5
-        return self.trail_percent
+            entry = float(getattr(position, "current_price", 0))
+        return round(entry * 0.985 if is_long else entry * 1.008, 2)
 
     # ------------------------------------------------------------------
     # Cooldown persistence
     # ------------------------------------------------------------------
-
-    def _load_cooldowns(self) -> dict:
-        try:
-            if os.path.exists(_COOLDOWN_FILE):
-                with open(_COOLDOWN_FILE) as f:
-                    return json.load(f)
-        except Exception:
-            pass
-        return {}
-
-    def _save_cooldowns(self, cooldowns: dict) -> None:
-        os.makedirs(os.path.dirname(_COOLDOWN_FILE), exist_ok=True)
-        now = datetime.now(timezone.utc)
-        active = {
-            sym: ts for sym, ts in cooldowns.items()
-            if (now - datetime.fromisoformat(ts)).total_seconds() < _COOLDOWN_HOURS * 3600
-        }
-        with open(_COOLDOWN_FILE, "w") as f:
-            json.dump(active, f, indent=2)
-
-    def _in_cooldown(self, symbol: str, cooldowns: dict) -> bool:
-        ts = cooldowns.get(symbol)
-        if not ts:
-            return False
-        elapsed = (datetime.now(timezone.utc) - datetime.fromisoformat(ts)).total_seconds()
-        return elapsed < _COOLDOWN_HOURS * 3600
-
-    def _classify_trade(self, prediction) -> str:
-        """DAY if high conviction (>=85) AND strong intraday volume surge (RVOL>=2); else SWING."""
-        if prediction.overall_score >= 85 and (prediction.volume_ratio or 0) >= 2.0:
-            return "DAY"
-        return "SWING"
 
     def _can_short(self, symbol: str) -> bool:
         """Check if Alpaca allows shorting this asset (shortable AND easy_to_borrow)."""
@@ -154,20 +139,14 @@ class PaperBroker:
         except Exception:
             return False
 
-    def _close_eod_day_trades(self, held_cache: dict, positions) -> set:
-        """Close DAY long trades and ALL short positions at or after 3:45 PM ET.
-        Returns closed symbols."""
+    def _close_eod_positions(self, positions) -> set:
+        """Close ALL positions at or after 3:45 PM ET (day-trading mode). Returns closed symbols."""
         closed: set = set()
         try:
-            now_et = datetime.now(timezone.utc).astimezone(_ET)
+            now_et = datetime.now(_ET)
             if not (now_et.hour > 15 or (now_et.hour == 15 and now_et.minute >= 30)):
                 return closed
-            eod_syms = {
-                p.symbol for p in positions
-                if held_cache.get(p.symbol, {}).get("type") == "DAY"
-                or held_cache.get(p.symbol, {}).get("direction") == "SHORT"
-                or not _is_long_position(p)
-            }
+            eod_syms = {p.symbol for p in positions}
             if not eod_syms:
                 return closed
             console.print(f"  [yellow]⏰ EOD close: {len(eod_syms)} position(s): {', '.join(sorted(eod_syms))}[/yellow]")
@@ -213,10 +192,12 @@ class PaperBroker:
             console.print("[yellow]⚠  Alpaca client not initialized — trade execution skipped.[/yellow]")
             return {}
 
-        buy_threshold = self.buy_threshold
+        vix = self._get_vix()
+        buy_threshold = self._threshold_from_vix(vix)
+        vix_regime = "calm" if vix < 15 else "normal" if vix < 25 else "volatile" if vix < 35 else "panic"
 
         exec_log: dict = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(_ET).isoformat(),
             "trigger": trigger,
             "bought": [],
             "sold": [],
@@ -229,9 +210,7 @@ class PaperBroker:
 
         try:
             # Load persistent state from previous cycle
-            cooldowns = self._load_cooldowns()
             held_cache = self._load_held_cache()
-            prev_held = set(held_cache.keys())
 
             # 0. Cancel stale pending market orders from previous cycles
             for side in [OrderSide.BUY, OrderSide.SELL]:
@@ -264,20 +243,26 @@ class PaperBroker:
                 f"  [dim]Positions:[/dim] [bold]{len(held_symbols)}/{self.max_positions}[/bold]"
                 f"  [dim]({len(long_symbols)}L / {len(short_symbols)}S)[/dim]"
                 + ("  [bold red]⚠ OVER CAP — trimming weakest[/bold red]" if over_cap else "")
+                + f"  [dim]VIX:[/dim] [bold]{vix:.1f}[/bold] [dim]({vix_regime})[/dim]"
                 + f"  [dim]Threshold:[/dim] [bold]{buy_threshold:.0f}[/bold]"
             )
 
             # Build prediction lookup early — needed for cap enforcement and BEARISH exits
             pred_map = {p.symbol: p for p in predictions}
 
-            # 1b. Total cap enforcement: close lowest-conviction positions until back at limit
+            # 1b. Total cap enforcement: close worst positions until back at limit
             if over_cap:
                 excess = len(held_symbols) - self.max_positions
-                # Sort by distance from 50 ascending — least conviction closed first
-                ranked = sorted(
-                    held_symbols,
-                    key=lambda s: abs(pred_map[s].overall_score - 50) if s in pred_map else 0.0,
-                )
+                pos_map = {p.symbol: p for p in positions}
+
+                def _trim_key(sym: str) -> tuple[float, float]:
+                    pos = pos_map.get(sym)
+                    # unrealized_plpc is a decimal fraction (e.g. -0.05 = -5%)
+                    plpc = float(getattr(pos, "unrealized_plpc", 0)) * 100 if pos else 0.0
+                    conviction = abs(pred_map[sym].overall_score - 50) if sym in pred_map else 0.0
+                    return (plpc, conviction)
+
+                ranked = sorted(held_symbols, key=_trim_key)
                 to_trim = ranked[:excess]
                 console.print(f"  [yellow]✂  Trimming {len(to_trim)} over-cap position(s): {', '.join(to_trim)}[/yellow]")
                 for sym in to_trim:
@@ -292,11 +277,11 @@ class PaperBroker:
                         console.print(f"  [red]✖ Trim failed {sym}: {e}[/red]")
                 cash = float(self.client.get_account().cash)
 
-            # 2. Safety Audit: ensure every position has a stop, tighten on large gains
-            self._ensure_trailing_stops(positions, held_cache)
+            # 2. Safety Audit: ensure every position has a hard stop; step up on gains
+            self._ensure_hard_stops(positions, held_cache)
 
-            # 2b. EOD close: liquidate all DAY trades at 3:45 PM ET
-            eod_closed = self._close_eod_day_trades(held_cache, positions)
+            # 2b. EOD close: liquidate all positions at 3:45 PM ET
+            eod_closed = self._close_eod_positions(positions)
             for sym in eod_closed:
                 held_symbols.discard(sym)
                 long_symbols.discard(sym)
@@ -344,7 +329,82 @@ class PaperBroker:
                 cash = float(self.client.get_account().cash)
                 console.print(f"  [dim]Cash after exits: ${cash:,.2f}[/dim]")
 
-            # 3b. Earnings proximity exits (both directions)
+            # 3b. Flip: immediately short any position just sold as BEARISH this cycle.
+            # Requires same conviction gate as regular shorts (≤35) to avoid occupying a slot
+            # with a weak signal that blocks stronger candidates in the normal short cycle.
+            # All flips are DAY trades (closed at EOD).
+            for symbol in bearish_sold:
+                pred = pred_map.get(symbol)
+                if pred is None:
+                    continue
+                if pred.overall_score > _SHORT_ENTRY_MAX_SCORE:
+                    console.print(f"  [dim]Flip skip {symbol}: score {pred.overall_score:.1f} > {_SHORT_ENTRY_MAX_SCORE} — insufficient conviction to short[/dim]")
+                    continue
+                if not self._can_short(symbol):
+                    console.print(f"  [dim]Flip skip {symbol}: not shortable[/dim]")
+                    continue
+                has_short_slot = len(short_symbols) < self.max_short_cap and len(held_symbols) < self.max_positions
+                has_cash = cash >= self._slot_size_for_score(portfolio_value)
+                if not (has_cash and has_short_slot):
+                    console.print(f"  [dim]Flip skip {symbol}: no slot or cash[/dim]")
+                    continue
+                price, qty = self._place_market_short(symbol, pred.current_price, portfolio_value)
+                if qty:
+                    short_symbols.add(symbol)
+                    held_symbols.add(symbol)
+                    held_cache[symbol] = {"type": "DAY", "direction": "SHORT", "entered_at": datetime.now(_ET).isoformat()}
+                    cash -= self._slot_size_for_score(portfolio_value)
+                    console.print(f"  [yellow]⇄  FLIP {symbol}[/yellow]  [dim]long → short (BEARISH downgrade)[/dim]")
+                    exec_log["shorted"].append({
+                        "symbol": symbol,
+                        "score": round(pred.overall_score, 1),
+                        "archetype": pred.archetype,
+                        "trade_type": "DAY",
+                        "direction": "SHORT",
+                        "price": price,
+                        "qty": qty,
+                        "proceeds": round(price * qty, 2),
+                        "reasons": pred.reasoning,
+                    })
+            if any(symbol in short_symbols for symbol in bearish_sold):
+                cash = float(self.client.get_account().cash)
+                console.print(f"  [dim]Cash after flips: ${cash:,.2f}[/dim]")
+
+            # 3c. Flip: immediately go long any position just covered as BULLISH this cycle.
+            # No score gate — the BULLISH prediction itself is the signal.
+            for symbol in bullish_covered:
+                pred = pred_map.get(symbol)
+                if pred is None:
+                    continue
+                has_slot = len(held_symbols) < self.max_positions
+                has_cash = cash >= self._slot_size_for_score(portfolio_value)
+                if not (has_cash and has_slot):
+                    console.print(f"  [dim]Flip skip {symbol}: no slot or cash[/dim]")
+                    continue
+                trade_type = "DAY"
+                price, qty = self._place_market_buy(symbol, pred.current_price, portfolio_value)
+                if qty:
+                    long_symbols.add(symbol)
+                    held_symbols.add(symbol)
+                    held_cache[symbol] = {"type": trade_type, "direction": "LONG", "entered_at": datetime.now(_ET).isoformat()}
+                    cash -= self._slot_size_for_score(portfolio_value)
+                    console.print(f"  [yellow]⇄  FLIP {symbol}[/yellow]  [dim]short → long (BULLISH upgrade)[/dim]")
+                    exec_log["bought"].append({
+                        "symbol": symbol,
+                        "score": round(pred.overall_score, 1),
+                        "archetype": pred.archetype,
+                        "trade_type": trade_type,
+                        "direction": "LONG",
+                        "price": price,
+                        "qty": qty,
+                        "cost": round(price * qty, 2),
+                        "reasons": pred.reasoning,
+                    })
+            if any(symbol in long_symbols for symbol in bullish_covered):
+                cash = float(self.client.get_account().cash)
+                console.print(f"  [dim]Cash after flips: ${cash:,.2f}[/dim]")
+
+            # 3d. Earnings proximity exits (both directions)
             earnings_closed: set = set()
             for p in positions:
                 symbol = p.symbol
@@ -368,28 +428,12 @@ class PaperBroker:
                 cash = float(self.client.get_account().cash)
                 console.print(f"  [dim]Cash after earnings exits: ${cash:,.2f}[/dim]")
 
-            # Detect stop-triggered exits (symbols in prev cache but no longer held)
-            all_intentional_exits = bearish_sold | bullish_covered | earnings_closed | eod_closed
-            stopped_out = prev_held - held_symbols - all_intentional_exits
-            if stopped_out:
-                now_iso = datetime.now(timezone.utc).isoformat()
-                for sym in stopped_out:
-                    cooldowns[sym] = now_iso
-                    exec_log["sold"].append({"symbol": sym, "reason": "Trailing stop triggered", "detail": f"{_COOLDOWN_HOURS}h re-entry cooldown applied"})
-                console.print(
-                    f"  [dim]Stop-out detected: [/dim][yellow]{', '.join(stopped_out)}[/yellow]"
-                    f"  [dim]→ {_COOLDOWN_HOURS}h re-entry cooldown applied[/dim]"
-                )
-                self._save_cooldowns(cooldowns)
-
             # 4. Process New Long Buy Opportunities
             all_bullish = [p for p in predictions if p.prediction == "BULLISH"]
             above_threshold = [p for p in all_bullish if p.overall_score >= buy_threshold]
-            on_cooldown = [p for p in above_threshold if self._in_cooldown(p.symbol, cooldowns)]
             buy_candidates = [
                 p for p in above_threshold
                 if p.symbol not in held_symbols
-                and not self._in_cooldown(p.symbol, cooldowns)
             ]
             buy_candidates.sort(key=lambda x: x.overall_score, reverse=True)
 
@@ -398,7 +442,6 @@ class PaperBroker:
                 f"[green]{len(all_bullish)} BULLISH[/green]  →  "
                 f"[bold]{len(above_threshold)} above threshold[/bold]  →  "
                 f"[cyan]{len(buy_candidates)} actionable[/cyan]"
-                + (f"  [dim]({len(on_cooldown)} on cooldown)[/dim]" if on_cooldown else "")
             )
 
             buys_executed = 0
@@ -408,21 +451,21 @@ class PaperBroker:
             for new_pick in buy_candidates:
                 if len(held_symbols) >= self.max_positions:
                     break
-                trade_type = self._classify_trade(new_pick)
+                trade_type = "DAY"
                 slot = self._slot_size_for_score(portfolio_value)
                 has_cash = cash >= slot
                 has_slot = len(held_symbols) < self.max_positions
 
                 # CASE 1: Standard Entry
                 if has_cash and has_slot:
-                    price, qty = self._place_market_buy(new_pick.symbol, new_pick.current_price, portfolio_value, trade_type)
+                    price, qty = self._place_market_buy(new_pick.symbol, new_pick.current_price, portfolio_value)
                     if qty:
                         long_symbols.add(new_pick.symbol)
                         held_symbols.add(new_pick.symbol)
-                        held_cache[new_pick.symbol] = {"type": trade_type, "direction": "LONG", "entered_at": datetime.now(timezone.utc).isoformat()}
+                        held_cache[new_pick.symbol] = {"type": trade_type, "direction": "LONG", "entered_at": datetime.now(_ET).isoformat()}
                         cash -= slot
                         buys_executed += 1
-                        console.print(f"  [dim]→ classified as [bold]{trade_type}[/bold] LONG[/dim]")
+
                         exec_log["bought"].append({
                             "symbol": new_pick.symbol,
                             "score": round(new_pick.overall_score, 1),
@@ -461,13 +504,13 @@ class PaperBroker:
                             held_symbols.discard(weakest_symbol)
                             held_cache.pop(weakest_symbol, None)
                             swapped_out.add(weakest_symbol)
-                            price, qty = self._place_market_buy(new_pick.symbol, new_pick.current_price, portfolio_value, trade_type)
+                            price, qty = self._place_market_buy(new_pick.symbol, new_pick.current_price, portfolio_value)
                             if qty:
                                 long_symbols.add(new_pick.symbol)
                                 held_symbols.add(new_pick.symbol)
-                                held_cache[new_pick.symbol] = {"type": trade_type, "direction": "LONG", "entered_at": datetime.now(timezone.utc).isoformat()}
+                                held_cache[new_pick.symbol] = {"type": trade_type, "direction": "LONG", "entered_at": datetime.now(_ET).isoformat()}
                                 swaps_executed += 1
-                                console.print(f"  [dim]→ classified as [bold]{trade_type}[/bold] LONG[/dim]")
+        
                                 exec_log["swapped"].append({
                                     "out": weakest_symbol,
                                     "out_score": round(weakest_score, 1),
@@ -512,14 +555,14 @@ class PaperBroker:
 
                 # CASE 1: Standard short entry
                 if has_cash and has_short_slot:
-                    price, qty = self._place_market_short(new_short.symbol, new_short.current_price, portfolio_value, trade_type)
+                    price, qty = self._place_market_short(new_short.symbol, new_short.current_price, portfolio_value)
                     if qty:
                         short_symbols.add(new_short.symbol)
                         held_symbols.add(new_short.symbol)
-                        held_cache[new_short.symbol] = {"type": trade_type, "direction": "SHORT", "entered_at": datetime.now(timezone.utc).isoformat()}
+                        held_cache[new_short.symbol] = {"type": trade_type, "direction": "SHORT", "entered_at": datetime.now(_ET).isoformat()}
                         cash -= slot
                         shorts_executed += 1
-                        console.print(f"  [dim]→ classified as [bold]{trade_type}[/bold] SHORT[/dim]")
+
                         exec_log["shorted"].append({
                             "symbol": new_short.symbol,
                             "score": round(new_short.overall_score, 1),
@@ -555,13 +598,13 @@ class PaperBroker:
                             short_symbols.discard(weakest_symbol)
                             held_symbols.discard(weakest_symbol)
                             held_cache.pop(weakest_symbol, None)
-                            price, qty = self._place_market_short(new_short.symbol, new_short.current_price, portfolio_value, trade_type)
+                            price, qty = self._place_market_short(new_short.symbol, new_short.current_price, portfolio_value)
                             if qty:
                                 short_symbols.add(new_short.symbol)
                                 held_symbols.add(new_short.symbol)
-                                held_cache[new_short.symbol] = {"type": trade_type, "direction": "SHORT", "entered_at": datetime.now(timezone.utc).isoformat()}
+                                held_cache[new_short.symbol] = {"type": trade_type, "direction": "SHORT", "entered_at": datetime.now(_ET).isoformat()}
                                 shorts_executed += 1
-                                console.print(f"  [dim]→ classified as [bold]{trade_type}[/bold] SHORT SWAP[/dim]")
+
                                 exec_log["swapped"].append({
                                     "out": weakest_symbol,
                                     "out_score": round(weakest_score, 1),
@@ -621,119 +664,166 @@ class PaperBroker:
     # Stop management
     # ------------------------------------------------------------------
 
-    def _ensure_trailing_stops(self, positions, held_cache: dict):
-        """Ensure every position has stop-loss protection; tighten stops on large gains.
+    def _place_stop_for_new_position(self, symbol: str, qty: int, is_long: bool, entry_price: float) -> bool:
+        """Place a hard stop-loss immediately after entry: long –1.5%, short +0.8%.
+        Retries up to 3 times (0.5s apart) to handle market-order fill race condition."""
+        pct = 0.015 if is_long else 0.008
+        stop_price = round(entry_price * (1 - pct) if is_long else entry_price * (1 + pct), 2)
+        stop_side = OrderSide.SELL if is_long else OrderSide.BUY
+        for attempt in range(3):
+            try:
+                self.client.submit_order(StopOrderRequest(
+                    symbol=symbol,
+                    qty=qty,
+                    side=stop_side,
+                    time_in_force=TimeInForce.GTC,
+                    stop_price=stop_price,
+                ))
+                console.print(f"  [dim]Stop placed {symbol}: ${stop_price:.2f} ({pct * 100:.1f}% from ${entry_price:.2f})[/dim]")
+                return True
+            except Exception as e:
+                if attempt < 2:
+                    time.sleep(0.5)
+                else:
+                    console.print(f"  [red]✖  Stop failed {symbol} after 3 attempts: {e}[/red]")
+        return False
 
-        DAY trades: fixed 1.5% stop (closed EOD anyway).
-        SWING trades profit tiers:
-          ≥ 30% gain → 0.8%  |  ≥ 15% gain → 1.5%  |  default → 3.0%
+    def _ensure_hard_stops(self, positions, held_cache: dict):
+        """Audit every position for a hard stop-loss; step up price as gains accrue.
 
-        Long positions: SELL-side trailing stop (fires if price drops trail% from peak).
-        Short positions: BUY-side trailing stop (fires if price rises trail% from trough).
-        Fractional shares: stop-market order instead (Alpaca trailing-stop limitation).
+        Fixes vs old trailing-stop approach:
+        - Order type matched by substring → handles SDK enum strings correctly
+        - All stops per symbol collected (no silent last-writer-wins dedup)
+        - Price-based comparison (higher for longs = tighter; lower for shorts = tighter)
+        - Whole-share stops use GTC; fractional use DAY (Alpaca API constraint)
         """
         try:
+            try:
+                with open(_STOP_SKIPPED_FILE) as f:
+                    prev_skipped: set = set(json.load(f))
+            except Exception:
+                prev_skipped = set()
+
             open_orders = self.client.get_orders(filter=GetOrdersRequest(status=QueryOrderStatus.OPEN))
-            stop_map = {
-                o.symbol: o for o in open_orders
-                if str(getattr(o, "order_type", "")).lower() in ("trailing_stop", "stop")
-            }
+            # Group ALL stop-type orders by symbol — handles duplicates from prior cycles
+            stop_map: dict[str, list] = {}
+            for o in open_orders:
+                if "stop" in str(getattr(o, "order_type", "")).lower():
+                    stop_map.setdefault(o.symbol, []).append(o)
 
             stops_set = 0
-            stops_tightened = 0
+            stops_stepped = 0
             stops_skipped = []
 
             for p in positions:
                 try:
                     is_long = _is_long_position(p)
                     stop_side = OrderSide.SELL if is_long else OrderSide.BUY
-                    trade_type = held_cache.get(p.symbol, {}).get("type", "SWING")
-                    desired_trail = self._desired_trail_pct(p, trade_type)
-                    qty = float(p.qty)
+                    desired_stop = self._desired_stop_price(p)
+                    qty = abs(float(p.qty))  # Alpaca returns negative qty for short positions
+                    is_fractional = not qty.is_integer()
+                    tif = TimeInForce.DAY if is_fractional else TimeInForce.GTC
+                    qty_arg: int | str = str(qty) if is_fractional else int(qty)
 
-                    if p.symbol in stop_map:
-                        existing = stop_map[p.symbol]
-                        existing_side_str = str(getattr(existing, "side", "")).lower()
-                        correct_side = ("sell" in existing_side_str) if is_long else ("buy" in existing_side_str)
-                        if correct_side:
-                            existing_trail = getattr(existing, "trail_percent", None)
-                            if existing_trail is not None:
-                                existing_trail = float(existing_trail)
-                                if existing_trail <= desired_trail:
-                                    continue
-                                gain_pct = float(getattr(p, "unrealized_plpc", 0)) * 100
-                                console.print(
-                                    f"  [dim]Stop tightened[/dim] {p.symbol}: "
-                                    f"[yellow]{existing_trail:.1f}% → {desired_trail:.1f}%[/yellow]"
-                                    f"  [dim](gain: +{gain_pct:.1f}%)[/dim]"
-                                )
-                                self.client.cancel_order_by_id(existing.id)
-                                stops_tightened += 1
-                            else:
+                    existing = stop_map.get(p.symbol, [])
+
+                    if existing:
+                        # Find correct-side hard stops with a known stop_price
+                        hard_correct = [
+                            o for o in existing
+                            if "trailing" not in str(getattr(o, "order_type", "")).lower()
+                            and (("sell" in str(getattr(o, "side", "")).lower()) == is_long)
+                            and getattr(o, "stop_price", None) is not None
+                        ]
+
+                        if len(existing) > 1 or not hard_correct:
+                            # Duplicates, wrong type, or wrong side — cancel all and replace
+                            for o in existing:
+                                try:
+                                    self.client.cancel_order_by_id(o.id)
+                                except Exception:
+                                    pass
+                            stops_stepped += 1
+                        else:
+                            existing_price = float(hard_correct[0].stop_price)
+                            needs_step = (
+                                desired_stop > existing_price if is_long
+                                else desired_stop < existing_price
+                            )
+                            if not needs_step:
                                 continue
-                        # Wrong-side stop: fall through to place the correct-side stop
+                            gain_pct = float(getattr(p, "unrealized_plpc", 0)) * 100
+                            console.print(
+                                f"  [dim]Stop stepped[/dim] {p.symbol}: "
+                                f"[yellow]${existing_price:.2f} → ${desired_stop:.2f}[/yellow]"
+                                f"  [dim](gain: +{gain_pct:.1f}%)[/dim]"
+                            )
+                            try:
+                                self.client.cancel_order_by_id(hard_correct[0].id)
+                            except Exception:
+                                pass
+                            stops_stepped += 1
 
-                    if qty.is_integer():
-                        self.client.submit_order(TrailingStopOrderRequest(
+                    # Place hard stop
+                    try:
+                        self.client.submit_order(StopOrderRequest(
                             symbol=p.symbol,
-                            qty=qty,
+                            qty=qty_arg,
                             side=stop_side,
-                            time_in_force=TimeInForce.GTC,
-                            trail_percent=desired_trail,
+                            time_in_force=tif,
+                            stop_price=desired_stop,
                         ))
                         stops_set += 1
-                    else:
-                        market_price = float(p.current_price)
-                        if is_long:
-                            stop_price = round(market_price * (1 - desired_trail / 100), 2)
-                            valid_stop = stop_price < market_price
-                        else:
-                            stop_price = round(market_price * (1 + desired_trail / 100), 2)
-                            valid_stop = stop_price > market_price
-                        if not valid_stop:
-                            continue
-                        try:
-                            self.client.submit_order(StopOrderRequest(
-                                symbol=p.symbol,
-                                qty=str(qty),
-                                side=stop_side,
-                                time_in_force=TimeInForce.DAY,
-                                stop_price=stop_price,
-                            ))
-                            stops_set += 1
-                        except Exception as stop_err:
-                            err_str = str(stop_err)
-                            live_match = re.search(r'"market_price"\s*:\s*"([\d.]+)"', err_str)
-                            if live_match:
-                                live_price = float(live_match.group(1))
-                                if is_long:
-                                    adj_stop = round(live_price * (1 - desired_trail / 100), 2)
-                                    valid_adj = adj_stop < live_price
-                                else:
-                                    adj_stop = round(live_price * (1 + desired_trail / 100), 2)
-                                    valid_adj = adj_stop > live_price
-                                if valid_adj:
-                                    console.print(f"  [dim]Stop retry {p.symbol}: live=${live_price:.2f} → stop=${adj_stop:.2f}[/dim]")
+                    except Exception as stop_err:
+                        err_str = str(stop_err)
+                        live_match = re.search(r'"market_price"\s*:\s*"([\d.]+)"', err_str)
+                        if live_match:
+                            live_price = float(live_match.group(1))
+                            adj = round(live_price * 0.97 if is_long else live_price * 1.03, 2)
+                            valid = adj < live_price if is_long else adj > live_price
+                            if valid:
+                                console.print(f"  [dim]Stop retry {p.symbol}: live=${live_price:.2f} → ${adj:.2f}[/dim]")
+                                try:
                                     self.client.submit_order(StopOrderRequest(
-                                        symbol=p.symbol,
-                                        qty=str(qty),
-                                        side=stop_side,
-                                        time_in_force=TimeInForce.DAY,
-                                        stop_price=adj_stop,
+                                        symbol=p.symbol, qty=qty_arg, side=stop_side,
+                                        time_in_force=tif, stop_price=adj,
                                     ))
                                     stops_set += 1
-                                else:
-                                    console.print(f"  [yellow]⚠  Cannot stop {p.symbol}: live ${live_price:.2f} — stop invalid[/yellow]")
+                                except Exception:
+                                    stops_skipped.append(p.symbol)
                             else:
-                                console.print(f"  [red]✖  Stop failed {p.symbol}: {stop_err}[/red]")
+                                console.print(f"  [yellow]⚠  Cannot stop {p.symbol}: live ${live_price:.2f} — stop invalid[/yellow]")
+                                stops_skipped.append(p.symbol)
+                        else:
+                            console.print(f"  [red]✖  Stop failed {p.symbol}: {stop_err}[/red]")
+                            stops_skipped.append(p.symbol)
 
                 except Exception:
-                    # Shares locked by an existing order (e.g. pending liquidation)
                     stops_skipped.append(p.symbol)
 
-            if stops_set or stops_tightened or stops_skipped:
+            try:
+                os.makedirs(os.path.dirname(_STOP_SKIPPED_FILE), exist_ok=True)
+                with open(_STOP_SKIPPED_FILE, "w") as f:
+                    json.dump(stops_skipped, f)
+            except Exception:
+                pass
+
+            persistent_no_stop = set(stops_skipped) & prev_skipped
+            if persistent_no_stop:
+                console.print(
+                    f"  [bold red]⚠  NO STOP PROTECTION (2+ cycles): {', '.join(sorted(persistent_no_stop))}"
+                    f" — force-closing unprotected positions[/bold red]"
+                )
+                for sym in sorted(persistent_no_stop):
+                    try:
+                        self._close_position_safely(sym)
+                        console.print(f"  [red]✖  Force-closed {sym}: could not place stop after 2 cycles[/red]")
+                    except Exception as close_err:
+                        console.print(f"  [red]✖  Force-close failed {sym}: {close_err}[/red]")
+
+            if stops_set or stops_stepped or stops_skipped:
                 skipped_str = f"  [dim]·[/dim]  [yellow]{len(stops_skipped)} skipped: {', '.join(stops_skipped)}[/yellow]" if stops_skipped else ""
-                console.print(f"  [dim]Stop audit:[/dim] {stops_set} set · {stops_tightened} tightened{skipped_str}")
+                console.print(f"  [dim]Stop audit:[/dim] {stops_set} set · {stops_stepped} stepped{skipped_str}")
         except Exception as e:
             console.print(f"  [red]✖  Safety audit setup failed: {e}[/red]")
 
@@ -767,7 +857,7 @@ class PaperBroker:
         except Exception:
             return fallback
 
-    def _place_market_buy(self, symbol: str, current_price: float, portfolio_value: float, trade_type: str = "SWING") -> tuple[float, int]:
+    def _place_market_buy(self, symbol: str, current_price: float, portfolio_value: float) -> tuple[float, int]:
         """Submit a market buy (long entry) using whole shares.
         Returns (price, qty) on success, (0.0, 0) on skip or error."""
         live_price = self._get_live_price(symbol, current_price)
@@ -799,12 +889,15 @@ class PaperBroker:
                 side=OrderSide.BUY,
                 time_in_force=TimeInForce.DAY,
             ))
+            placed = self._place_stop_for_new_position(symbol, shares_to_buy, is_long=True, entry_price=live_price)
+            if not placed:
+                console.print(f"  [yellow]⚠  {symbol} entered WITHOUT stop — audit will retry next cycle[/yellow]")
             return live_price, shares_to_buy
         except Exception as e:
             console.print(f"  [red]✖  Market buy failed for {symbol}: {e}[/red]")
             return 0.0, 0
 
-    def _place_market_short(self, symbol: str, current_price: float, portfolio_value: float, trade_type: str = "SWING") -> tuple[float, int]:
+    def _place_market_short(self, symbol: str, current_price: float, portfolio_value: float) -> tuple[float, int]:
         """Submit a market sell to open a short position using whole shares.
         Returns (price, qty) on success, (0.0, 0) on skip or error."""
         live_price = self._get_live_price(symbol, current_price)
@@ -836,6 +929,10 @@ class PaperBroker:
                 side=OrderSide.SELL,
                 time_in_force=TimeInForce.DAY,
             ))
+            time.sleep(2)  # wait for short fill before placing BUY stop (prevents wash-trade rejection)
+            placed = self._place_stop_for_new_position(symbol, shares_to_short, is_long=False, entry_price=live_price)
+            if not placed:
+                console.print(f"  [yellow]⚠  {symbol} shorted WITHOUT stop — audit will retry next cycle[/yellow]")
             return live_price, shares_to_short
         except Exception as e:
             console.print(f"  [red]✖  Market short failed for {symbol}: {e}[/red]")
