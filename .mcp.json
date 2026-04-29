@@ -17,14 +17,19 @@
       }
     },
     "alpaca": {
-      "command": "python",
-      "args": ["alpaca_mcp.py"],
+      "command": "uvx",
+      "args": ["alpaca-mcp-server"],
       "env": {
         "ALPACA_API_KEY": "${ALPACA_API_KEY}",
         "ALPACA_SECRET_KEY": "${ALPACA_SECRET_KEY}",
-        "ALPACA_PAPER": "${ALPACA_PAPER:-true}",
-        "ALPACA_LIVE_API_KEY": "${ALPACA_LIVE_API_KEY}",
-        "ALPACA_LIVE_SECRET_KEY": "${ALPACA_LIVE_SECRET_KEY}"
+        "ALPACA_PAPER_TRADE": "true"
+      }
+    },
+    "polygon": {
+      "command": "uvx",
+      "args": ["polygon-mcp"],
+      "env": {
+        "POLYGON_API_KEY": "${POLYGON_API_KEY}"
       }
     },
     "sqlite": {
