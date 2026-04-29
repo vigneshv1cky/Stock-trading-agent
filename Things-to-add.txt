@@ -1,7 +1,0 @@
-1. Add Bloomberg or other faster news.
-2. Remove the initial 30 minute. - Still debatable but.
-3. Running FinBERT on a 4GB RAM Fargate instance is tight. Since you've limited max_workers=2, you are safe from OOM (Out-of-Memory) errors, but your inference time will be the bottleneck. Pro Tip: If your scan times exceed your 300s ALB timeout, consider moving the NLP inference to an asynchronous task (AWS Lambda or a separate ECS task) and having the Dashboard poll DynamoDB for the results, rather than waiting for the request to complete.
-4. Does the current code check for alpaca account for , if there is enough cash? Or buying power?
-5. Dont know when the bot last ran, and also cant tell if bot actually ran. Seems like it only ran on forced executions.
-
-2 is done, 5 is done, 4 the bot assumes a cash of 10,000 is available. 

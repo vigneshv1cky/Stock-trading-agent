@@ -56,7 +56,6 @@ SCREEN_UNIVERSE = [
     "ABNB",
     "TWLO",
     "OKTA",
-    "CFLT",
     "ESTC",
     "DOCN",
     "BRZE",

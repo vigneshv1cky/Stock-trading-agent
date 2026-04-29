@@ -16,6 +16,17 @@
         "AWS_REGION": "us-east-1"
       }
     },
+    "alpaca": {
+      "command": "python",
+      "args": ["alpaca_mcp.py"],
+      "env": {
+        "ALPACA_API_KEY": "${ALPACA_API_KEY}",
+        "ALPACA_SECRET_KEY": "${ALPACA_SECRET_KEY}",
+        "ALPACA_PAPER": "${ALPACA_PAPER:-true}",
+        "ALPACA_LIVE_API_KEY": "${ALPACA_LIVE_API_KEY}",
+        "ALPACA_LIVE_SECRET_KEY": "${ALPACA_LIVE_SECRET_KEY}"
+      }
+    },
     "sqlite": {
       "command": "uvx",
       "args": [
