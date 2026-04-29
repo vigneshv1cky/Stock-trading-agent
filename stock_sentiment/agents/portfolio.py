@@ -27,7 +27,7 @@ _SECTOR_MAP: dict[str, list[str]] = {
         "AAPL", "MSFT", "NVDA", "AMD", "INTC", "AVGO", "QCOM", "MU", "AMAT", "KLAC",
         "LRCX", "TXN", "ADI", "MRVL", "CRWD", "PANW", "NET", "SNOW", "DDOG", "NOW",
         "TEAM", "SHOP", "FTNT", "OKTA", "ZS", "ARM", "ASML", "TSM", "SMCI", "IRDM",
-        "RMBS", "DIOD", "SLAB", "POWI", "LSCC", "SITM", "MTSI", "CRUS", "CRDO",
+        "RMBS", "DIOD", "SLAB", "POWI", "LSCC", "SITM", "MTSI", "CRUS", "CRDO", "GFS",
     ],
     "XLF": [
         "JPM", "BAC", "GS", "MS", "WFC", "C", "BLK", "BX", "KKR", "APO", "ICE",
@@ -41,16 +41,16 @@ _SECTOR_MAP: dict[str, list[str]] = {
     ],
     "XLV": [
         "UNH", "JNJ", "LLY", "ABBV", "PFE", "MRNA", "ISRG", "VKTX", "GERN",
-        "LEGN", "TMDX", "IOVA", "CRSP", "BEAM", "GKOS", "TDOC",
+        "LEGN", "TMDX", "IOVA", "CRSP", "BEAM", "GKOS", "TDOC", "DNA",
     ],
     "XLI": [
         "RTX", "LMT", "NOC", "GD", "BA", "HII", "LHX", "LDOS", "BWXT", "KTOS",
         "AXON", "DAL", "UAL", "LUV", "UPS", "FDX", "NSC", "CSX", "UNP", "SAIA",
-        "ODFL", "XPO", "HWM", "TDG",
+        "ODFL", "XPO", "HWM", "TDG", "RKLB",
     ],
     "XLC": [
         "META", "GOOGL", "NFLX", "DIS", "SPOT", "SNAP", "PINS", "RDDT", "RBLX",
-        "WBD", "FOXA", "BMBL", "MTCH", "DUOL",
+        "WBD", "FOXA", "BMBL", "MTCH", "DUOL", "SE",
     ],
     "XLY": [
         "AMZN", "TSLA", "HD", "TGT", "NKE", "LULU", "CROX", "DECK", "RIVN",
@@ -60,7 +60,7 @@ _SECTOR_MAP: dict[str, list[str]] = {
         "WMT", "COST", "MOS", "BG", "ADM", "CF", "NUE", "CLF", "SBUX",
     ],
     "XLRE": [
-        "AMT", "EQIX", "PLD", "IRM", "DLR", "O", "SPG", "VICI", "IIPR",
+        "AMT", "EQIX", "PLD", "IRM", "DLR", "O", "SPG", "VICI", "IIPR", "ZG",
     ],
     "XLB": [
         "FCX", "NEM", "GOLD", "AU", "HMY", "KGC", "RGLD", "FNV", "CCJ",
@@ -102,12 +102,33 @@ class PortfolioAgent(BaseAgent):
         super().__init__(bus, "PortfolioAgent")
         self._trade_queue = bus.subscribe("trade.executed", "trade.closed")
         self._positions: dict[str, dict] = {}
+        self._last_warn: dict[str, float] = {}  # sector → last warned concentration
 
     async def run(self) -> None:
+        self._load_from_cache()
         await asyncio.gather(
             self._consume_trades(),
             self._publish_loop(),
         )
+
+    def _load_from_cache(self) -> None:
+        import json
+        import os
+        path = os.path.expanduser("~/.stock_screener/held_cache.json")
+        try:
+            if os.path.exists(path):
+                with open(path) as f:
+                    held = json.load(f)
+                for sym, data in held.items():
+                    self._positions[sym] = {
+                        "direction": data.get("direction", "LONG"),
+                        "sector": get_sector(sym),
+                        "archetype": "",
+                    }
+                self._update_state()
+                self.log.info("PortfolioAgent: seeded %d positions from cache", len(self._positions))
+        except Exception as exc:
+            self.log.warning("PortfolioAgent cache load failed: %s", exc)
 
     async def _consume_trades(self) -> None:
         while True:
@@ -165,7 +186,9 @@ class PortfolioAgent(BaseAgent):
         }
 
         if dominant and max_conc >= _SECTOR_CONCENTRATION_WARN and total > 0:
-            self.log.warning(
-                "Sector concentration: %s at %.0f%% (%d/%d positions)",
-                dominant, max_conc, sector_counts.get(dominant, 0), total,
-            )
+            if abs(max_conc - self._last_warn.get(dominant, 0.0)) >= 5.0:
+                self._last_warn[dominant] = max_conc
+                self.log.warning(
+                    "Sector concentration: %s at %.0f%% (%d/%d positions)",
+                    dominant, max_conc, sector_counts.get(dominant, 0), total,
+                )

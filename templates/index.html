@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Algo Trading Terminal</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:    #111827;
+  --bg2:   #1a2232;
+  --bg3:   #1e2840;
+  --b1:    #263044;
+  --b2:    #304058;
+  --td:    #5a7090;
+  --tm:    #7890aa;
+  --t:     #96aec4;
+  --tb:    #bdd0e4;
+  --tw:    #deeeff;
+  --g:     #00e599;
+  --gd:    #007f55;
+  --r:     #ff4757;
+  --rd:    #8a1a28;
+  --y:     #ffd060;
+  --yd:    #886030;
+  --bl:    #40b8ff;
+  --bld:   #1a6090;
+  --pu:    #a88fff;
+  --font:  'JetBrains Mono', 'Courier New', monospace;
+}
+
+body {
+  background: var(--bg);
+  color: var(--t);
+  font-family: var(--font);
+  font-size: 13px;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* subtle scanlines */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0,0,0,0.04) 3px, rgba(0,0,0,0.04) 4px);
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* ── HEADER ──────────────────────────────────────────── */
+header {
+  background: var(--bg2);
+  border-bottom: 1px solid var(--b2);
+  height: 44px;
+  padding: 0 18px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-shrink: 0;
+  position: relative;
+}
+header::after {
+  content: '';
+  position: absolute;
+  bottom: 0; left: 0; right: 0; height: 1px;
+  background: linear-gradient(90deg, transparent 0%, var(--bl) 40%, transparent 100%);
+  opacity: 0.25;
+}
+
+.brand {
+  color: var(--bl);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.brand-icon { font-size: 14px; }
+
+.live-wrap { display: flex; align-items: center; gap: 6px; }
+.live-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--g);
+  animation: pulse 2s ease infinite;
+}
+.live-label { font-size: 9px; font-weight: 700; color: var(--g); letter-spacing: 2px; }
+
+@keyframes pulse {
+  0%,100% { box-shadow: 0 0 0 0 rgba(0,229,153,.6); }
+  50%      { box-shadow: 0 0 0 5px rgba(0,229,153,0); }
+}
+
+.vsep { width: 1px; height: 22px; background: var(--b2); flex-shrink: 0; }
+
+.h-item { display: flex; flex-direction: column; gap: 1px; }
+.h-lbl { font-size: 8.5px; color: var(--td); letter-spacing: 1.5px; text-transform: uppercase; }
+.h-val { font-size: 12px; font-weight: 600; color: var(--tb); }
+#clock { font-size: 14px; font-weight: 700; color: var(--tw); letter-spacing: 1px; }
+
+.badge {
+  padding: 2px 8px; border-radius: 2px;
+  font-size: 9.5px; font-weight: 700; letter-spacing: 1px;
+  text-transform: uppercase; white-space: nowrap;
+}
+.mkt-open   { background: rgba(0,229,153,.12); color: var(--g);  border: 1px solid var(--gd); }
+.mkt-closed { background: rgba(255,71,87,.10);  color: var(--r);  border: 1px solid var(--rd); }
+.reg-NEUTRAL  { background: rgba(64,184,255,.12); color: var(--bl); border: 1px solid var(--bld); }
+.reg-RISK_ON  { background: rgba(0,229,153,.12);  color: var(--g);  border: 1px solid var(--gd); }
+.reg-RISK_OFF { background: rgba(255,208,96,.12); color: var(--y);  border: 1px solid var(--yd); }
+.reg-PANIC    { background: rgba(255,71,87,.12);  color: var(--r);  border: 1px solid var(--rd); }
+.reg-UNKNOWN  { background: rgba(120,120,120,.1); color: var(--tm); border: 1px solid var(--b2); }
+
+.ml { margin-left: auto; }
+
+/* ── LAYOUT ──────────────────────────────────────────── */
+main {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.panel-left  { width: 195px; flex-shrink: 0; border-right: 1px solid var(--b1); }
+.panel-mid   { flex: 1; border-right: 1px solid var(--b1); }
+.panel-right { width: 270px; flex-shrink: 0; }
+
+/* ── CARD CHROME ─────────────────────────────────────── */
+.card-hdr {
+  padding: 8px 14px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--b1);
+  font-size: 10px; font-weight: 700;
+  letter-spacing: 2px; text-transform: uppercase;
+  color: var(--tm);
+  display: flex; align-items: center; justify-content: space-between;
+  flex-shrink: 0;
+}
+.chip {
+  background: var(--b2); color: var(--tb);
+  font-size: 9px; padding: 1px 7px; border-radius: 10px;
+}
+
+.scroll {
+  overflow-y: auto;
+  flex: 1;
+}
+.scroll::-webkit-scrollbar { width: 3px; }
+.scroll::-webkit-scrollbar-thumb { background: var(--b2); border-radius: 2px; }
+
+/* ── LEFT METRICS ────────────────────────────────────── */
+.mrow {
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--b1);
+}
+.mlbl { font-size: 10px; color: var(--td); letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 3px; }
+.mbig { font-size: 20px; font-weight: 700; color: var(--tw); line-height: 1.1; }
+.mmed { font-size: 13px; font-weight: 600; }
+.msml { font-size: 10.5px; color: var(--tm); }
+
+.pos { color: var(--g); }
+.neg { color: var(--r); }
+.neu { color: var(--y); }
+
+/* agent status list */
+.agent-row {
+  padding: 5px 14px;
+  display: flex; align-items: center; gap: 8px;
+  border-bottom: 1px solid var(--b1);
+}
+.adot {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--g); flex-shrink: 0;
+  animation: pulse 3s ease infinite;
+}
+.aname { font-size: 10px; color: var(--tm); }
+
+/* ── POSITIONS TABLE ─────────────────────────────────── */
+.tbl-wrap { flex: 1; overflow: auto; }
+.tbl-wrap::-webkit-scrollbar { width: 3px; height: 3px; }
+.tbl-wrap::-webkit-scrollbar-thumb { background: var(--b2); }
+
+table { width: 100%; border-collapse: collapse; }
+
+thead th {
+  padding: 8px 10px;
+  font-size: 10px; font-weight: 700;
+  color: var(--td); letter-spacing: 1.5px; text-transform: uppercase;
+  text-align: right; white-space: nowrap;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--b2);
+  position: sticky; top: 0; z-index: 1;
+}
+thead th:first-child { text-align: left; }
+
+tbody tr { border-bottom: 1px solid var(--b1); transition: background .12s; }
+tbody tr:hover { background: rgba(255,255,255,.025); }
+
+tbody td {
+  padding: 9px 10px;
+  text-align: right;
+  white-space: nowrap;
+  font-size: 11.5px;
+}
+tbody td:first-child { text-align: left; }
+
+.sym {
+  font-size: 13px; font-weight: 700;
+  color: var(--tw); letter-spacing: .5px;
+}
+.ent-time { font-size: 9px; color: var(--td); margin-top: 2px; }
+
+.side-badge {
+  display: inline-block;
+  padding: 2px 6px; border-radius: 2px;
+  font-size: 9px; font-weight: 700; letter-spacing: .5px;
+}
+.side-long  { background: rgba(0,229,153,.12); color: var(--g); border: 1px solid rgba(0,229,153,.3); }
+.side-short { background: rgba(255,71,87,.12);  color: var(--r); border: 1px solid rgba(255,71,87,.3); }
+
+.bar-wrap { display: flex; align-items: center; gap: 6px; justify-content: flex-end; }
+.bar { height: 3px; border-radius: 2px; width: 38px; background: var(--b1); overflow: hidden; }
+.bar-fill { height: 100%; border-radius: 2px; max-width: 100%; }
+
+.scr-wrap { display: flex; align-items: center; gap: 5px; justify-content: flex-end; }
+.scr-bar { height: 3px; border-radius: 2px; width: 32px; background: var(--b1); overflow: hidden; }
+.scr-bull { background: var(--g); }
+.scr-bear { background: var(--r); }
+.scr-neu  { background: var(--y); }
+
+/* totals row */
+.tbl-footer {
+  padding: 7px 14px;
+  background: var(--bg2);
+  border-top: 1px solid var(--b2);
+  display: flex; gap: 20px; align-items: center;
+  flex-shrink: 0;
+}
+.tf-item { font-size: 9px; color: var(--td); letter-spacing: 1px; }
+.tf-val  { color: var(--tb); font-weight: 600; }
+
+/* ── TRADE LOG ───────────────────────────────────────── */
+.trade-row {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--b1);
+  display: flex; align-items: center; gap: 8px;
+}
+.t-action {
+  font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 2px;
+  flex-shrink: 0; letter-spacing: .5px;
+}
+.act-BUY   { background: rgba(0,229,153,.15); color: var(--g); }
+.act-SHORT { background: rgba(255,71,87,.15);  color: var(--r); }
+.act-CLOSE { background: rgba(255,208,96,.15); color: var(--y); }
+.act-COVER { background: rgba(168,143,255,.15);color: var(--pu); }
+.t-sym  { font-size: 12.5px; font-weight: 700; color: var(--tb); }
+.t-det  { font-size: 10px; color: var(--td); margin-left: auto; }
+
+/* ── LESSONS ─────────────────────────────────────────── */
+.lesson-row { padding: 9px 14px; border-bottom: 1px solid var(--b1); }
+.l-pat  { font-size: 10.5px; color: var(--tm); line-height: 1.5; }
+.l-inst { font-size: 9.5px;  color: var(--td); margin-top: 3px; }
+.l-meta { font-size: 9px;    color: var(--td); margin-top: 2px; }
+
+/* ── PIPELINE FOOTER ─────────────────────────────────── */
+footer {
+  background: var(--bg2);
+  border-top: 1px solid var(--b1);
+  height: 34px;
+  padding: 0 18px;
+  display: flex; align-items: center; gap: 6px;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.pipe-lbl {
+  font-size: 8.5px; letter-spacing: 2px; color: var(--td);
+  text-transform: uppercase; flex-shrink: 0; margin-right: 6px;
+}
+.pipe-step {
+  font-size: 10px; font-weight: 600; color: var(--tm);
+  display: flex; align-items: center; gap: 4px; white-space: nowrap;
+}
+.pipe-step::before {
+  content: '●'; font-size: 6px; color: var(--g);
+  animation: pulse 3s ease infinite;
+}
+.pipe-arr { color: var(--b2); font-size: 13px; flex-shrink: 0; }
+
+/* ── MISC ────────────────────────────────────────────── */
+.empty { padding: 24px; text-align: center; color: var(--td); font-size: 11px; }
+
+@keyframes flash-g { 0% { background: rgba(0,229,153,.18); } 100% { background: transparent; } }
+@keyframes flash-r { 0% { background: rgba(255,71,87,.18);  } 100% { background: transparent; } }
+.fx-g { animation: flash-g .8s ease; }
+.fx-r { animation: flash-r .8s ease; }
+</style>
+</head>
+<body>
+
+<!-- ── HEADER ───────────────────────────────────────────────── -->
+<header>
+  <div class="brand"><span class="brand-icon">◈</span>Algo Trading Terminal</div>
+  <div class="live-wrap">
+    <div class="live-dot"></div>
+    <span class="live-label">LIVE</span>
+  </div>
+  <div class="vsep"></div>
+  <div class="h-item">
+    <span class="h-lbl">ET Time</span>
+    <span id="clock">--:--:--</span>
+  </div>
+  <div class="vsep"></div>
+  <span id="mkt-badge" class="badge mkt-closed">● CLOSED</span>
+  <div class="vsep"></div>
+  <div class="h-item">
+    <span class="h-lbl">VIX</span>
+    <span id="h-vix" class="h-val">--.-</span>
+  </div>
+  <div class="h-item">
+    <span class="h-lbl">SPY</span>
+    <span id="h-spy" class="h-val">--%</span>
+  </div>
+  <span id="h-regime" class="badge reg-NEUTRAL">NEUTRAL</span>
+  <div class="vsep"></div>
+  <div class="ml"></div>
+  <div class="h-item" style="text-align:right">
+    <span class="h-lbl">Day P&L</span>
+    <span id="h-pnl" class="h-val">$—</span>
+  </div>
+  <div class="vsep"></div>
+  <div class="h-item" style="text-align:right">
+    <span class="h-lbl">Equity</span>
+    <span id="h-equity" class="h-val">$—</span>
+  </div>
+</header>
+
+<!-- ── MAIN ─────────────────────────────────────────────────── -->
+<main>
+
+  <!-- LEFT -->
+  <div class="panel panel-left">
+
+    <div class="card-hdr">Portfolio</div>
+    <div class="mrow">
+      <div class="mlbl">Equity</div>
+      <div class="mbig" id="l-equity">$—</div>
+    </div>
+    <div class="mrow">
+      <div class="mlbl">Cash</div>
+      <div class="mmed" id="l-cash" style="color:var(--tb)">$—</div>
+    </div>
+    <div class="mrow">
+      <div class="mlbl">Day P&L</div>
+      <div class="mmed" id="l-pnl">$—</div>
+      <div class="msml" id="l-pct">--%</div>
+    </div>
+
+    <div class="card-hdr" style="margin-top:0">Macro</div>
+    <div class="mrow">
+      <div class="mlbl">VIX</div>
+      <div class="mmed" id="l-vix" style="color:var(--tb);font-size:15px;font-weight:700">--.-</div>
+    </div>
+    <div class="mrow">
+      <div class="mlbl">SPY Change</div>
+      <div class="mmed" id="l-spy">--%</div>
+    </div>
+    <div class="mrow">
+      <div class="mlbl">Regime</div>
+      <div style="margin-top:4px" id="l-regime"><span class="badge reg-NEUTRAL">NEUTRAL</span></div>
+    </div>
+
+    <div class="card-hdr">Agents</div>
+    <div class="scroll" id="agent-list"></div>
+
+  </div>
+
+  <!-- CENTER -->
+  <div class="panel panel-mid">
+    <div class="card-hdr">
+      Open Positions
+      <span class="chip" id="pos-count">0</span>
+    </div>
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Symbol</th>
+            <th>Side</th>
+            <th>Qty</th>
+            <th>Entry</th>
+            <th>Price</th>
+            <th>Mkt Val</th>
+            <th>P&L $</th>
+            <th>P&L %</th>
+            <th>Score</th>
+          </tr>
+        </thead>
+        <tbody id="pos-tbody">
+          <tr><td colspan="9" class="empty">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="tbl-footer">
+      <span class="tf-item">Positions: <span class="tf-val" id="tf-n">0</span></span>
+      <span class="tf-item">Unrealized: <span class="tf-val" id="tf-pl">$0.00</span></span>
+      <span class="tf-item">Long: <span class="tf-val pos" id="tf-lng">0</span></span>
+      <span class="tf-item">Short: <span class="tf-val neg" id="tf-sht">0</span></span>
+    </div>
+  </div>
+
+  <!-- RIGHT -->
+  <div class="panel panel-right">
+
+    <div class="card-hdr">
+      Trade History
+      <span id="trade-ts" style="font-size:9px;color:var(--td)"></span>
+    </div>
+    <div class="scroll" id="trade-log" style="flex:1;min-height:0">
+      <div class="empty">No trades yet</div>
+    </div>
+
+    <div class="card-hdr" style="flex-shrink:0">
+      Agent Memory
+      <span id="mem-meta" style="font-size:9px;color:var(--td)"></span>
+    </div>
+    <div class="scroll" style="height:190px;flex-shrink:0" id="mem-list">
+      <div class="empty">No lessons learned yet</div>
+    </div>
+
+  </div>
+
+</main>
+
+<!-- ── PIPELINE FOOTER ───────────────────────────────────────── -->
+<footer>
+  <span class="pipe-lbl">Pipeline</span>
+  <span class="pipe-step">Watcher</span><span class="pipe-arr">›</span>
+  <span class="pipe-step">Scanner</span><span class="pipe-arr">›</span>
+  <span class="pipe-step">Screener</span><span class="pipe-arr">›</span>
+  <span class="pipe-step">News</span><span class="pipe-arr">›</span>
+  <span class="pipe-step">Predictor</span><span class="pipe-arr">›</span>
+  <span class="pipe-step">Critic</span><span class="pipe-arr">›</span>
+  <span class="pipe-step">Risk</span><span class="pipe-arr">›</span>
+  <span class="pipe-step">Executor</span><span class="pipe-arr">›</span>
+  <span class="pipe-step">Learning</span>
+</footer>
+
+<script>
+// ── UTILS ─────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const sign  = n => n >= 0 ? '+' : '';
+const f$    = n => `${sign(n)}$${Math.abs(n).toFixed(2)}`;
+const fPct  = n => `${sign(n)}${n.toFixed(2)}%`;
+const fBig  = n => {
+  const a = Math.abs(n), s = n < 0 ? '-' : '';
+  if (a >= 1e6) return `${s}$${(a/1e6).toFixed(2)}M`;
+  if (a >= 1e3) return `${s}$${(a/1e3).toFixed(1)}K`;
+  return `${s}$${a.toFixed(2)}`;
+};
+const fP    = n => `$${n.toFixed(2)}`;
+const cls   = n => n > 0 ? 'pos' : n < 0 ? 'neg' : 'neu';
+const fTime = iso => {
+  try {
+    return new Date(iso).toLocaleTimeString('en-US',
+      { hour:'2-digit', minute:'2-digit', timeZone:'America/New_York' });
+  } catch { return ''; }
+};
+
+// ── CLOCK ─────────────────────────────────────────────────────
+function tick() {
+  const et = new Date(new Date().toLocaleString('en-US',{timeZone:'America/New_York'}));
+  const p  = n => String(n).padStart(2,'0');
+  $('clock').textContent = `${p(et.getHours())}:${p(et.getMinutes())}:${p(et.getSeconds())} ET`;
+}
+setInterval(tick, 1000); tick();
+
+// ── AGENTS ────────────────────────────────────────────────────
+['Watcher','Scanner','Screener','News','Predictor','Critic',
+ 'Risk','Executor','Learning','Macro','Research','Portfolio','Monitor']
+.forEach(a => {
+  const d = document.createElement('div');
+  d.className = 'agent-row';
+  d.innerHTML = `<div class="adot"></div><span class="aname">${a}</span>`;
+  $('agent-list').appendChild(d);
+});
+
+// ── FETCH & RENDER ────────────────────────────────────────────
+let prevPnl = null;
+
+async function refresh() {
+  const [port, pos, trades, macro] = await Promise.all([
+    fetch('/api/portfolio').then(r=>r.json()).catch(()=>({})),
+    fetch('/api/positions').then(r=>r.json()).catch(()=>[]),
+    fetch('/api/trades').then(r=>r.json()).catch(()=>({})),
+    fetch('/api/macro').then(r=>r.json()).catch(()=>({})),
+  ]);
+  renderPortfolio(port);
+  renderPositions(Array.isArray(pos) ? pos : []);
+  renderTrades(trades);
+  renderMacro(macro);
+}
+
+async function refreshMemory() {
+  const m = await fetch('/api/memory').then(r=>r.json()).catch(()=>({}));
+  renderMemory(m);
+}
+
+// ── PORTFOLIO ─────────────────────────────────────────────────
+function renderPortfolio(p) {
+  if (!p || p.error || !p.equity) return;
+  const { equity=0, cash=0, day_pnl=0, day_pnl_pct=0 } = p;
+
+  $('l-equity').textContent = fBig(equity);
+  $('l-cash').textContent   = fBig(cash);
+  $('h-equity').textContent = fBig(equity);
+
+  const pnlEl = $('l-pnl');
+  pnlEl.textContent = f$(day_pnl);
+  pnlEl.className   = 'mmed ' + cls(day_pnl);
+
+  $('l-pct').textContent = fPct(day_pnl_pct);
+  $('l-pct').className   = 'msml ' + cls(day_pnl_pct);
+
+  const hPnl = $('h-pnl');
+  hPnl.textContent = f$(day_pnl);
+  hPnl.className   = 'h-val ' + cls(day_pnl);
+
+  if (prevPnl !== null && day_pnl !== prevPnl) {
+    const row = pnlEl.closest('.mrow');
+    if (row) { row.classList.remove('fx-g','fx-r'); void row.offsetWidth;
+               row.classList.add(day_pnl > prevPnl ? 'fx-g' : 'fx-r'); }
+  }
+  prevPnl = day_pnl;
+}
+
+// ── POSITIONS ─────────────────────────────────────────────────
+function renderPositions(list) {
+  $('pos-count').textContent = list.length;
+  $('tf-n').textContent      = list.length;
+
+  if (!list.length) {
+    $('pos-tbody').innerHTML = '<tr><td colspan="9" class="empty">No open positions</td></tr>';
+    ['tf-pl','tf-lng','tf-sht'].forEach(id => $( id).textContent = id==='tf-pl'?'$0.00':'0');
+    return;
+  }
+
+  let totalPl = 0, longs = 0, shorts = 0;
+
+  $('pos-tbody').innerHTML = list.map(p => {
+    totalPl += p.unrealized_pl;
+    const long = p.side === 'long';
+    long ? longs++ : shorts++;
+
+    const plCls = cls(p.unrealized_pl);
+    const barW  = Math.min(Math.abs(p.unrealized_plpc) / 10 * 100, 100);
+    const barC  = p.unrealized_plpc >= 0 ? 'var(--g)' : 'var(--r)';
+
+    const score   = p.score || 50;
+    const scrCls  = score >= 60 ? 'scr-bull' : score <= 40 ? 'scr-bear' : 'scr-neu';
+    const scrW    = Math.abs(score - 50) / 50 * 100;
+
+    return `<tr>
+      <td>
+        <div class="sym">${p.symbol}</div>
+        ${p.entered_at ? `<div class="ent-time">${fTime(p.entered_at)}</div>` : ''}
+      </td>
+      <td><span class="side-badge side-${p.side}">${p.side.toUpperCase()}</span></td>
+      <td style="color:var(--t)">${Math.abs(p.qty).toLocaleString()}</td>
+      <td style="color:var(--tm)">${fP(p.avg_entry)}</td>
+      <td style="color:var(--tb);font-weight:600">${fP(p.current_price)}</td>
+      <td style="color:var(--t)">${fBig(Math.abs(p.market_value))}</td>
+      <td class="${plCls}" style="font-weight:600">${f$(p.unrealized_pl)}</td>
+      <td>
+        <div class="bar-wrap">
+          <span class="${plCls}">${fPct(p.unrealized_plpc)}</span>
+          <div class="bar"><div class="bar-fill" style="width:${barW}%;background:${barC}"></div></div>
+        </div>
+      </td>
+      <td>
+        <div class="scr-wrap">
+          <span style="font-size:10px;color:var(--tm)">${score.toFixed(0)}</span>
+          <div class="scr-bar"><div class="bar-fill ${scrCls}" style="width:${scrW}%"></div></div>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+
+  const plEl = $('tf-pl');
+  plEl.textContent = f$(totalPl);
+  plEl.className   = 'tf-val ' + cls(totalPl);
+  $('tf-lng').textContent = longs;
+  $('tf-sht').textContent = shorts;
+}
+
+// ── TRADES ────────────────────────────────────────────────────
+function renderTrades(data) {
+  if (!data || !Array.isArray(data)) return;
+  if (!data.length) {
+    $('trade-log').innerHTML = '<div class="empty">No trades recorded yet</div>';
+    return;
+  }
+  if (data[0]?.timestamp) $('trade-ts').textContent = fTime(data[0].timestamp);
+
+  $('trade-log').innerHTML = data.map(t => {
+    const pnlHtml = t.pnl != null
+      ? `<span class="${t.pnl >= 0 ? 'pos' : 'neg'}" style="margin-left:6px;font-weight:600">
+           ${t.pnl >= 0 ? '+' : ''}$${Math.abs(t.pnl).toFixed(2)} (${t.pnl_pct >= 0 ? '+' : ''}${t.pnl_pct.toFixed(2)}%)
+         </span>`
+      : '';
+    return `
+    <div class="trade-row">
+      <span class="t-time">${t.timestamp ? fTime(t.timestamp) : ''}</span>
+      <span class="t-sym">${t.symbol}</span>
+      <span class="t-det">${pnlHtml}</span>
+    </div>`;
+  }).join('');
+}
+
+// ── MACRO ─────────────────────────────────────────────────────
+function renderMacro(m) {
+  if (!m) return;
+  const { vix=0, spy_change_pct=0, regime='UNKNOWN', market_open=false } = m;
+
+  $('h-vix').textContent = vix.toFixed(1);
+  $('l-vix').textContent = vix.toFixed(1);
+
+  const spyStr = fPct(spy_change_pct);
+  const spyCls = cls(spy_change_pct);
+  $('h-spy').textContent  = spyStr;
+  $('h-spy').className    = 'h-val ' + spyCls;
+  $('l-spy').textContent  = spyStr;
+  $('l-spy').className    = 'mmed '  + spyCls;
+
+  const reg = regime || 'UNKNOWN';
+  $('h-regime').textContent = reg;
+  $('h-regime').className   = `badge reg-${reg}`;
+  $('l-regime').innerHTML   = `<span class="badge reg-${reg}">${reg}</span>`;
+
+  const mb = $('mkt-badge');
+  mb.textContent = market_open ? '● OPEN' : '● CLOSED';
+  mb.className   = `badge ${market_open ? 'mkt-open' : 'mkt-closed'}`;
+}
+
+// ── MEMORY ────────────────────────────────────────────────────
+function renderMemory(data) {
+  if (!data) return;
+  const lessons = data.global_lessons || [];
+  $('mem-meta').textContent = `${data.trades_reviewed || 0} trades reviewed`;
+
+  if (!lessons.length) {
+    $('mem-list').innerHTML = '<div class="empty">No lessons learned yet</div>';
+    return;
+  }
+  $('mem-list').innerHTML = lessons.map(l => {
+    const wr = ((l.win_rate||0)*100).toFixed(0);
+    return `<div class="lesson-row">
+      <div class="l-pat">${l.pattern || ''}</div>
+      <div class="l-inst">${l.instruction || ''}</div>
+      <div class="l-meta">win rate ${wr}% · n=${l.sample_size||0}</div>
+    </div>`;
+  }).join('');
+}
+
+// ── INIT ──────────────────────────────────────────────────────
+refresh();
+setInterval(refresh, 5000);
+refreshMemory();
+setInterval(refreshMemory, 30000);
+</script>
+</body>
+</html>

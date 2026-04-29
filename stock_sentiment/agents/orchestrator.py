@@ -6,7 +6,8 @@ Usage:
 
 Agent pipeline:
     MacroAgent          → macro.context        (market regime, every 5 min)
-    WatcherAgent        → market.signal        (RVOL + price gate)
+    WatcherAgent        → market.signal        (RVOL + price gate, reactive)
+    ScannerAgent        → market.signal        (batch scan every 15 min, proactive)
     ScreenerAgent       → symbol.screened      (qualification + archetype)
     ResearchAgent       → symbol.researched    (options, technicals, short interest)
     NewsAgent           → symbol.analysed      (RSS + Bedrock sentiment)
@@ -26,6 +27,7 @@ import signal
 from stock_sentiment.market.screener import SCREEN_UNIVERSE
 
 from .critic import CriticAgent
+from .crypto_watcher import CRYPTO_UNIVERSE, CryptoWatcherAgent
 from .event_bus import EventBus
 from .executor import ExecutorAgent
 from .learning import LearningAgent
@@ -37,6 +39,7 @@ from .portfolio import PortfolioAgent
 from .predictor import PredictorAgent
 from .research import ResearchAgent
 from .risk import RiskAgent
+from .scanner import ScannerAgent
 from .screener import ScreenerAgent
 from .watcher import WatcherAgent
 
@@ -44,18 +47,29 @@ log = logging.getLogger("Orchestrator")
 
 
 class Orchestrator:
-    def __init__(self, dry_run: bool = False):
+    def __init__(self, dry_run: bool = False, mode: str = "stocks"):
         self.dry_run = dry_run
+        self.mode = mode  # "stocks", "crypto", "both"
         self.bus = EventBus()
         self.memory = AgentMemory()
         self._tasks: list[asyncio.Task] = []  # type: ignore[type-arg]
 
     async def run(self) -> None:
-        symbols = list(dict.fromkeys(SCREEN_UNIVERSE))  # deduplicate, preserve order
+        stock_symbols = list(dict.fromkeys(SCREEN_UNIVERSE))
 
-        agents = [
-            MacroAgent(self.bus),                        # must start first — others read its state
-            WatcherAgent(self.bus, symbols),
+        from .base import BaseAgent
+        agents: list[BaseAgent] = [MacroAgent(self.bus)]  # must start first
+
+        if self.mode in ("stocks", "both"):
+            agents += [
+                WatcherAgent(self.bus, stock_symbols),
+                ScannerAgent(self.bus, stock_symbols),
+            ]
+
+        if self.mode in ("crypto", "both"):
+            agents.append(CryptoWatcherAgent(self.bus))
+
+        agents += [
             ScreenerAgent(self.bus),
             ResearchAgent(self.bus),
             NewsAgent(self.bus),
@@ -63,7 +77,7 @@ class Orchestrator:
             CriticAgent(self.bus, self.memory),
             PortfolioAgent(self.bus),
             RiskAgent(self.bus),
-            ExecutorAgent(self.bus, dry_run=self.dry_run),
+            ExecutorAgent(self.bus, dry_run=self.dry_run, mode=self.mode),
             LearningAgent(self.bus, self.memory),
             MonitorAgent(self.bus),
         ]
@@ -73,10 +87,15 @@ class Orchestrator:
             for agent in agents
         ]
 
-        mode = "DRY-RUN" if self.dry_run else "LIVE"
+        symbols_count = (
+            len(stock_symbols) if self.mode == "stocks"
+            else len(CRYPTO_UNIVERSE) if self.mode == "crypto"
+            else len(stock_symbols) + len(CRYPTO_UNIVERSE)
+        )
+        run_mode = "DRY-RUN" if self.dry_run else "LIVE"
         log.info(
-            "Multi-agent trading system started [%s] — %d agents, %d symbols",
-            mode, len(agents), len(symbols),
+            "Multi-agent trading system started [%s] mode=%s — %d agents, %d symbols",
+            run_mode, self.mode, len(agents), symbols_count,
         )
 
         loop = asyncio.get_event_loop()

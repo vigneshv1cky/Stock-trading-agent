@@ -1,5 +1,4 @@
 import json
-import math
 import os
 import re
 import time
@@ -108,10 +107,7 @@ class PaperBroker:
     # ------------------------------------------------------------------
 
     def _slot_size_for_score(self, portfolio_value: float) -> float:
-        """Return dollar allocation for a single position.
-
-        Uses fixed_position_dollars if set; otherwise 5% of portfolio.
-        Floor of $50."""
+        """Return dollar allocation for a single position: 9% of portfolio, floor $50."""
         return max(50.0, round(portfolio_value * 0.09, 2))
 
     # ------------------------------------------------------------------
@@ -664,7 +660,7 @@ class PaperBroker:
     # Stop management
     # ------------------------------------------------------------------
 
-    def _place_stop_for_new_position(self, symbol: str, qty: int, is_long: bool, entry_price: float) -> bool:
+    def _place_stop_for_new_position(self, symbol: str, qty: float, is_long: bool, entry_price: float) -> bool:
         """Place a hard stop-loss immediately after entry: long –1.5%, short +0.8%.
         Retries up to 3 times (0.5s apart) to handle market-order fill race condition."""
         pct = 0.015 if is_long else 0.008
@@ -682,6 +678,18 @@ class PaperBroker:
                 console.print(f"  [dim]Stop placed {symbol}: ${stop_price:.2f} ({pct * 100:.1f}% from ${entry_price:.2f})[/dim]")
                 return True
             except Exception as e:
+                err_str = str(e)
+                # Alpaca wash-trade block: cancel the conflicting order and retry immediately
+                if "40310000" in err_str or "wash trade" in err_str.lower():
+                    import re as _re
+                    m = _re.search(r'"existing_order_id"\s*:\s*"([^"]+)"', err_str)
+                    if m:
+                        try:
+                            self.client.cancel_order_by_id(m.group(1))
+                            time.sleep(0.3)
+                        except Exception:
+                            pass
+                    continue
                 if attempt < 2:
                     time.sleep(0.5)
                 else:
@@ -857,83 +865,98 @@ class PaperBroker:
         except Exception:
             return fallback
 
-    def _place_market_buy(self, symbol: str, current_price: float, portfolio_value: float) -> tuple[float, int]:
-        """Submit a market buy (long entry) using whole shares.
-        Returns (price, qty) on success, (0.0, 0) on skip or error."""
+    def _place_market_buy(self, symbol: str, current_price: float, portfolio_value: float) -> tuple[float, float]:
+        """Submit a notional market buy (fractional shares). Returns (price, qty) on success."""
         live_price = self._get_live_price(symbol, current_price)
         price_source = "live" if live_price != current_price else "screener"
 
         if live_price <= 0:
             console.print(f"  [dim]Skipping {symbol}: invalid price[/dim]")
-            return 0.0, 0
+            return 0.0, 0.0
 
         slot = self._slot_size_for_score(portfolio_value)
-        shares_to_buy = math.floor(slot / live_price)
+        qty = round(slot / live_price, 3)
 
-        if shares_to_buy <= 0:
-            console.print(f"  [dim]Skipping {symbol}: ${live_price:.2f} exceeds slot ${slot:.0f}[/dim]")
-            return 0.0, 0
-
-        actual_cost = shares_to_buy * live_price
         console.print(
             f"  [green]✔  BUY {symbol}[/green]"
-            f"  [dim]qty=[/dim][bold]{shares_to_buy}[/bold]"
+            f"  [dim]notional=[/dim][bold]${slot:.0f}[/bold]"
+            f"  [dim]≈[/dim][bold]{qty}[/bold]"
             f"  [dim]@[/dim] ${live_price:.2f} [dim]({price_source})[/dim]"
-            f"  [dim]≈[/dim] [bold]${actual_cost:.2f}[/bold]"
         )
 
         try:
             self.client.submit_order(MarketOrderRequest(
                 symbol=symbol,
-                qty=shares_to_buy,
+                notional=round(slot, 2),
                 side=OrderSide.BUY,
                 time_in_force=TimeInForce.DAY,
             ))
-            placed = self._place_stop_for_new_position(symbol, shares_to_buy, is_long=True, entry_price=live_price)
+            placed = self._place_stop_for_new_position(symbol, qty, is_long=True, entry_price=live_price)
             if not placed:
                 console.print(f"  [yellow]⚠  {symbol} entered WITHOUT stop — audit will retry next cycle[/yellow]")
-            return live_price, shares_to_buy
+            return live_price, qty
         except Exception as e:
             console.print(f"  [red]✖  Market buy failed for {symbol}: {e}[/red]")
-            return 0.0, 0
+            return 0.0, 0.0
 
-    def _place_market_short(self, symbol: str, current_price: float, portfolio_value: float) -> tuple[float, int]:
-        """Submit a market sell to open a short position using whole shares.
-        Returns (price, qty) on success, (0.0, 0) on skip or error."""
+    def _place_crypto_buy(self, symbol: str, current_price: float, portfolio_value: float) -> tuple[float, float]:
+        """Submit a notional crypto buy (fractional). Returns (price, qty_coins) on success."""
+        slot = self._slot_size_for_score(portfolio_value)
+        live_price = self._get_live_price(symbol, current_price)
+        if live_price <= 0:
+            return 0.0, 0.0
+        qty_coins = round(slot / live_price, 8)
+        console.print(
+            f"  [green]✔  BUY {symbol}[/green]"
+            f"  [dim]notional=[/dim][bold]${slot:.0f}[/bold]"
+            f"  [dim]≈[/dim][bold]{qty_coins:.6f}[/bold]"
+            f"  [dim]@[/dim] ${live_price:.2f} [dim](live)[/dim]"
+        )
+        try:
+            self.client.submit_order(MarketOrderRequest(
+                symbol=symbol,
+                notional=round(slot, 2),
+                side=OrderSide.BUY,
+                time_in_force=TimeInForce.GTC,
+            ))
+            self._place_stop_for_new_position(symbol, qty_coins, is_long=True, entry_price=live_price)
+            return live_price, qty_coins
+        except Exception as e:
+            console.print(f"  [red]✖  Crypto buy failed {symbol}: {e}[/red]")
+            return 0.0, 0.0
+
+    def _place_market_short(self, symbol: str, current_price: float, portfolio_value: float) -> tuple[float, float]:
+        """Submit a market sell to open a short position (fractional shares).
+        Returns (price, qty) on success, (0.0, 0.0) on skip or error."""
         live_price = self._get_live_price(symbol, current_price)
         price_source = "live" if live_price != current_price else "screener"
 
         if live_price <= 0:
             console.print(f"  [dim]Skipping short {symbol}: invalid price[/dim]")
-            return 0.0, 0
+            return 0.0, 0.0
 
         slot = self._slot_size_for_score(portfolio_value)
-        shares_to_short = math.floor(slot / live_price)
+        qty = round(slot / live_price, 3)
 
-        if shares_to_short <= 0:
-            console.print(f"  [dim]Skipping short {symbol}: ${live_price:.2f} exceeds slot ${slot:.0f}[/dim]")
-            return 0.0, 0
-
-        actual_value = shares_to_short * live_price
         console.print(
             f"  [red]✔  SHORT {symbol}[/red]"
-            f"  [dim]qty=[/dim][bold]{shares_to_short}[/bold]"
+            f"  [dim]notional=[/dim][bold]${slot:.0f}[/bold]"
+            f"  [dim]≈[/dim][bold]{qty}[/bold]"
             f"  [dim]@[/dim] ${live_price:.2f} [dim]({price_source})[/dim]"
-            f"  [dim]≈[/dim] [bold]${actual_value:.2f}[/bold]"
         )
 
         try:
             self.client.submit_order(MarketOrderRequest(
                 symbol=symbol,
-                qty=shares_to_short,
+                qty=qty,
                 side=OrderSide.SELL,
                 time_in_force=TimeInForce.DAY,
             ))
             time.sleep(2)  # wait for short fill before placing BUY stop (prevents wash-trade rejection)
-            placed = self._place_stop_for_new_position(symbol, shares_to_short, is_long=False, entry_price=live_price)
+            placed = self._place_stop_for_new_position(symbol, qty, is_long=False, entry_price=live_price)
             if not placed:
                 console.print(f"  [yellow]⚠  {symbol} shorted WITHOUT stop — audit will retry next cycle[/yellow]")
-            return live_price, shares_to_short
+            return live_price, qty
         except Exception as e:
             console.print(f"  [red]✖  Market short failed for {symbol}: {e}[/red]")
-            return 0.0, 0
+            return 0.0, 0.0

@@ -28,12 +28,18 @@ def main() -> None:
         action="store_true",
         help="Run the full pipeline but skip all Alpaca order placement",
     )
+    parser.add_argument(
+        "--mode",
+        choices=["stocks", "crypto", "both"],
+        default="stocks",
+        help="Trading mode: stocks only, crypto only, or both (default: stocks)",
+    )
     args = parser.parse_args()
 
     from stock_sentiment.agents.orchestrator import Orchestrator
 
     try:
-        asyncio.run(Orchestrator(dry_run=args.dry_run).run())
+        asyncio.run(Orchestrator(dry_run=args.dry_run, mode=args.mode).run())
     except KeyboardInterrupt:
         pass
 
