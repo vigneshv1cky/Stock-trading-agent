@@ -40,7 +40,7 @@ class MacroAgent(BaseAgent):
             await self._poll()
 
     async def _poll(self) -> None:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             ctx = await loop.run_in_executor(None, self._fetch_context)
             MacroAgent.current = ctx

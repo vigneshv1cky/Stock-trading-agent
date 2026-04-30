@@ -81,7 +81,7 @@ class LearningAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     async def _collect_outcomes(self) -> None:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         while True:
             msg = await self._queue.get()
             outcome = msg["data"]
@@ -99,7 +99,7 @@ class LearningAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     async def _daily_reflection_loop(self) -> None:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         while True:
             await asyncio.sleep(60)
             now = datetime.now(_ET)

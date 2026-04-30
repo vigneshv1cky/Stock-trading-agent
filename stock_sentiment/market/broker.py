@@ -42,7 +42,7 @@ class PaperBroker:
     """Automated paper trading executor using Alpaca with Smart Conviction Swapping."""
 
     def __init__(self):
-        self.max_positions = 10        # total portfolio cap
+        self.max_positions = 8         # total portfolio cap
         self.max_short_cap = 8         # never go more than 8 shorts (keeps at least 2 long slots)
         self.buy_threshold = 60.0
         self._data_client = None
@@ -106,9 +106,24 @@ class PaperBroker:
     # Sizing
     # ------------------------------------------------------------------
 
-    def _slot_size_for_score(self, portfolio_value: float) -> float:
-        """Return dollar allocation for a single position: 9% of portfolio, floor $50."""
-        return max(50.0, round(portfolio_value * 0.09, 2))
+    def _slot_size_for_score(
+        self,
+        portfolio_value: float,
+        avg_sentiment: float | None = None,
+        article_count: int | None = None,
+    ) -> float:
+        """Return dollar allocation scaled by news urgency.
+
+        When avg_sentiment + article_count are provided: 7–12% of portfolio based on
+        recency-weighted sentiment amplitude × article coverage breadth.
+        Fallback (no news data): flat 9%.
+        """
+        if avg_sentiment is not None and article_count is not None:
+            news_urgency = max(0.0, avg_sentiment) * min(1.0, article_count / 3.0)
+            pct = max(0.07, min(0.12, 0.07 + news_urgency * 0.05))
+        else:
+            pct = 0.09
+        return max(50.0, round(portfolio_value * pct, 2))
 
     # ------------------------------------------------------------------
     # Hard stop price calculation (stepped tiers)
@@ -136,7 +151,7 @@ class PaperBroker:
             return False
 
     def _close_eod_positions(self, positions) -> set:
-        """Close ALL positions at or after 3:45 PM ET (day-trading mode). Returns closed symbols."""
+        """Close ALL positions at or after 3:30 PM ET (day-trading mode). Returns closed symbols."""
         closed: set = set()
         try:
             now_et = datetime.now(_ET)
@@ -276,14 +291,14 @@ class PaperBroker:
             # 2. Safety Audit: ensure every position has a hard stop; step up on gains
             self._ensure_hard_stops(positions, held_cache)
 
-            # 2b. EOD close: liquidate all positions at 3:45 PM ET
+            # 2b. EOD close: liquidate all positions at 3:30 PM ET
             eod_closed = self._close_eod_positions(positions)
             for sym in eod_closed:
                 held_symbols.discard(sym)
                 long_symbols.discard(sym)
                 short_symbols.discard(sym)
                 held_cache.pop(sym, None)
-                exec_log["sold"].append({"symbol": sym, "reason": "EOD close", "detail": "Day trade — closed at 3:45 PM ET"})
+                exec_log["sold"].append({"symbol": sym, "reason": "EOD close", "detail": "Day trade — closed at 3:30 PM ET"})
 
             # 3. Mandatory exits for long positions downgraded to BEARISH
             bearish_sold: set = set()
@@ -340,16 +355,17 @@ class PaperBroker:
                     console.print(f"  [dim]Flip skip {symbol}: not shortable[/dim]")
                     continue
                 has_short_slot = len(short_symbols) < self.max_short_cap and len(held_symbols) < self.max_positions
-                has_cash = cash >= self._slot_size_for_score(portfolio_value)
+                short_slot = self._slot_size_for_score(portfolio_value, -pred.avg_sentiment, pred.bearish_count)
+                has_cash = cash >= short_slot
                 if not (has_cash and has_short_slot):
                     console.print(f"  [dim]Flip skip {symbol}: no slot or cash[/dim]")
                     continue
-                price, qty = self._place_market_short(symbol, pred.current_price, portfolio_value)
+                price, qty = self._place_market_short(symbol, pred.current_price, portfolio_value, -pred.avg_sentiment, pred.bearish_count)
                 if qty:
                     short_symbols.add(symbol)
                     held_symbols.add(symbol)
                     held_cache[symbol] = {"type": "DAY", "direction": "SHORT", "entered_at": datetime.now(_ET).isoformat()}
-                    cash -= self._slot_size_for_score(portfolio_value)
+                    cash -= short_slot
                     console.print(f"  [yellow]⇄  FLIP {symbol}[/yellow]  [dim]long → short (BEARISH downgrade)[/dim]")
                     exec_log["shorted"].append({
                         "symbol": symbol,
@@ -373,17 +389,18 @@ class PaperBroker:
                 if pred is None:
                     continue
                 has_slot = len(held_symbols) < self.max_positions
-                has_cash = cash >= self._slot_size_for_score(portfolio_value)
+                long_slot = self._slot_size_for_score(portfolio_value, pred.avg_sentiment, pred.bullish_count)
+                has_cash = cash >= long_slot
                 if not (has_cash and has_slot):
                     console.print(f"  [dim]Flip skip {symbol}: no slot or cash[/dim]")
                     continue
                 trade_type = "DAY"
-                price, qty = self._place_market_buy(symbol, pred.current_price, portfolio_value)
+                price, qty = self._place_market_buy(symbol, pred.current_price, portfolio_value, pred.avg_sentiment, pred.bullish_count)
                 if qty:
                     long_symbols.add(symbol)
                     held_symbols.add(symbol)
                     held_cache[symbol] = {"type": trade_type, "direction": "LONG", "entered_at": datetime.now(_ET).isoformat()}
-                    cash -= self._slot_size_for_score(portfolio_value)
+                    cash -= long_slot
                     console.print(f"  [yellow]⇄  FLIP {symbol}[/yellow]  [dim]short → long (BULLISH upgrade)[/dim]")
                     exec_log["bought"].append({
                         "symbol": symbol,
@@ -448,13 +465,13 @@ class PaperBroker:
                 if len(held_symbols) >= self.max_positions:
                     break
                 trade_type = "DAY"
-                slot = self._slot_size_for_score(portfolio_value)
+                slot = self._slot_size_for_score(portfolio_value, new_pick.avg_sentiment, new_pick.bullish_count)
                 has_cash = cash >= slot
                 has_slot = len(held_symbols) < self.max_positions
 
                 # CASE 1: Standard Entry
                 if has_cash and has_slot:
-                    price, qty = self._place_market_buy(new_pick.symbol, new_pick.current_price, portfolio_value)
+                    price, qty = self._place_market_buy(new_pick.symbol, new_pick.current_price, portfolio_value, new_pick.avg_sentiment, new_pick.bullish_count)
                     if qty:
                         long_symbols.add(new_pick.symbol)
                         held_symbols.add(new_pick.symbol)
@@ -500,7 +517,7 @@ class PaperBroker:
                             held_symbols.discard(weakest_symbol)
                             held_cache.pop(weakest_symbol, None)
                             swapped_out.add(weakest_symbol)
-                            price, qty = self._place_market_buy(new_pick.symbol, new_pick.current_price, portfolio_value)
+                            price, qty = self._place_market_buy(new_pick.symbol, new_pick.current_price, portfolio_value, new_pick.avg_sentiment, new_pick.bullish_count)
                             if qty:
                                 long_symbols.add(new_pick.symbol)
                                 held_symbols.add(new_pick.symbol)
@@ -545,13 +562,13 @@ class PaperBroker:
                     console.print(f"  [dim]Skip short {new_short.symbol}: not shortable[/dim]")
                     continue
                 trade_type = "DAY"
-                slot = self._slot_size_for_score(portfolio_value)
+                slot = self._slot_size_for_score(portfolio_value, -new_short.avg_sentiment, new_short.bearish_count)
                 has_short_slot = len(short_symbols) < self.max_short_cap and len(held_symbols) < self.max_positions
                 has_cash = cash >= slot
 
                 # CASE 1: Standard short entry
                 if has_cash and has_short_slot:
-                    price, qty = self._place_market_short(new_short.symbol, new_short.current_price, portfolio_value)
+                    price, qty = self._place_market_short(new_short.symbol, new_short.current_price, portfolio_value, -new_short.avg_sentiment, new_short.bearish_count)
                     if qty:
                         short_symbols.add(new_short.symbol)
                         held_symbols.add(new_short.symbol)
@@ -594,7 +611,7 @@ class PaperBroker:
                             short_symbols.discard(weakest_symbol)
                             held_symbols.discard(weakest_symbol)
                             held_cache.pop(weakest_symbol, None)
-                            price, qty = self._place_market_short(new_short.symbol, new_short.current_price, portfolio_value)
+                            price, qty = self._place_market_short(new_short.symbol, new_short.current_price, portfolio_value, -new_short.avg_sentiment, new_short.bearish_count)
                             if qty:
                                 short_symbols.add(new_short.symbol)
                                 held_symbols.add(new_short.symbol)
@@ -865,7 +882,14 @@ class PaperBroker:
         except Exception:
             return fallback
 
-    def _place_market_buy(self, symbol: str, current_price: float, portfolio_value: float) -> tuple[float, float]:
+    def _place_market_buy(
+        self,
+        symbol: str,
+        current_price: float,
+        portfolio_value: float,
+        avg_sentiment: float | None = None,
+        article_count: int | None = None,
+    ) -> tuple[float, float]:
         """Submit a notional market buy (fractional shares). Returns (price, qty) on success."""
         live_price = self._get_live_price(symbol, current_price)
         price_source = "live" if live_price != current_price else "screener"
@@ -874,7 +898,7 @@ class PaperBroker:
             console.print(f"  [dim]Skipping {symbol}: invalid price[/dim]")
             return 0.0, 0.0
 
-        slot = self._slot_size_for_score(portfolio_value)
+        slot = self._slot_size_for_score(portfolio_value, avg_sentiment, article_count)
         qty = round(slot / live_price, 3)
 
         console.print(
@@ -899,33 +923,14 @@ class PaperBroker:
             console.print(f"  [red]✖  Market buy failed for {symbol}: {e}[/red]")
             return 0.0, 0.0
 
-    def _place_crypto_buy(self, symbol: str, current_price: float, portfolio_value: float) -> tuple[float, float]:
-        """Submit a notional crypto buy (fractional). Returns (price, qty_coins) on success."""
-        slot = self._slot_size_for_score(portfolio_value)
-        live_price = self._get_live_price(symbol, current_price)
-        if live_price <= 0:
-            return 0.0, 0.0
-        qty_coins = round(slot / live_price, 8)
-        console.print(
-            f"  [green]✔  BUY {symbol}[/green]"
-            f"  [dim]notional=[/dim][bold]${slot:.0f}[/bold]"
-            f"  [dim]≈[/dim][bold]{qty_coins:.6f}[/bold]"
-            f"  [dim]@[/dim] ${live_price:.2f} [dim](live)[/dim]"
-        )
-        try:
-            self.client.submit_order(MarketOrderRequest(
-                symbol=symbol,
-                notional=round(slot, 2),
-                side=OrderSide.BUY,
-                time_in_force=TimeInForce.GTC,
-            ))
-            self._place_stop_for_new_position(symbol, qty_coins, is_long=True, entry_price=live_price)
-            return live_price, qty_coins
-        except Exception as e:
-            console.print(f"  [red]✖  Crypto buy failed {symbol}: {e}[/red]")
-            return 0.0, 0.0
-
-    def _place_market_short(self, symbol: str, current_price: float, portfolio_value: float) -> tuple[float, float]:
+    def _place_market_short(
+        self,
+        symbol: str,
+        current_price: float,
+        portfolio_value: float,
+        avg_sentiment: float | None = None,
+        article_count: int | None = None,
+    ) -> tuple[float, float]:
         """Submit a market sell to open a short position (fractional shares).
         Returns (price, qty) on success, (0.0, 0.0) on skip or error."""
         live_price = self._get_live_price(symbol, current_price)
@@ -935,7 +940,7 @@ class PaperBroker:
             console.print(f"  [dim]Skipping short {symbol}: invalid price[/dim]")
             return 0.0, 0.0
 
-        slot = self._slot_size_for_score(portfolio_value)
+        slot = self._slot_size_for_score(portfolio_value, avg_sentiment, article_count)
         qty = round(slot / live_price, 3)
 
         console.print(

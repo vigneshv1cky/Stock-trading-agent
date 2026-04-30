@@ -60,11 +60,6 @@ class ScreenerAgent(BaseAgent):
     async def _process(self, signal: dict) -> None:
         sym = signal["symbol"]
 
-        # Crypto fast-path — skip all stock-specific gates
-        if signal.get("asset_class") == "crypto":
-            await self._process_crypto(signal)
-            return
-
         # Time-of-day gate — skip price-discovery window and EOD noise
         now = datetime.now(_ET)
         minutes_since_open = (now.hour - _MARKET_OPEN_HOUR) * 60 + (now.minute - _MARKET_OPEN_MIN)
@@ -76,7 +71,7 @@ class ScreenerAgent(BaseAgent):
             self.log.debug("Time gate (close): %s at %s", sym, now.strftime("%H:%M"))
             return
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             stock = await loop.run_in_executor(None, self._screen, sym, signal)
             if stock:
@@ -95,41 +90,6 @@ class ScreenerAgent(BaseAgent):
                 self.log.debug("Rejected: %s", sym)
         except Exception as exc:
             self.log.error("Screener error %s: %s", sym, exc)
-
-    async def _process_crypto(self, signal: dict) -> None:
-        sym = signal["symbol"]
-        price = signal["price"]
-        change_pct = signal["price_change_pct"]
-        rvol = signal["rvol"]
-
-        if abs(change_pct) >= 3.0 and rvol >= 2.0:
-            archetype = "FRESH_BREAKOUT"
-        elif change_pct >= 2.0:
-            archetype = "BREAKOUT"
-        else:
-            archetype = "MOMENTUM"
-
-        from stock_sentiment.market.screener import ScreenedStock
-        stock = ScreenedStock(
-            symbol=sym,
-            current_price=price,
-            change_3m_pct=0.0,
-            change_1m_pct=0.0,
-            change_1w_pct=change_pct,
-            avg_volume=0.0,
-            volume_ratio=rvol,
-            archetype=archetype,
-            daily_closes_3m=[price],
-            days_to_earnings=None,
-            change_today_pct=change_pct,
-            asset_class="crypto",
-        )
-        self.log.info("Crypto screened: %s [%s]  change=%+.1f%%  RVOL=%.1fx", sym, archetype, change_pct, rvol)
-        await self.bus.publish("symbol.screened", {
-            "symbol": sym,
-            "screened_stock": stock,
-            "signal": signal,
-        })
 
     # ------------------------------------------------------------------
     # Blocking work — runs in executor
@@ -168,11 +128,14 @@ class ScreenerAgent(BaseAgent):
         change_today = signal["price_change_pct"]
 
         # ---- Regime-adjusted RVOL / move thresholds ----
-        rvol_min = 1.5 * _REGIME_RVOL_MULT.get(regime, 1.0)
-        move_min = 2.0 * _REGIME_MOVE_MULT.get(regime, 1.0)
-        if rvol < rvol_min or abs(change_today) < move_min:
-            self.log.debug("Regime gate (%s): %s RVOL=%.1f move=%.1f%%", regime, sym, rvol, change_today)
-            return None
+        # REEVAL signals re-check an existing position — skip entry-quality gates
+        is_reeval = signal.get("trigger_type") == "REEVAL"
+        if not is_reeval:
+            rvol_min = 1.5 * _REGIME_RVOL_MULT.get(regime, 1.0)
+            move_min = 2.0 * _REGIME_MOVE_MULT.get(regime, 1.0)
+            if rvol < rvol_min or abs(change_today) < move_min:
+                self.log.debug("Regime gate (%s): %s RVOL=%.1f move=%.1f%%", regime, sym, rvol, change_today)
+                return None
 
         # ---- Volume direction: is the spike on an up or down bar? ----
         last_bar_up = float(closes.iloc[-1]) >= float(closes.iloc[-2]) if len(closes) >= 2 else True
@@ -183,11 +146,8 @@ class ScreenerAgent(BaseAgent):
         if change_today > 0 and vol_direction == "DOWN":
             rvol_min *= 1.2   # require 20% more RVOL when volume is on a down-bar during a price rise
 
-        # ---- Earnings blackout / lookahead ----
+        # ---- Earnings lookahead ----
         days_to_earnings = self._days_to_earnings(ticker, now)
-        if days_to_earnings is not None and days_to_earnings <= 3:
-            self.log.debug("Earnings blackout: %s (%dd)", sym, days_to_earnings)
-            return None
 
         # ---- Momentum metrics ----
         base_3m = float(closes.iloc[0])
@@ -223,6 +183,10 @@ class ScreenerAgent(BaseAgent):
             archetype = "MOMENTUM"
 
         if archetype is None:
+            self.log.debug(
+                "No archetype: %s (1w=%+.1f%% 1m=%+.1f%% 3m=%+.1f%% dd=%.1f%% bounce=%.1f%%)",
+                sym, change_1w, change_1m, change_3m, drawdown, bounce,
+            )
             return None
 
         # ---- PANIC regime: only allow RECOVERY and high-conviction FRESH_BREAKOUT ----

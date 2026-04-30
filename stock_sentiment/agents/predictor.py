@@ -1,16 +1,14 @@
-"""PredictorAgent — formula sub-scores + Claude Sonnet with optional extended thinking.
+"""PredictorAgent — formula sub-scores + Claude Haiku LLM score.
 
 Subscribes to: symbol.analysed
 Publishes to:  symbol.predicted
 
-Improvements over original bot version:
   • Adaptive formula/LLM blend: more research data → trust LLM more (up to 65 %)
   • LLM returns score + confidence + red_flag_severity (NONE/MINOR/MODERATE/FATAL)
   • Red flag severity: MINOR=no cap, MODERATE=cap 50, FATAL=cap 28 (hard block)
   • Confidence gate: LLM confidence < 35 → force NEUTRAL regardless of score
   • Macro-adjusted output: PANIC regime suppresses BULLISH signals entirely
-  • Extended thinking band widened to 35–70 (was 38–65)
-  • Structured 4-step reasoning prompt instead of open-ended
+  • Structured 4-step reasoning prompt
 """
 
 import asyncio
@@ -34,10 +32,7 @@ from .base import BaseAgent
 from .event_bus import EventBus
 from .memory import AgentMemory
 
-_SONNET_MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
-_THINKING_LOW = 35.0
-_THINKING_HIGH = 70.0
-_THINKING_BUDGET = 2000
+_HAIKU_MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
 # Red flag severity caps
 _SEVERITY_CAPS = {"NONE": 100, "MINOR": 100, "MODERATE": 50, "FATAL": 28}
@@ -89,7 +84,7 @@ class PredictorAgent(BaseAgent):
         sym = data["symbol"]
         stock = data["screened_stock"]
         articles = data["scored_articles"]
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             prices = await loop.run_in_executor(
                 None, lambda: self._price_fetcher.fetch_batch([sym], period="3mo")
@@ -110,8 +105,6 @@ class PredictorAgent(BaseAgent):
             llm_score = float(llm.get("score", formula_score))
             llm_confidence = float(llm.get("confidence", 50.0))
             severity = llm.get("red_flag_severity", "NONE")
-            used_thinking = bool(llm.get("used_thinking", False))
-
             # Adaptive blend: richer research data → trust LLM more
             research_richness = self._research_richness(research)
             llm_weight = 0.50 + research_richness * 0.15   # 0.50 → 0.65
@@ -151,13 +144,11 @@ class PredictorAgent(BaseAgent):
                 reasoning.append(llm["reasoning"])
             if severity != "NONE":
                 reasoning.append(f"Red flag [{severity}] — score capped at {cap}")
-            if used_thinking:
-                reasoning.append("Extended thinking applied")
 
             prediction = self._predictor._build_prediction(stock, sub, score, rating, reasoning)
             self.log.info(
-                "Predicted: %s  %s  score=%.1f  conf=%.0f  severity=%s  thinking=%s",
-                sym, rating, score, llm_confidence, severity, used_thinking,
+                "Predicted: %s  %s  score=%.1f  conf=%.0f  severity=%s",
+                sym, rating, score, llm_confidence, severity,
             )
             await self.bus.publish("symbol.predicted", {
                 "symbol": sym,
@@ -260,12 +251,15 @@ class PredictorAgent(BaseAgent):
             user_text = lessons + "\n\n" + user_text
 
         formula_score = sub["formula_score"]
-        use_thinking = _THINKING_LOW <= formula_score <= _THINKING_HIGH
 
         try:
-            if use_thinking:
-                return self._call_with_thinking(user_text, formula_score)
-            return self._call_standard(user_text, formula_score)
+            resp = self._get_bedrock().converse(
+                modelId=_HAIKU_MODEL,
+                system=[{"text": _SYSTEM_PROMPT}],
+                messages=[{"role": "user", "content": [{"text": user_text}]}],
+                inferenceConfig={"maxTokens": 600, "temperature": 0},
+            )
+            return self._parse_response(resp, formula_score)
         except Exception as exc:
             self.log.warning("LLM fallback %s: %s", stock.symbol, exc)
             return {
@@ -275,34 +269,12 @@ class PredictorAgent(BaseAgent):
                 "reasoning": "",
             }
 
-    def _call_standard(self, user_text: str, fallback_score: float) -> dict:
-        resp = self._get_bedrock().converse(
-            modelId=_SONNET_MODEL,
-            system=[{"text": _SYSTEM_PROMPT}],
-            messages=[{"role": "user", "content": [{"text": user_text}]}],
-            inferenceConfig={"maxTokens": 600, "temperature": 0},
-        )
-        return self._parse_response(resp, fallback_score, used_thinking=False)
-
-    def _call_with_thinking(self, user_text: str, fallback_score: float) -> dict:
-        resp = self._get_bedrock().converse(
-            modelId=_SONNET_MODEL,
-            system=[{"text": _SYSTEM_PROMPT}],
-            messages=[{"role": "user", "content": [{"text": user_text}]}],
-            inferenceConfig={"maxTokens": _THINKING_BUDGET + 600, "temperature": 1},
-            additionalModelRequestFields={
-                "thinking": {"type": "enabled", "budget_tokens": _THINKING_BUDGET}
-            },
-        )
-        return self._parse_response(resp, fallback_score, used_thinking=True)
-
-    def _parse_response(self, resp: dict, fallback_score: float, used_thinking: bool) -> dict:
+    def _parse_response(self, resp: dict, fallback_score: float) -> dict:
         content = resp.get("output", {}).get("message", {}).get("content", [])
-        text = ""
-        for block in content:
-            if block.get("type") == "text" or ("text" in block and "thinking" not in block):
-                text = block.get("text", "").strip()
-                break
+        text = next(
+            (b.get("text", "").strip() for b in content if b.get("text")),
+            "",
+        )
         if not text:
             return {
                 "score": fallback_score,
@@ -312,15 +284,12 @@ class PredictorAgent(BaseAgent):
             }
         if text.startswith("```"):
             text = re.sub(r"^```[a-z]*\n?", "", text).rstrip("`").strip()
-        # Haiku sometimes appends explanatory text after the JSON object — extract just the first object
         m = re.search(r"\{.*\}", text, re.DOTALL)
         if not m:
             raise ValueError("No JSON object found in response")
         result = json.loads(m.group())
-        # Normalise severity
         if "red_flag_severity" not in result:
             result["red_flag_severity"] = "FATAL" if result.get("red_flag") else "NONE"
-        result["used_thinking"] = used_thinking
         return result
 
     def refresh_memory(self, memory: Optional[AgentMemory] = None) -> None:

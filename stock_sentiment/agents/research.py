@@ -61,7 +61,7 @@ class ResearchAgent(BaseAgent):
         if cached and time.time() - cached[0] < _CACHE_TTL_S:
             return
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             result = await loop.run_in_executor(None, self._research, sym, data)
             ResearchAgent._cache[sym] = (time.time(), result)

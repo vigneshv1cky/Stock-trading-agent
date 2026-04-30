@@ -25,7 +25,7 @@ from .base import BaseAgent
 from .event_bus import EventBus
 from .memory import AgentMemory
 
-_SONNET_MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+_HAIKU_MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 _REJECT_CAP = 32.0
 _UPGRADE_MAX = 85.0
 _UPGRADE_DELTA = 8.0
@@ -82,7 +82,7 @@ class CriticAgent(BaseAgent):
         sym = data["symbol"]
         pred = data["prediction"]
         llm_confidence = float(data.get("llm_confidence", 50.0))
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             result = await loop.run_in_executor(None, self._debate, pred, llm_confidence)
             verdict = result.get("verdict", "CONFIRM")
@@ -203,7 +203,7 @@ class CriticAgent(BaseAgent):
         # Turn 1 — raise concerns
         try:
             r1 = bedrock.converse(
-                modelId=_SONNET_MODEL,
+                modelId=_HAIKU_MODEL,
                 system=[{"text": _SYSTEM_PROMPT}],
                 messages=[
                     {"role": "user", "content": [{"text": proposal + "\n\n" + _CONCERN_PROMPT}]}
@@ -219,7 +219,7 @@ class CriticAgent(BaseAgent):
         # Turn 2 — binding verdict given the concerns
         try:
             r2 = bedrock.converse(
-                modelId=_SONNET_MODEL,
+                modelId=_HAIKU_MODEL,
                 system=[{"text": _SYSTEM_PROMPT}],
                 messages=[
                     {"role": "user", "content": [{"text": proposal + "\n\n" + _CONCERN_PROMPT}]},

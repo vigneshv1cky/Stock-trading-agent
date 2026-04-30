@@ -41,7 +41,7 @@ Alpaca WebSocket (1-min bars)
          │ market.signal
     ScreenerAgent         ← single-symbol qualification + archetype classification
          │ symbol.screened
-    NewsAgent             ← Google RSS fetch + Bedrock sentiment scoring
+    NewsAgent             ← Polygon.io news + Haiku sentiment scoring
          │ symbol.analysed
     PredictorAgent  ←──── AgentMemory (learned lessons injected into prompt)
     (formula + Haiku)
@@ -49,9 +49,9 @@ Alpaca WebSocket (1-min bars)
     CriticAgent     ←──── AgentMemory (adversarial — find reasons the trade FAILS)
     (Haiku)
          │ symbol.reviewed
-    RiskAgent             ← VIX gate, slot check, cooldown check
+    RiskAgent             ← VIX gate, position caps, sector, drawdown, cooldown
          │ trade.approved
-    ExecutorAgent         ← Alpaca orders + hard stops + EOD close at 3:45 PM ET
+    ExecutorAgent         ← Alpaca orders + hard stops + EOD close at 3:30 PM ET
          │ trade.closed
     LearningAgent         ← reflects on outcomes every 10 trades or 4:05 PM ET daily
          │ memory.updated
@@ -72,7 +72,7 @@ All agents run as concurrent `asyncio` tasks sharing one `EventBus` and one `Age
 
 **ScreenerAgent** (`agents/screener.py`)
 - Fetches 3mo price history via `PriceFetcher` (600s cache)
-- Checks: ≥20 days history, no earnings within 3 days
+- Checks: ≥20 days history, price ≥ $5, avg volume ≥ 100k
 - Archetype classification with **static** thresholds (adaptive percentiles don't work for 1 symbol):
   - FRESH_BREAKOUT: |change_today| ≥ 3% AND rvol ≥ 2.0
   - BREAKOUT: change_1w ≥ 10% OR change_1m ≥ 15%
@@ -86,20 +86,22 @@ All agents run as concurrent `asyncio` tasks sharing one `EventBus` and one `Age
 
 **CriticAgent** (`agents/critic.py`)
 - Second adversarial Haiku call designed to find trade failure reasons
-- CONFIRM → score unchanged; DOWNGRADE → −15 pts; REJECT → cap at 45 (forces NEUTRAL)
+- 5-tier verdict: UPGRADE (+8, max 85) → CONFIRM (unchanged) → CAUTION (−8) → DOWNGRADE (exact adjusted score) → REJECT (cap at 32)
 - Does NOT block exits — CLOSE actions bypass the critic
 
 **RiskAgent** (`agents/risk.py`)
 - VIX regime thresholds: calm(55) → normal(60) → volatile(70) → panic(85)
-- Max 10 open positions; 1-hour re-entry cooldown after stop-out
+- Market-hours gate: no new entries before 9:45 AM or after 3:00 PM ET
+- Max 10 open positions, max 8 shorts; 1-hour re-entry cooldown after stop-out
+- Score-based displacement: new signal evicts weakest same-direction position (by score) if it beats it by ≥5 pts
 
 **ExecutorAgent** (`agents/executor.py`)
 - Delegates to `PaperBroker` methods; stop audit every 5 min
-- EOD close at 3:45 PM ET for all DAY trades and short positions
+- EOD close at 3:30 PM ET for all positions
 
 **LearningAgent** (`agents/learning.py`)
 - Rolling buffer of last 100 closed trade outcomes
-- Haiku reflection every 10 trades or daily at 4:05 PM ET
+- **Sonnet** reflection every 10 trades or daily at 4:05 PM ET; groups outcomes by archetype for root-cause attribution
 - Writes lessons to `AgentMemory`; triggers `WeightOptimizer.optimize()` when ≥50 outcomes
 
 ### Weight Optimizer (`stock_sentiment/market/weight_optimizer.py`)
@@ -151,7 +153,7 @@ SES_TO_EMAIL=...
 
 ## Key Design Notes
 
-- **All NLP runs on AWS Bedrock**: Nova Micro (primary) → Nova Lite → Haiku fallback chain for article sentiment scoring; Haiku for Predictor conviction scores, Critic adversarial review, and LearningAgent reflection. No local model files — Bedrock credentials via `AWS_PROFILE` or instance role.
+- **All NLP runs on AWS Bedrock**: Haiku for article sentiment scoring, Predictor conviction scores, and Critic adversarial review; **Sonnet** for LearningAgent reflection. No local model files — Bedrock credentials via `AWS_PROFILE` or instance role.
 - **Archetype matters for scoring**: `MOMENTUM`, `BREAKOUT`, and `RECOVERY` archetypes use different RSI/momentum weightings — always check archetype context when modifying `stock_predictor.py`. Weights are learned per-archetype and stored in `~/.stock_screener/weights.json`.
 - **Static archetype thresholds in ScreenerAgent**: unlike the batch screener which uses live-universe percentiles, the agent screener uses fixed thresholds because adaptive percentiles require a full universe of stocks to be meaningful.
 - **Price data is cached 600s** in `price_fetcher.py` to avoid yfinance rate limits.

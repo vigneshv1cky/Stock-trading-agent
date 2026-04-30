@@ -10,9 +10,9 @@ Agent pipeline:
     ScannerAgent        → market.signal        (batch scan every 15 min, proactive)
     ScreenerAgent       → symbol.screened      (qualification + archetype)
     ResearchAgent       → symbol.researched    (options, technicals, short interest)
-    NewsAgent           → symbol.analysed      (RSS + Bedrock sentiment)
-    PredictorAgent      → symbol.predicted     (Sonnet + extended thinking)
-    CriticAgent         → symbol.reviewed      (two-turn adversarial debate)
+    NewsAgent           → symbol.analysed      (Polygon + Haiku sentiment)
+    PredictorAgent      → symbol.predicted     (Haiku score)
+    CriticAgent         → symbol.reviewed      (adversarial Haiku)
     PortfolioAgent      → portfolio.state      (sector concentration tracking)
     RiskAgent           → trade.approved       (VIX + concentration + cooldown)
     ExecutorAgent       → trade.executed / trade.closed
@@ -27,7 +27,6 @@ import signal
 from stock_sentiment.market.screener import SCREEN_UNIVERSE
 
 from .critic import CriticAgent
-from .crypto_watcher import CRYPTO_UNIVERSE, CryptoWatcherAgent
 from .event_bus import EventBus
 from .executor import ExecutorAgent
 from .learning import LearningAgent
@@ -47,9 +46,8 @@ log = logging.getLogger("Orchestrator")
 
 
 class Orchestrator:
-    def __init__(self, dry_run: bool = False, mode: str = "stocks"):
+    def __init__(self, dry_run: bool = False):
         self.dry_run = dry_run
-        self.mode = mode  # "stocks", "crypto", "both"
         self.bus = EventBus()
         self.memory = AgentMemory()
         self._tasks: list[asyncio.Task] = []  # type: ignore[type-arg]
@@ -58,18 +56,10 @@ class Orchestrator:
         stock_symbols = list(dict.fromkeys(SCREEN_UNIVERSE))
 
         from .base import BaseAgent
-        agents: list[BaseAgent] = [MacroAgent(self.bus)]  # must start first
-
-        if self.mode in ("stocks", "both"):
-            agents += [
-                WatcherAgent(self.bus, stock_symbols),
-                ScannerAgent(self.bus, stock_symbols),
-            ]
-
-        if self.mode in ("crypto", "both"):
-            agents.append(CryptoWatcherAgent(self.bus))
-
-        agents += [
+        agents: list[BaseAgent] = [
+            MacroAgent(self.bus),
+            WatcherAgent(self.bus, stock_symbols),
+            ScannerAgent(self.bus, stock_symbols),
             ScreenerAgent(self.bus),
             ResearchAgent(self.bus),
             NewsAgent(self.bus),
@@ -77,7 +67,7 @@ class Orchestrator:
             CriticAgent(self.bus, self.memory),
             PortfolioAgent(self.bus),
             RiskAgent(self.bus),
-            ExecutorAgent(self.bus, dry_run=self.dry_run, mode=self.mode),
+            ExecutorAgent(self.bus, dry_run=self.dry_run),
             LearningAgent(self.bus, self.memory),
             MonitorAgent(self.bus),
         ]
@@ -87,18 +77,13 @@ class Orchestrator:
             for agent in agents
         ]
 
-        symbols_count = (
-            len(stock_symbols) if self.mode == "stocks"
-            else len(CRYPTO_UNIVERSE) if self.mode == "crypto"
-            else len(stock_symbols) + len(CRYPTO_UNIVERSE)
-        )
         run_mode = "DRY-RUN" if self.dry_run else "LIVE"
         log.info(
-            "Multi-agent trading system started [%s] mode=%s — %d agents, %d symbols",
-            run_mode, self.mode, len(agents), symbols_count,
+            "Multi-agent trading system started [%s] — %d agents, %d symbols",
+            run_mode, len(agents), len(stock_symbols),
         )
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         for sig in (signal.SIGTERM, signal.SIGINT):
             try:
                 loop.add_signal_handler(sig, self._request_shutdown)

@@ -1,8 +1,4 @@
-"""Financial sentiment scorer with model fallback chain.
-
-Primary: Amazon Nova Micro (cheapest, ~7x cheaper than Haiku).
-Fallbacks: Nova Lite → Claude Haiku → neutral.
-"""
+"""Financial sentiment scorer using Claude Haiku."""
 
 import json
 import os
@@ -11,12 +7,7 @@ from dataclasses import dataclass
 
 import boto3
 
-# Tried in order; first success wins.
-_MODEL_CHAIN = [
-    "amazon.nova-micro-v1:0",
-    "amazon.nova-lite-v1:0",
-    "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-]
+_HAIKU_MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
 _SYSTEM = (
     "You are a financial sentiment scorer for equity investors. "
@@ -95,23 +86,18 @@ class SentimentAnalyzer:
 
     def _score_batch(self, texts: list[str], offset: int) -> list[SentimentResult]:
         numbered = "\n".join(f"{offset + i + 1}. {t}" for i, t in enumerate(texts))
-
-        for model_id in _MODEL_CHAIN:
-            try:
-                resp = self._get_client().converse(
-                    modelId=model_id,
-                    system=[{"text": _SYSTEM}],
-                    messages=[{"role": "user", "content": [{"text": numbered}]}],
-                    inferenceConfig={"maxTokens": 512, "temperature": 0},
-                )
-                text_out = resp["output"]["message"]["content"][0]["text"].strip()
-                scores = _parse_scores(text_out, len(texts))
-                if scores is not None:
-                    print(f"[NLP] Scored batch (offset={offset}) with {model_id}.")
-                    return [_from_score(s) for s in scores]
-                print(f"[NLP] {model_id} returned unparseable output — trying next model.")
-            except Exception as e:
-                print(f"[NLP] {model_id} failed (offset={offset}): {e} — trying next model.")
-
-        print(f"[NLP] All models failed for batch (offset={offset}) — returning neutral.")
+        try:
+            resp = self._get_client().converse(
+                modelId=_HAIKU_MODEL,
+                system=[{"text": _SYSTEM}],
+                messages=[{"role": "user", "content": [{"text": numbered}]}],
+                inferenceConfig={"maxTokens": 512, "temperature": 0},
+            )
+            text_out = resp["output"]["message"]["content"][0]["text"].strip()
+            scores = _parse_scores(text_out, len(texts))
+            if scores is not None:
+                return [_from_score(s) for s in scores]
+            print(f"[NLP] Haiku returned unparseable output for batch (offset={offset}) — returning neutral.")
+        except Exception as e:
+            print(f"[NLP] Haiku failed (offset={offset}): {e} — returning neutral.")
         return [_neutral() for _ in texts]

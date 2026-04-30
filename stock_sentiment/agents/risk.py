@@ -28,7 +28,7 @@ from .event_bus import EventBus
 
 _COOLDOWN_FILE = os.path.expanduser("~/.stock_screener/cooldowns.json")
 _HELD_CACHE = os.path.expanduser("~/.stock_screener/held_cache.json")
-_MAX_POSITIONS = 10
+_MAX_POSITIONS = 8
 _MAX_SHORTS = 8
 _SHORT_MAX_SCORE = 35
 _SECTOR_CONCENTRATION_BLOCK = 50.0   # % — hard block
@@ -69,7 +69,7 @@ class RiskAgent(BaseAgent):
     async def _evaluate(self, data: dict) -> None:
         sym = data["symbol"]
         pred = data["prediction"]
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             broker = self._get_broker()
             if not broker.client:
@@ -96,8 +96,6 @@ class RiskAgent(BaseAgent):
             cash = float(account.cash)
             last_equity = float(account.last_equity)
             day_pnl_pct = (portfolio_value - last_equity) / last_equity * 100 if last_equity else 0.0
-            slot = broker._slot_size_for_score(portfolio_value)
-
             from stock_sentiment.market.broker import _is_long_position
             long_syms = {p.symbol for p in positions if _is_long_position(p)}
             short_syms = {p.symbol for p in positions if not _is_long_position(p)}
@@ -135,11 +133,6 @@ class RiskAgent(BaseAgent):
                 self.log.debug("Sector penalty +%.0f for %s (%s=%.0f%%)",
                                _SECTOR_PENALTY_PTS, sym, sym_sector, sector_conc)
 
-            is_crypto = "/" in sym
-            # Crypto: lower buy threshold (more volatile, smaller moves count)
-            if is_crypto:
-                threshold = min(threshold, 50)
-
             action: str | None = None
             block_reason = ""
 
@@ -154,9 +147,19 @@ class RiskAgent(BaseAgent):
                         "BUY", pred.overall_score, held_cache
                     )
                     if displacement_long:
+                        self.log.debug(
+                            "Displacement candidate LONG: %s entry_score=%.1f "
+                            "(cache score — may be stale vs current conviction)",
+                            displacement_long[0], displacement_long[1],
+                        )
                         held_cache.pop(displacement_long[0], None)
                         self._save_held_cache(held_cache)
                         held_syms.discard(displacement_long[0])
+
+                # Slot size scaled by news urgency (recency-weighted sentiment × article breadth)
+                slot = broker._slot_size_for_score(
+                    portfolio_value, pred.avg_sentiment, pred.bullish_count
+                )
 
                 # Drawdown circuit breaker — halt new longs on bad days
                 if day_pnl_pct < _DRAWDOWN_HALT_PCT:
@@ -186,8 +189,6 @@ class RiskAgent(BaseAgent):
             elif pred.prediction == "BEARISH":
                 if sym in long_syms:
                     action = "CLOSE"
-                elif is_crypto:
-                    pass  # no short selling for crypto
                 elif (
                     pred.overall_score <= _SHORT_MAX_SCORE
                     and sym not in held_syms
@@ -199,10 +200,20 @@ class RiskAgent(BaseAgent):
                             "SHORT", pred.overall_score, held_cache
                         )
                         if displacement_short:
+                            self.log.debug(
+                                "Displacement candidate SHORT: %s entry_score=%.1f "
+                                "(cache score — may be stale vs current conviction)",
+                                displacement_short[0], displacement_short[1],
+                            )
                             held_cache.pop(displacement_short[0], None)
                             self._save_held_cache(held_cache)
                             held_syms.discard(displacement_short[0])
                             short_syms.discard(displacement_short[0])
+
+                    # Slot size: invert sentiment so strong negative news → bigger short
+                    slot = broker._slot_size_for_score(
+                        portfolio_value, -pred.avg_sentiment, pred.bearish_count
+                    )
 
                     if len(short_syms) >= _MAX_SHORTS:
                         block_reason = f"short cap ({_MAX_SHORTS})"

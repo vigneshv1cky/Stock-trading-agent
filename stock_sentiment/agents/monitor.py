@@ -63,7 +63,7 @@ class MonitorAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     async def _poll_positions(self) -> None:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         while True:
             await asyncio.sleep(_POLL_INTERVAL_S)
             client = self._get_client()

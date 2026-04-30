@@ -4,7 +4,7 @@ Subscribes to: trade.approved
 Publishes to:  trade.executed, trade.closed
 
 Reuses PaperBroker's battle-tested order/stop methods directly.
-Stop audit runs every 5 min; EOD close checks every 60 s after 3:45 PM ET.
+Stop audit runs every 5 min; EOD close checks every 60 s after 3:30 PM ET.
 """
 
 import asyncio
@@ -18,6 +18,8 @@ try:
 except ImportError:
     _ET = timezone(timedelta(hours=-4))  # type: ignore[assignment]
 
+from stock_sentiment.market.broker import _is_long_position
+
 from .base import BaseAgent
 from .event_bus import EventBus
 
@@ -30,11 +32,10 @@ _EOD_HOUR, _EOD_MINUTE = 15, 30
 
 
 class ExecutorAgent(BaseAgent):
-    def __init__(self, bus: EventBus, dry_run: bool = False, mode: str = "stocks"):
+    def __init__(self, bus: EventBus, dry_run: bool = False):
         super().__init__(bus, "ExecutorAgent")
         self._queue = bus.subscribe("trade.approved")
         self.dry_run = dry_run
-        self.mode = mode  # "stocks", "crypto", "both"
         self._broker = None
         self._exec_log: dict = {
             "timestamp": "", "trigger": "AGENT",
@@ -52,42 +53,13 @@ class ExecutorAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     async def run(self) -> None:
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, self._startup_mode_cleanup)
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self._startup_position_audit)
         await asyncio.gather(
             self._process_trades(),
             self._stop_audit_loop(),
             self._eod_check_loop(),
         )
-
-    def _startup_mode_cleanup(self) -> None:
-        """Close positions that don't belong in the current mode."""
-        if self.mode == "both" or self.dry_run:
-            return
-        broker = self._get_broker()
-        if not broker.client:
-            return
-        try:
-            positions = broker.client.get_all_positions()
-            held = self._load_held_cache()
-            closed = []
-            for pos in positions:
-                sym = pos.symbol
-                is_crypto = "/" in sym
-                if self.mode == "stocks" and is_crypto:
-                    broker._close_position_safely(sym)
-                    held.pop(sym, None)
-                    closed.append(sym)
-                elif self.mode == "crypto" and not is_crypto:
-                    broker._close_position_safely(sym)
-                    held.pop(sym, None)
-                    closed.append(sym)
-            if closed:
-                self._save_held_cache(held)
-                self.log.info("Mode cleanup [%s]: closed %s", self.mode, ", ".join(closed))
-        except Exception as exc:
-            self.log.error("Mode cleanup error: %s", exc)
 
     # ------------------------------------------------------------------
     # Startup audit — evaluate inherited positions, close losers, set stops
@@ -130,7 +102,7 @@ class ExecutorAgent(BaseAgent):
             from datetime import datetime as _dt
             for pos in positions:
                 if pos.symbol not in held:
-                    is_long = pos.side.value == "long"
+                    is_long = _is_long_position(pos)
                     held[pos.symbol] = {
                         "type": "DAY",
                         "direction": "LONG" if is_long else "SHORT",
@@ -143,7 +115,7 @@ class ExecutorAgent(BaseAgent):
             for pos in positions:
                 sym = pos.symbol
                 pnl_pct = float(pos.unrealized_plpc) * 100
-                is_long = pos.side.value == "long"
+                is_long = _is_long_position(pos)
 
                 # Loss > 0.5% on startup — cut it, don't wait for stop
                 if pnl_pct < -0.5:
@@ -198,7 +170,7 @@ class ExecutorAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     async def _process_trades(self) -> None:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         while True:
             msg = await self._queue.get()
             asyncio.create_task(self._execute(msg["data"], loop))
@@ -222,15 +194,15 @@ class ExecutorAgent(BaseAgent):
             held = self._load_held_cache()
 
             if action == "BUY":
-                is_crypto = "/" in sym
-                buy_fn = broker._place_crypto_buy if is_crypto else broker._place_market_buy
                 price, qty = await loop.run_in_executor(
-                    None, buy_fn,
-                    sym, pred.current_price, portfolio_value,
+                    None, lambda: broker._place_market_buy(
+                        sym, pred.current_price, portfolio_value,
+                        pred.avg_sentiment, pred.bullish_count,
+                    )
                 )
                 if qty:
                     held[sym] = {
-                        "type": "CRYPTO" if is_crypto else "DAY",
+                        "type": "DAY",
                         "direction": "LONG",
                         "entered_at": datetime.now(_ET).isoformat(),
                         "score": pred.overall_score,
@@ -245,12 +217,14 @@ class ExecutorAgent(BaseAgent):
                         "prediction_score": pred.overall_score,
                         "archetype": pred.archetype,
                     })
-                    self.log.info("BUY %s  qty=%d  @$%.2f", sym, qty, price)
+                    self.log.info("BUY %s  qty=%.3f  @$%.2f", sym, qty, price)
 
             elif action == "SHORT":
                 price, qty = await loop.run_in_executor(
-                    None, broker._place_market_short,
-                    sym, pred.current_price, portfolio_value,
+                    None, lambda: broker._place_market_short(
+                        sym, pred.current_price, portfolio_value,
+                        -pred.avg_sentiment, pred.bearish_count,
+                    )
                 )
                 if qty:
                     held[sym] = {
@@ -268,7 +242,7 @@ class ExecutorAgent(BaseAgent):
                         "prediction_score": pred.overall_score,
                         "archetype": pred.archetype if pred else "",
                     })
-                    self.log.info("SHORT %s  qty=%d  @$%.2f", sym, qty, price)
+                    self.log.info("SHORT %s  qty=%.3f  @$%.2f", sym, qty, price)
 
             elif action == "CLOSE":
                 close_price, close_qty, entry_price, direction = 0.0, 0, 0.0, "LONG"
@@ -321,7 +295,7 @@ class ExecutorAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     async def _stop_audit_loop(self) -> None:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         while True:
             await asyncio.sleep(_STOP_AUDIT_INTERVAL_S)
             broker = self._get_broker()
@@ -337,7 +311,7 @@ class ExecutorAgent(BaseAgent):
                     if pos.symbol in stopped_syms:
                         continue
                     pnl_pct = float(pos.unrealized_plpc) * 100
-                    is_long = pos.side.value == "long"
+                    is_long = _is_long_position(pos)
                     trail = 3.0 if pnl_pct >= 0 else 1.5
                     from alpaca.trading.requests import TrailingStopOrderRequest
                     from alpaca.trading.enums import OrderSide, TimeInForce
@@ -359,7 +333,7 @@ class ExecutorAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     async def _eod_check_loop(self) -> None:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         while True:
             await asyncio.sleep(60)
             now = datetime.now(_ET)
@@ -378,8 +352,6 @@ class ExecutorAgent(BaseAgent):
                     continue
                 self.log.info("EOD close: %d positions", len(positions))
                 for pos in positions:
-                    if "/" in pos.symbol:  # skip crypto — runs 24/7
-                        continue
                     try:
                         close_price = float(pos.current_price)
                         close_qty = abs(int(float(pos.qty)))

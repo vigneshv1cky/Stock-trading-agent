@@ -55,7 +55,7 @@ class WatcherAgent(BaseAgent):
 
     async def _preload_avg_volumes(self) -> None:
         self.log.info("Preloading 20-day avg volumes for %d symbols…", len(self.symbols))
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             import yfinance as yf
 
@@ -168,7 +168,7 @@ class WatcherAgent(BaseAgent):
     async def _poll_fallback(self) -> None:
         import yfinance as yf
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         chunk = self.symbols[:100]  # yfinance bulk limit
 
         while True:

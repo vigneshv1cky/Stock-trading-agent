@@ -42,7 +42,7 @@ class ScannerAgent(BaseAgent):
         self._avg_volumes: dict[str, float] = {}
 
     async def run(self) -> None:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         # Pre-load 20-day avg volumes (reuse WatcherAgent's data if available,
         # otherwise fetch independently)
         await loop.run_in_executor(None, self._load_avg_volumes)

@@ -1,6 +1,6 @@
 # Stock Trading Agent
 
-A real-time multi-agent algorithmic trading system built in Python. Thirteen specialized agents communicate via an async event bus, collaborating to screen, analyze, critique, risk-gate, and execute trades autonomously. Supports stocks and crypto. All NLP runs on AWS Bedrock — no local model files.
+A real-time multi-agent algorithmic trading system built in Python. Fourteen specialized agents communicate via an async event bus, collaborating to screen, analyze, critique, risk-gate, and execute trades autonomously. Supports stocks and crypto. All NLP runs on AWS Bedrock — no local model files.
 
 ---
 
@@ -81,7 +81,7 @@ Receives signals from Watcher, Scanner, and CryptoWatcher. For stocks, fetches 3
 Crypto signals skip the archetype gates and pass through directly with `asset_class=crypto`.
 
 ### NewsAgent
-Fetches recent articles from Polygon.io (or Google RSS fallback). Scores sentiment via a Bedrock Nova Micro → Nova Lite → Haiku fallback chain. Applies recency decay (weight halves every 48h) and source quality tiers (Reuters/Bloomberg weighted 1.5×).
+Fetches recent articles from **Polygon.io** (primary) with Google News RSS as fallback. Scores sentiment via a Bedrock Nova Micro → Nova Lite → Haiku fallback chain. Applies recency decay (weight halves every 48h) and source quality tiers (Reuters/Bloomberg weighted 1.5×).
 
 ### ResearchAgent
 Fetches technical indicators: RSI, Bollinger Band position (0–1), and put/call ratio. These feed directly into the Predictor's formula score.
@@ -109,16 +109,18 @@ A second, adversarial Claude Haiku call that actively looks for reasons the trad
 
 | Verdict | Effect |
 |---|---|
-| **CONFIRM** | Score unchanged |
-| **DOWNGRADE** | Score − 15 pts |
-| **REJECT** | Score capped at 32 |
+| **UPGRADE** | Predictor too conservative — score +8 pts (max 85) |
+| **CONFIRM** | Thesis solid — score unchanged |
+| **CAUTION** | Real but non-fatal concerns — score −8 pts |
+| **DOWNGRADE** | Notable risks — Critic sets exact adjusted score |
+| **REJECT** | Trade-blocking concern — score capped at 32 |
 
 CLOSE actions bypass the Critic entirely — exits are never second-guessed.
 
 ### RiskAgent
 The final gate before any order is placed.
 
-- **Market hours gate** — no new entries in first 15 min (9:30–9:45) or after 3:00 PM ET
+- **Market hours gate** — no new entries in first 15 min (9:30–9:45 ET) or after 3:00 PM ET
 - **Drawdown circuit breaker** — halt new longs if day P&L < −2%
 - **Position cap** — max 10 open positions
 - **Short cap** — max 8 short positions (stocks only; crypto never shorted)
@@ -138,7 +140,7 @@ The final gate before any order is placed.
 | 22–30 (Volatile) | 70 |
 | > 30 (Panic) | 85 |
 
-**Score-based displacement:** When at position cap, a new high-conviction signal can evict the weakest same-direction position if it beats it by ≥ 5 points.
+**Score-based displacement:** When at position cap, a new high-conviction signal can evict the weakest same-direction position (by score) if it beats it by ≥ 5 points.
 
 ### ExecutorAgent
 Places Alpaca orders and manages stops. On startup:
@@ -147,12 +149,12 @@ Places Alpaca orders and manages stops. On startup:
 3. Closes positions already down > 0.2%
 4. Sets trailing stops on remaining positions (sized to current P&L)
 
-After every new entry, places a hard trailing stop immediately. Stop audit runs every 5 minutes. **EOD close fires at 3:30 PM ET** for all stock and short positions (crypto runs 24/7 and is never force-closed).
+After every new entry, places a hard stop immediately. Stop audit runs every 5 minutes. **EOD close fires at 3:30 PM ET** for all stock positions (crypto runs 24/7 and is never force-closed).
 
 All buys use **notional (fractional) ordering** — every position spends exactly 9% of portfolio regardless of share price. No stock is ever skipped due to high price.
 
 ### LearningAgent
-After every 10 closed trades (or daily at 4:05 PM ET), sends outcomes to Claude Haiku for reflection. Extracted lessons are written to `AgentMemory` and injected into every future Predictor and Critic call.
+After every 10 closed trades (or daily at 4:05 PM ET), sends outcomes to **Claude Sonnet** for reflection. Extracted lessons are written to `AgentMemory` and injected into every future Predictor and Critic call.
 
 ### PortfolioAgent
 Tracks sector concentration across all open positions. Seeds from `held_cache.json` on startup. Warns when a sector exceeds 40%; RiskAgent hard-blocks at 50%.
