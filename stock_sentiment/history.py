@@ -121,7 +121,7 @@ class DynamoDBStorage(BaseStorage):
                 batch.put_item(Item=_to_decimal({
                     'symbol': p.symbol, 'predicted_at': now, 'run_id': run_id,
                     'price_at_prediction': p.current_price, 'prediction': p.prediction,
-                    'overall_score': p.overall_score, 'archetype': p.archetype,
+                    'overall_score': p.overall_score,
                     'volume_ratio': p.volume_ratio, 'rsi': p.rsi, 'predicted_move': p.predicted_move,
                     'reasoning': json.dumps(p.reasoning),
                     'momentum_score': p.momentum_score, 'volume_score': p.volume_score,
@@ -299,10 +299,10 @@ class SQLiteStorage(BaseStorage):
         for p in predictions:
             self.conn.execute(
                 "INSERT INTO predictions (symbol, predicted_at, run_id, price_at_prediction, prediction, "
-                "overall_score, archetype, volume_ratio, rsi, reasoning, "
+                "overall_score, volume_ratio, rsi, reasoning, "
                 "momentum_score, volume_score, technical_score, sentiment_score, avg_sentiment, bullish_count) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (p.symbol, now, now, p.current_price, p.prediction, p.overall_score, p.archetype,
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (p.symbol, now, now, p.current_price, p.prediction, p.overall_score,
                  p.volume_ratio, p.rsi, json.dumps(p.reasoning),
                  p.momentum_score, p.volume_score, p.technical_score, p.sentiment_score,
                  p.avg_sentiment, p.bullish_count)

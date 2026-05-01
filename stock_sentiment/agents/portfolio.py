@@ -24,40 +24,92 @@ _PUBLISH_INTERVAL_S = 60
 # Simplified GICS sector membership for the watch universe
 _SECTOR_MAP: dict[str, list[str]] = {
     "XLK": [
+        # Mega-cap tech
         "AAPL", "MSFT", "NVDA", "AMD", "INTC", "AVGO", "QCOM", "MU", "AMAT", "KLAC",
         "LRCX", "TXN", "ADI", "MRVL", "CRWD", "PANW", "NET", "SNOW", "DDOG", "NOW",
         "TEAM", "SHOP", "FTNT", "OKTA", "ZS", "ARM", "ASML", "TSM", "SMCI", "IRDM",
         "RMBS", "DIOD", "SLAB", "POWI", "LSCC", "SITM", "MTSI", "CRUS", "CRDO", "GFS",
+        # Large-cap software/cloud
+        "ORCL", "IBM", "CRM", "ADBE", "INTU", "CSCO", "ACN", "DELL", "CDNS", "SNPS",
+        "HPQ", "HPE", "PAYC", "WIX", "WDAY", "HUBS", "APP",
+        # Semis extras
+        "ON", "WOLF", "ACLS", "INDI", "NVTS",
+        # Security
+        "S", "QLYS", "CHKP", "GEN", "TENB", "RPD", "ANET",
+        # SaaS/cloud extras
+        "PLTR", "U", "PATH", "MDB", "ROKU", "TWLO", "ESTC", "DOCN", "BRZE", "MNDY",
+        "GLBE", "GLOB", "TOST", "GTLB", "IOT", "AI", "BBAI", "SOUN", "BILL", "PCOR",
+        "DT", "FRSH",
     ],
     "XLF": [
         "JPM", "BAC", "GS", "MS", "WFC", "C", "BLK", "BX", "KKR", "APO", "ICE",
         "CME", "CBOE", "SPGI", "MCO", "CB", "TRV", "AFL", "MET", "PRU", "PNC",
         "USB", "FITB", "IBKR", "HOOD", "SOFI", "LC", "RKT", "AXP",
+        # Payments
+        "V", "MA", "PYPL", "NU", "AFRM", "UPST",
+        # Banks/insurance extras
+        "BRK-B", "TFC", "COF", "SYF", "RF", "HBAN", "WAL", "ZION", "ALLY", "STNE",
+        "PGR",
     ],
     "XLE": [
         "XOM", "CVX", "COP", "EOG", "OXY", "DVN", "HAL", "SLB", "MPC", "PSX",
         "VLO", "APA", "EQT", "AR", "RRC", "OVV", "CTRA", "MUR", "BP", "EQNR",
         "TTE", "PBR", "SHEL",
+        # Canadian energy (NYSE-listed)
+        "CNQ", "CVE", "VIST",
     ],
     "XLV": [
         "UNH", "JNJ", "LLY", "ABBV", "PFE", "MRNA", "ISRG", "VKTX", "GERN",
         "LEGN", "TMDX", "IOVA", "CRSP", "BEAM", "GKOS", "TDOC", "DNA",
+        # Managed care
+        "ELV", "HUM", "CNC", "CVS", "CI",
+        # Large pharma / biotech
+        "BMY", "GILD", "BIIB", "REGN", "AMGN", "VRTX", "ILMN", "ALNY", "INCY",
+        "BMRN", "SRPT", "RARE", "EXEL", "ACAD", "PRGO", "JAZZ", "HIMS", "DOCS", "CORT",
+        # MedTech
+        "MDT", "ABT", "TMO", "DHR", "BSX", "EW", "DXCM", "RMD", "ZTS", "IDXX",
+        "IQV", "BDX", "ZBH", "HOLX", "HCA",
     ],
     "XLI": [
         "RTX", "LMT", "NOC", "GD", "BA", "HII", "LHX", "LDOS", "BWXT", "KTOS",
         "AXON", "DAL", "UAL", "LUV", "UPS", "FDX", "NSC", "CSX", "UNP", "SAIA",
         "ODFL", "XPO", "HWM", "TDG", "RKLB",
+        # Airlines
+        "AAL",
+        # Industrials large-cap
+        "CAT", "DE", "HON", "GE", "ETN", "ROK", "ITW", "PH", "IR", "AME", "XYL",
+        "DOV", "GNRC", "ROP", "FTV", "EMR", "MMM", "JCI", "CARR", "OTIS", "TT",
+        "CPRT", "VRSK", "CTAS", "HEI",
+        # Shipping
+        "ZIM", "MATX", "GNK", "DSX", "STNG", "FRO", "DAC", "EGLE",
+        # eVTOL
+        "JOBY", "ACHR",
     ],
     "XLC": [
         "META", "GOOGL", "NFLX", "DIS", "SPOT", "SNAP", "PINS", "RDDT", "RBLX",
         "WBD", "FOXA", "BMBL", "MTCH", "DUOL", "SE",
+        # Extras
+        "TTD", "DJT", "TKO", "GRAB",
     ],
     "XLY": [
-        "AMZN", "TSLA", "HD", "TGT", "NKE", "LULU", "CROX", "DECK", "RIVN",
+        "AMZN", "TSLA", "RACE", "HD", "TGT", "NKE", "LULU", "CROX", "DECK", "RIVN",
         "LCID", "NIO", "LI", "XPEV", "BIRK", "SHAK", "BROS", "CAVA",
+        # Autos
+        "F", "GM", "PSNY",
+        # Travel/leisure
+        "ABNB",
+        # Retail
+        "TJX", "WING", "BURL", "FIVE",
+        # Homebuilders
+        "DHI", "LEN", "PHM", "TOL",
+        # Used-car / proptech
+        "CVNA", "OPEN",
     ],
     "XLP": [
-        "WMT", "COST", "MOS", "BG", "ADM", "CF", "NUE", "CLF", "SBUX",
+        "WMT", "COST", "MOS", "BG", "ADM", "CF", "SBUX",
+        # Consumer staples large-cap
+        "PG", "KO", "PEP", "MO", "PM", "CL", "GIS", "MDLZ", "KHC", "HRL", "CLX", "KMB",
+        "CELH",
     ],
     "XLRE": [
         "AMT", "EQIX", "PLD", "IRM", "DLR", "O", "SPG", "VICI", "IIPR", "ZG",
@@ -65,9 +117,11 @@ _SECTOR_MAP: dict[str, list[str]] = {
     "XLB": [
         "FCX", "NEM", "GOLD", "AU", "HMY", "KGC", "RGLD", "FNV", "CCJ",
         "UUUU", "LEU", "CTVA",
+        # Steel / aluminum
+        "NUE", "CLF", "AA",
     ],
     "XLU": [
-        "NEE", "ENPH", "FSLR", "SEDG", "RUN", "PLUG", "BE", "SMR", "OKLO",
+        "NEE", "ENPH", "FSLR", "SEDG", "RUN", "PLUG", "BE", "SMR", "OKLO", "ARRY",
     ],
     "CRYPTO": [
         "MSTR", "COIN", "MARA", "RIOT", "CLSK", "WULF", "IREN", "HUT", "CORZ",
@@ -80,6 +134,8 @@ _SECTOR_CONCENTRATION_BLOCK = 60.0  # % — RiskAgent should not add more
 
 
 def get_sector(sym: str) -> str:
+    if "/" in sym:
+        return "CRYPTO"
     for sector, members in _SECTOR_MAP.items():
         if sym in members:
             return sector
@@ -123,7 +179,6 @@ class PortfolioAgent(BaseAgent):
                     self._positions[sym] = {
                         "direction": data.get("direction", "LONG"),
                         "sector": get_sector(sym),
-                        "archetype": "",
                     }
                 self._update_state()
                 self.log.info("PortfolioAgent: seeded %d positions from cache", len(self._positions))
@@ -143,7 +198,6 @@ class PortfolioAgent(BaseAgent):
                 self._positions[sym] = {
                     "direction": data.get("direction", "LONG"),
                     "sector": get_sector(sym),
-                    "archetype": data.get("archetype", ""),
                 }
             elif topic == "trade.closed":
                 self._positions.pop(sym, None)

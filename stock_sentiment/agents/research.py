@@ -28,27 +28,21 @@ _HAIKU_MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
 _SYSTEM_PROMPT = (
     "You are a quantitative research analyst producing a 2-sentence trade setup brief. "
-    "Given technical indicators and options data, state: "
+    "Given technical indicators, state: "
     "(1) whether the technical setup confirms or contradicts the price/volume signal, "
-    "(2) what options sentiment (put/call ratio, IV) implies about near-term risk. "
+    "(2) what the momentum and volatility metrics imply about near-term risk. "
     "Be direct and specific. No hedging phrases."
 )
 
 
 class ResearchAgent(BaseAgent):
     _cache: dict[str, tuple[float, dict]] = {}  # sym → (timestamp, result)
+    _semaphore: asyncio.Semaphore = asyncio.Semaphore(5)  # cap concurrent yfinance calls
 
     def __init__(self, bus: EventBus):
         super().__init__(bus, "ResearchAgent")
         self._queue = bus.subscribe("market.signal")
-        self._bedrock = None
         self._region = os.environ.get("AWS_REGION", "us-east-1")
-
-    def _get_bedrock(self):
-        if self._bedrock is None:
-            import boto3
-            self._bedrock = boto3.client("bedrock-runtime", region_name=self._region)
-        return self._bedrock
 
     async def run(self) -> None:
         while True:
@@ -63,15 +57,16 @@ class ResearchAgent(BaseAgent):
 
         loop = asyncio.get_running_loop()
         try:
-            result = await loop.run_in_executor(None, self._research, sym, data)
+            async with ResearchAgent._semaphore:
+                result = await loop.run_in_executor(None, self._research, sym, data)
             ResearchAgent._cache[sym] = (time.time(), result)
             self.log.info(
-                "Researched: %s  RSI=%.0f  BB=%.2f  PC=%.2f  short=%.1f%%",
+                "Researched: %s  RSI=%.0f  BB=%.2f  MACD=%+.4f  ATR=%.1f%%",
                 sym,
                 result.get("rsi", 0),
                 result.get("bb_pct", 0),
-                result.get("put_call_ratio", 0),
-                result.get("short_pct_float", 0),
+                result.get("macd_hist", 0),
+                result.get("atr_pct", 0),
             )
             await self.bus.publish("symbol.researched", {"symbol": sym, "research": result})
         except Exception as exc:
@@ -89,6 +84,9 @@ class ResearchAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     def _research(self, sym: str, signal_data: dict) -> dict:
+        if "/" in sym:
+            return self._research_crypto(sym, signal_data)
+
         import yfinance as yf
 
         ticker = yf.Ticker(sym)
@@ -147,46 +145,6 @@ class ResearchAgent(BaseAgent):
         except Exception as exc:
             self.log.debug("Technicals failed %s: %s", sym, exc)
 
-        # ---- Options flow ----
-        try:
-            expirations = ticker.options
-            if expirations:
-                chain = ticker.option_chain(expirations[0])
-                calls_vol = float(chain.calls["volume"].fillna(0).sum())
-                puts_vol = float(chain.puts["volume"].fillna(0).sum())
-                pc_ratio = puts_vol / max(calls_vol, 1)
-
-                price = float(signal_data.get("price") or
-                              (result.get("rsi", 50) and
-                               ticker.info.get("currentPrice", 0)) or 0)
-                iv = 0.0
-                if price > 0:
-                    calls = chain.calls.copy()
-                    calls["dist"] = (calls["strike"] - price).abs()
-                    atm = calls.nsmallest(1, "dist")
-                    if not atm.empty:
-                        iv = float(atm["impliedVolatility"].iloc[0])
-
-                result.update({
-                    "put_call_ratio": round(pc_ratio, 3),
-                    "implied_volatility": round(iv, 3),
-                    "calls_volume": int(calls_vol),
-                    "puts_volume": int(puts_vol),
-                })
-        except Exception as exc:
-            self.log.debug("Options failed %s: %s", sym, exc)
-            result.update({"put_call_ratio": 0.0, "implied_volatility": 0.0})
-
-        # ---- Short interest ----
-        try:
-            info = ticker.info
-            result.update({
-                "short_ratio": round(float(info.get("shortRatio") or 0), 2),
-                "short_pct_float": round(float(info.get("shortPercentOfFloat") or 0) * 100, 1),
-            })
-        except Exception:
-            result.update({"short_ratio": 0.0, "short_pct_float": 0.0})
-
         # ---- Claude synthesis ----
         try:
             from .macro import MacroAgent
@@ -205,13 +163,9 @@ class ResearchAgent(BaseAgent):
                 f"MACD_hist={result.get('macd_hist', 0):+.4f} "
                 f"ATR={result.get('atr_pct', 0):.1f}% "
                 f"vol_trend={result.get('vol_trend', 0):+.1%}\n"
-                f"Options: P/C={result.get('put_call_ratio', 0):.2f} "
-                f"IV={result.get('implied_volatility', 0):.1%}\n"
-                f"Short: {result.get('short_ratio', 0):.1f}d days-to-cover "
-                f"{result.get('short_pct_float', 0):.1f}% of float\n"
                 f"{macro_note}"
             )
-            resp = self._get_bedrock().converse(
+            resp = self.get_bedrock(self._region).converse(
                 modelId=_HAIKU_MODEL,
                 system=[{"text": _SYSTEM_PROMPT}],
                 messages=[{"role": "user", "content": [{"text": user_text}]}],
@@ -221,6 +175,112 @@ class ResearchAgent(BaseAgent):
             result["synthesis"] = content[0]["text"].strip() if content else ""
         except Exception as exc:
             self.log.debug("Synthesis failed %s: %s", sym, exc)
+            result["synthesis"] = ""
+
+        return result
+
+    # ------------------------------------------------------------------
+    # Crypto research — Alpaca historical for technicals; skip options/short
+    # ------------------------------------------------------------------
+
+    def _research_crypto(self, sym: str, signal_data: dict) -> dict:
+        result: dict = {
+            "symbol": sym,
+            "rvol": signal_data.get("rvol", 0),
+            "price_change_pct": signal_data.get("price_change_pct", 0),
+        }
+
+        try:
+            from datetime import timezone as _tz
+
+            from alpaca.data.historical import CryptoHistoricalDataClient  # type: ignore[import-untyped]
+            from alpaca.data.requests import CryptoBarsRequest  # type: ignore[import-untyped]
+            from alpaca.data.timeframe import TimeFrame  # type: ignore[import-untyped]
+
+            import pandas as pd
+
+            client = CryptoHistoricalDataClient()
+            import datetime as _dt
+            end = _dt.datetime.now(_tz.utc)
+            start = end - _dt.timedelta(days=75)
+            request = CryptoBarsRequest(
+                symbol_or_symbols=sym,
+                timeframe=TimeFrame.Day,
+                start=start,
+                end=end,
+            )
+            sym_bars = client.get_crypto_bars(request)[sym]
+
+            if sym_bars and len(sym_bars) >= 20:
+                close = pd.Series([float(b.close) for b in sym_bars])
+                high = pd.Series([float(b.high) for b in sym_bars])
+                low = pd.Series([float(b.low) for b in sym_bars])
+                volume = pd.Series([float(b.volume) for b in sym_bars])
+
+                prev_close = close.shift(1)
+                tr = (high - low).combine(
+                    (high - prev_close).abs(), max
+                ).combine((low - prev_close).abs(), max)
+                atr = float(tr.rolling(14).mean().iloc[-1])
+                atr_pct = atr / float(close.iloc[-1]) * 100
+
+                sma20 = close.rolling(20).mean()
+                std20 = close.rolling(20).std()
+                bb_upper = sma20 + 2 * std20
+                bb_lower = sma20 - 2 * std20
+                span = float(bb_upper.iloc[-1] - bb_lower.iloc[-1])
+                bb_pct = float((close.iloc[-1] - bb_lower.iloc[-1]) / span) if span > 0 else 0.5
+
+                ema12 = close.ewm(span=12).mean()
+                ema26 = close.ewm(span=26).mean()
+                macd_hist = float((ema12 - ema26 - (ema12 - ema26).ewm(span=9).mean()).iloc[-1])
+
+                delta = close.diff()
+                gain = delta.clip(lower=0).rolling(14).mean()
+                loss = (-delta.clip(upper=0)).rolling(14).mean()
+                rsi = float(100 - 100 / (1 + gain.iloc[-1] / max(float(loss.iloc[-1]), 1e-6)))
+
+                vol_trend = float(volume.tail(5).mean() / max(float(volume.tail(20).mean()), 1) - 1)
+
+                result.update({
+                    "atr_pct": round(atr_pct, 2),
+                    "bb_pct": round(bb_pct, 3),
+                    "macd_hist": round(macd_hist, 4),
+                    "rsi": round(rsi, 1),
+                    "vol_trend": round(vol_trend, 3),
+                })
+        except Exception as exc:
+            self.log.debug("Crypto technicals failed %s: %s", sym, exc)
+
+        try:
+            from .macro import MacroAgent
+            macro = MacroAgent.current
+            macro_note = (
+                f"Market: {macro.get('regime', 'UNKNOWN')} | "
+                f"VIX={macro.get('vix', 0):.1f} | "
+                f"SPY={macro.get('spy_change_pct', 0):+.1f}%"
+            ) if macro else "No macro data"
+
+            user_text = (
+                f"{sym} (crypto) | RVOL={result.get('rvol', 0):.1f}x "
+                f"price={result.get('price_change_pct', 0):+.1f}%\n"
+                f"Technical: RSI={result.get('rsi', 0):.0f} "
+                f"BB={result.get('bb_pct', 0):.2f} "
+                f"MACD_hist={result.get('macd_hist', 0):+.4f} "
+                f"ATR={result.get('atr_pct', 0):.1f}% "
+                f"vol_trend={result.get('vol_trend', 0):+.1%}\n"
+                f"{macro_note}"
+            )
+            resp = self.get_bedrock(self._region).converse(
+                modelId=_HAIKU_MODEL,
+                system=[{"text": _SYSTEM_PROMPT}],
+                messages=[{"role": "user", "content": [{"text": user_text}]}],
+                inferenceConfig={"maxTokens": 200, "temperature": 0},
+            )
+            content = resp.get("output", {}).get("message", {}).get("content", [])
+            result["synthesis"] = content[0]["text"].strip() if content else ""
+        except Exception as exc:
+            self.log.debug("Crypto synthesis failed %s: %s", sym, exc)
             result["synthesis"] = ""
 
         return result

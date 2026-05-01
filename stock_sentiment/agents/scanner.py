@@ -14,6 +14,7 @@ Scan logic (looser than WatcherAgent to surface quieter setups):
 """
 
 import asyncio
+import os
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -40,12 +41,12 @@ class ScannerAgent(BaseAgent):
         self._symbols = symbols
         self._last_signal: dict[str, float] = {}
         self._avg_volumes: dict[str, float] = {}
+        self._api_key = os.environ.get("ALPACA_API_KEY", "")
+        self._secret = os.environ.get("ALPACA_SECRET_KEY", "")
 
     async def run(self) -> None:
         loop = asyncio.get_running_loop()
-        # Pre-load 20-day avg volumes (reuse WatcherAgent's data if available,
-        # otherwise fetch independently)
-        await loop.run_in_executor(None, self._load_avg_volumes)
+        await loop.run_in_executor(None, self._load_avg_volumes, self._api_key, self._secret)
         self.log.info("ScannerAgent ready — scanning %d symbols every %d min",
                       len(self._symbols), _SCAN_INTERVAL_S // 60)
 
@@ -73,55 +74,42 @@ class ScannerAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     def _scan(self, loop: asyncio.AbstractEventLoop) -> int:
-        import yfinance as yf
         from .macro import MacroAgent
 
         macro  = MacroAgent.current
         regime = macro.get("regime", "NEUTRAL") if macro else "NEUTRAL"
 
-        # Tighten thresholds in stressed regimes
         rvol_min = _RVOL_MIN * (1.2 if regime == "RISK_OFF" else 1.5 if regime == "PANIC" else 1.0)
         move_min = _MOVE_MIN_PCT * (1.2 if regime == "RISK_OFF" else 1.5 if regime == "PANIC" else 1.0)
 
-        # Load held symbols to skip re-entry
         held_syms = self._load_held_syms()
 
-        try:
-            data = yf.download(
-                self._symbols,
-                period="1d",
-                interval="1m",
-                progress=False,
-                auto_adjust=True,
-                threads=True,
-            )
-        except Exception as exc:
-            self.log.warning("Scanner yfinance download failed: %s", exc)
-            return 0
+        # Build per-symbol {sym: (open_price, current_price, cumulative_vol)}
+        bars_by_sym: dict[str, tuple[float, float, float]] = {}
 
-        if data is None or data.empty:
+        if self._api_key and self._secret:
+            bars_by_sym = self._fetch_intraday_alpaca()
+        else:
+            bars_by_sym = self._fetch_intraday_yfinance()
+
+        if not bars_by_sym:
             return 0
 
         fired = 0
         now_ts = time.time()
         now_et = datetime.now(_ET)
+        minutes_elapsed = max(1, (now_et.hour - 9) * 60 + (now_et.minute - 30))
 
         for sym in self._symbols:
             try:
-                # Skip held symbols and recently signalled ones
                 if sym in held_syms:
                     continue
                 if now_ts - self._last_signal.get(sym, 0) < _DEBOUNCE_S:
                     continue
-
-                closes  = data["Close"][sym].dropna()
-                volumes = data["Volume"][sym].dropna()
-
-                if len(closes) < 5:
+                if sym not in bars_by_sym:
                     continue
 
-                open_price    = float(closes.iloc[0])
-                current_price = float(closes.iloc[-1])
+                open_price, current_price, cumulative_vol = bars_by_sym[sym]
                 if open_price <= 0:
                     continue
 
@@ -129,17 +117,12 @@ class ScannerAgent(BaseAgent):
                 if abs(price_change_pct) < move_min:
                     continue
 
-                # RVOL: today's cumulative volume vs 20-day avg
                 avg_vol = self._avg_volumes.get(sym, 0)
                 if avg_vol <= 0:
                     continue
 
-                cumulative_vol = float(volumes.sum())
-                minutes_elapsed = max(1, (now_et.hour - 9) * 60 + (now_et.minute - 30))
-                # Scale avg to elapsed minutes so RVOL is apples-to-apples
                 expected_vol = avg_vol * (minutes_elapsed / 390.0)
                 rvol = cumulative_vol / expected_vol if expected_vol > 0 else 0.0
-
                 if rvol < rvol_min:
                     continue
 
@@ -164,14 +147,114 @@ class ScannerAgent(BaseAgent):
 
         return fired
 
+    def _fetch_intraday_alpaca(self) -> dict[str, tuple[float, float, float]]:
+        try:
+            from alpaca.data.enums import DataFeed  # type: ignore[import-untyped]
+            from alpaca.data.historical import StockHistoricalDataClient  # type: ignore[import-untyped]
+            from alpaca.data.requests import StockBarsRequest  # type: ignore[import-untyped]
+            from alpaca.data.timeframe import TimeFrame, TimeFrameUnit  # type: ignore[import-untyped]
+
+            client = StockHistoricalDataClient(self._api_key, self._secret)
+            now = datetime.now(_ET)
+            market_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
+            request = StockBarsRequest(
+                symbol_or_symbols=self._symbols,
+                timeframe=TimeFrame(1, TimeFrameUnit.Minute),
+                start=market_open,
+                end=now,
+                feed=DataFeed.IEX,
+            )
+            bars = client.get_stock_bars(request)
+            result: dict[str, tuple[float, float, float]] = {}
+            for sym in self._symbols:
+                try:
+                    sym_bars = bars[sym]
+                    if sym_bars and len(sym_bars) >= 5:
+                        result[sym] = (
+                            float(sym_bars[0].open),
+                            float(sym_bars[-1].close),
+                            float(sum(b.volume for b in sym_bars)),
+                        )
+                except Exception:
+                    pass
+            return result
+        except Exception as exc:
+            self.log.warning("Scanner Alpaca intraday fetch failed: %s — falling back to yfinance", exc)
+            return self._fetch_intraday_yfinance()
+
+    def _fetch_intraday_yfinance(self) -> dict[str, tuple[float, float, float]]:
+        try:
+            import yfinance as yf
+            data = yf.download(
+                self._symbols, period="1d", interval="1m",
+                progress=False, auto_adjust=True, threads=True,
+            )
+            if data is None or data.empty:
+                return {}
+            result: dict[str, tuple[float, float, float]] = {}
+            for sym in self._symbols:
+                try:
+                    closes  = data["Close"][sym].dropna()
+                    volumes = data["Volume"][sym].dropna()
+                    if len(closes) >= 5:
+                        result[sym] = (
+                            float(closes.iloc[0]),
+                            float(closes.iloc[-1]),
+                            float(volumes.sum()),
+                        )
+                except Exception:
+                    pass
+            return result
+        except Exception as exc:
+            self.log.warning("Scanner yfinance intraday fetch failed: %s", exc)
+            return {}
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
-    def _load_avg_volumes(self) -> None:
-        import yfinance as yf
+    def _load_avg_volumes(self, api_key: str = "", secret: str = "") -> None:
         self.log.info("ScannerAgent: loading 20-day avg volumes…")
+        if api_key and secret:
+            self._load_volumes_alpaca(api_key, secret)
+        else:
+            self._load_volumes_yfinance()
+
+    def _load_volumes_alpaca(self, api_key: str, secret: str) -> None:
         try:
+            from alpaca.data.enums import DataFeed  # type: ignore[import-untyped]
+            from alpaca.data.historical import StockHistoricalDataClient  # type: ignore[import-untyped]
+            from alpaca.data.requests import StockBarsRequest  # type: ignore[import-untyped]
+            from alpaca.data.timeframe import TimeFrame  # type: ignore[import-untyped]
+
+            client = StockHistoricalDataClient(api_key, secret)
+            end = datetime.now(_ET)
+            start = end - timedelta(days=30)
+            request = StockBarsRequest(
+                symbol_or_symbols=self._symbols,
+                timeframe=TimeFrame.Day,
+                start=start,
+                end=end,
+                feed=DataFeed.IEX,
+            )
+            bars = client.get_stock_bars(request)
+            for sym in self._symbols:
+                try:
+                    sym_bars = bars[sym]
+                    if sym_bars and len(sym_bars) >= 5:
+                        vols = [b.volume for b in sym_bars[-20:]]
+                        self._avg_volumes[sym] = float(sum(vols) / len(vols))
+                except Exception:
+                    pass
+            self.log.info("ScannerAgent: avg volumes loaded for %d symbols (Alpaca)",
+                          len(self._avg_volumes))
+        except Exception as exc:
+            self.log.warning("ScannerAgent Alpaca volume preload failed: %s — falling back to yfinance", exc)
+            self._load_volumes_yfinance()
+
+    def _load_volumes_yfinance(self) -> None:
+        try:
+            import yfinance as yf
             data = yf.download(
                 self._symbols, period="1mo", interval="1d",
                 progress=False, auto_adjust=True, threads=True,
@@ -183,7 +266,7 @@ class ScannerAgent(BaseAgent):
                         self._avg_volumes[sym] = float(vols.mean())
                 except Exception:
                     pass
-            self.log.info("ScannerAgent: avg volumes loaded for %d symbols",
+            self.log.info("ScannerAgent: avg volumes loaded for %d symbols (yfinance)",
                           len(self._avg_volumes))
         except Exception as exc:
             self.log.warning("ScannerAgent volume preload failed: %s", exc)

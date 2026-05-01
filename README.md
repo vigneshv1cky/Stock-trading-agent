@@ -1,169 +1,172 @@
 # Stock Trading Agent
 
-A real-time multi-agent algorithmic trading system built in Python. Fourteen specialized agents communicate via an async event bus, collaborating to screen, analyze, critique, risk-gate, and execute trades autonomously. Supports stocks and crypto. All NLP runs on AWS Bedrock — no local model files.
+A real-time multi-agent algorithmic trading system built in Python. Fifteen specialized agents communicate via an async event bus, collaborating to screen, analyze, critique, risk-gate, and execute trades autonomously. Trades both **stocks** (market hours) and **crypto** (24/7) simultaneously. All NLP runs on AWS Bedrock Haiku — no local model files.
 
 ---
 
 ## How It Works — Full Flow
 
 ```
-Alpaca WebSocket (1-min bars)          Alpaca Crypto API (60s poll)
+Alpaca WebSocket (1-min bars)          Alpaca Crypto WebSocket (24/7)
          │                                        │
-    WatcherAgent                        CryptoWatcherAgent
+    WatcherAgent (487 stocks)           CryptoWatcherAgent (18 coins)
     ScannerAgent (every 15 min)                   │
          │                                        │
          └──────────── market.signal ─────────────┘
                                │
-                         ScreenerAgent       ← qualifies symbol, assigns archetype
-                               │ symbol.screened
-                         ResearchAgent       ← RSI, Bollinger Bands, put/call ratio
-                               │ symbol.researched
-                         NewsAgent           ← Polygon.io news + Bedrock sentiment
-                               │ symbol.analysed
-                         PredictorAgent ←── AgentMemory (learned lessons)
-                               │ symbol.predicted
-                         CriticAgent    ←── AgentMemory (adversarial review)
-                               │ symbol.reviewed
-                         RiskAgent           ← VIX gate, caps, sector, cooldown
-                               │ trade.approved
-                         ExecutorAgent       ← Alpaca orders, stops, EOD close
-                               │ trade.closed
-                         LearningAgent       ← reflects on outcomes → AgentMemory
+                    ┌──────────┴──────────┐
+               ScreenerAgent         ResearchAgent  ← runs in parallel
+               (qualifies symbol)    (RSI, BB, MACD, ATR)
+                    │ symbol.screened
+               NewsAgent             ← Polygon.io news + Haiku sentiment
+                    │ symbol.analysed
+               PredictorAgent  ←──── AgentMemory (learned lessons)
+                    │ symbol.predicted
+               CriticAgent     ←──── AgentMemory (adversarial review)
+                    │ symbol.reviewed
+               RiskAgent             ← LLM decision: APPROVE / BLOCK
+                    │ trade.approved
+               ExecutorAgent         ← Alpaca orders, stops, EOD close
+                    │ trade.closed
+               LearningAgent         ← reflects on outcomes → AgentMemory
 
     PortfolioAgent    ← tracks sector concentration
-    MonitorAgent      ← polls positions every 30s → position.alert → RiskAgent
+    MonitorAgent      ← polls positions every 30s → earnings + re-eval alerts
     MacroAgent        ← VIX + SPY + QQQ + breadth every 5 min
+    PromptTunerAgent  ← loads optimized prompts from disk
 ```
 
-All agents run as concurrent `asyncio` tasks. Each has a crash-restart loop with 5s backoff so a single failure never stops the system.
+All agents run as concurrent `asyncio` tasks. Each has a crash-restart loop with 5s backoff — a single failure never stops the system.
 
 ---
 
-## Trading Modes
+## Quick Start
 
 ```bash
-python run_agents.py                  # stocks only (default)
-python run_agents.py --mode crypto    # crypto only
-python run_agents.py --mode both      # stocks + crypto simultaneously
-python run_agents.py --dry-run        # full pipeline, no orders placed
-```
+pip install -r requirements.txt
 
-On startup, `ExecutorAgent` closes any positions that belong to a different mode (e.g. switching from `both` to `stocks` closes crypto positions).
+# Run full system (stocks + crypto simultaneously)
+python run_agents.py
+
+# Dry-run — full pipeline, no orders placed
+python run_agents.py --dry-run
+
+# Web dashboard (separate terminal)
+uvicorn web:app --reload --port 8000
+```
 
 ---
 
 ## Agent Breakdown
 
+### MacroAgent
+Fetches VIX, SPY, QQQ, sector ETFs, and market breadth every 5 minutes via yfinance. Publishes market regime (`BULL` / `NEUTRAL` / `RISK_OFF` / `PANIC`) used by every downstream agent.
+
 ### WatcherAgent
-Streams 1-minute bars from Alpaca WebSocket for all 489 watched symbols. Fires `market.signal` when:
-- **RVOL ≥ 1.5×** (relative volume vs. 20-day average, adjusted for time of day)
-- **|intraday price change| ≥ 2%**
+Streams live 1-minute bars from Alpaca WebSocket for 487 stocks. Fires `market.signal` when:
+- **RVOL ≥ 1.2×** (relative volume vs. 20-day average, adjusted for time of day)
+- **|intraday price change| ≥ 1.5%**
 - 5-minute per-symbol debounce
 
-Falls back to yfinance polling if the WebSocket is unavailable.
+Falls back to yfinance 90s polling if Alpaca WebSocket is unavailable.
 
 ### CryptoWatcherAgent
-Polls Alpaca's crypto API every 60 seconds for BTC/USD, ETH/USD, SOL/USD, AVAX/USD, LINK/USD, DOGE/USD, LTC/USD. Same RVOL + price-change gate as WatcherAgent. Runs 24/7 (no market-hours gate).
+Streams live 1-minute bars from Alpaca Crypto WebSocket for 18 coins (BTC, ETH, SOL, DOGE, AVAX, LINK, LTC, XRP, BCH, UNI, AAVE, DOT, MATIC, MKR, CRV, GRT, BAT, SHIB). Runs 24/7. Thresholds: RVOL ≥ 1.0, price move ≥ 2.0%, 30-minute cooldown.
 
 ### ScannerAgent
-Independently scans all 489 symbols every 15 minutes using yfinance snapshots. Catches moves the Watcher may have missed between bar intervals.
+Proactive batch scanner. Every 15 minutes, downloads all 487 stocks via Alpaca, finds top movers by RVOL and price change, fires `market.signal` for each. Catches moves the reactive WatcherAgent may have missed.
 
 ### ScreenerAgent
-Receives signals from Watcher, Scanner, and CryptoWatcher. For stocks, fetches 3-month price history and assigns one of four archetypes:
+Receives every `market.signal`. Applies sequential filters:
+- **Time gate** (stocks only): blocks first 15 min and last 15 min before 4 PM
+- **Quality**: price ≥ $5, avg daily volume ≥ 100k shares
+- **Regime-adjusted thresholds**: RVOL and price move minimums tighten in RISK_OFF (×1.3) and PANIC (×1.6)
+- **REEVAL signals** skip entry gates — position already held, just re-checking
 
-| Archetype | Criteria |
-|---|---|
-| **FRESH_BREAKOUT** | \|change today\| ≥ 3% AND RVOL ≥ 2.0 |
-| **BREAKOUT** | 1-week return ≥ 10% OR 1-month return ≥ 15% |
-| **RECOVERY** | Drawdown ≤ −15% AND bounce ≥ 4% AND RVOL > 1.1 |
-| **MOMENTUM** | 3-month return ≥ 7% |
-
-Crypto signals skip the archetype gates and pass through directly with `asset_class=crypto`.
-
-### NewsAgent
-Fetches recent articles from **Polygon.io** (primary) with Google News RSS as fallback. Scores sentiment via a Bedrock Nova Micro → Nova Lite → Haiku fallback chain. Applies recency decay (weight halves every 48h) and source quality tiers (Reuters/Bloomberg weighted 1.5×).
+Fetches 3mo history (yfinance for stocks, Alpaca for crypto) for momentum metrics. Publishes `symbol.screened` on pass.
 
 ### ResearchAgent
-Fetches technical indicators: RSI, Bollinger Band position (0–1), and put/call ratio. These feed directly into the Predictor's formula score.
+Runs in parallel with ScreenerAgent — both subscribe to `market.signal`. Fetches 60-day history and computes: RSI-14, Bollinger %B, MACD histogram, ATR%, volume trend. Calls Haiku for a 2-sentence technical synthesis. Results cached 120s per symbol. PredictorAgent reads the cache directly without a separate event.
+
+### NewsAgent
+Fetches last 1 hour of news from Polygon.io. Sends all headlines to Haiku in one batch call, gets back sentiment scores (−1.0 to +1.0) per headline. Publishes `symbol.analysed` with scored articles.
 
 ### PredictorAgent
-Generates a conviction score (0–100) using a **50/50 formula + LLM blend**.
+Calls Haiku with a structured 4-step prompt:
+1. Technical thesis (RVOL, RSI, BB, MACD)
+2. Catalyst quality (news headlines and sentiment)
+3. Risk factors (earnings proximity, macro regime)
+4. Final score (−100 to +100)
 
-**Formula score (50%):**
-
-```
-formula_score = momentum × w[0] + volume × w[1] + technical × w[2] + sentiment × w[3]
-```
-
-Weights are **per-archetype and learned** from trade outcomes via the Weight Optimizer.
-
-**LLM score (50%):** Single Claude Haiku call with learned lessons injected. Returns a qualitative conviction score plus a `red_flag` boolean. If `red_flag=true`, score is hard-capped at 35.
-
-**Output thresholds:**
-- **BULLISH** → score ≥ VIX-adjusted threshold (see RiskAgent)
-- **BEARISH** → score ≤ 40
-- **NEUTRAL** → between thresholds
+Injects learned lessons from AgentMemory into every call. Applies mechanical caps: `MODERATE` severity → cap score at 0, `FATAL` → cap at −44. Drops signal if confidence < 35. Suppresses BULLISH signals in PANIC regime.
 
 ### CriticAgent
-A second, adversarial Claude Haiku call that actively looks for reasons the trade will **fail**. Two-turn conversation: turn 1 raises concerns, turn 2 delivers a verdict.
+Adversarial two-turn Haiku debate:
+- Turn 1: "What are the top 3 reasons this trade fails?"
+- Turn 2: Returns `adjusted_score` — LLM owns the magnitude
 
-| Verdict | Effect |
-|---|---|
-| **UPGRADE** | Predictor too conservative — score +8 pts (max 85) |
-| **CONFIRM** | Thesis solid — score unchanged |
-| **CAUTION** | Real but non-fatal concerns — score −8 pts |
-| **DOWNGRADE** | Notable risks — Critic sets exact adjusted score |
-| **REJECT** | Trade-blocking concern — score capped at 32 |
-
-CLOSE actions bypass the Critic entirely — exits are never second-guessed.
-
-### RiskAgent
-The final gate before any order is placed.
-
-- **Market hours gate** — no new entries in first 15 min (9:30–9:45 ET) or after 3:00 PM ET
-- **Drawdown circuit breaker** — halt new longs if day P&L < −2%
-- **Position cap** — max 10 open positions
-- **Short cap** — max 8 short positions (stocks only; crypto never shorted)
-- **Sector concentration** — hard block if one sector > 50% of portfolio
-- **Earnings soft penalty** — +5 pts required on threshold if earnings 4–7 days away
-- **Same-sector penalty** — +5 pts required if already holding in same sector
-- **Macro overlay** — RISK_OFF: threshold +5; PANIC: threshold +10
-- **Cooldown** — 1-hour re-entry block after a stop-out
-- **Crypto** — lower buy threshold (≤ 50); no short selling
-
-**VIX-adjusted buy thresholds:**
-
-| VIX | Threshold |
-|---|---|
-| < 15 (Calm) | 55 |
-| 15–22 (Normal) | 60 |
-| 22–30 (Volatile) | 70 |
-| > 30 (Panic) | 85 |
-
-**Score-based displacement:** When at position cap, a new high-conviction signal can evict the weakest same-direction position (by score) if it beats it by ≥ 5 points.
-
-### ExecutorAgent
-Places Alpaca orders and manages stops. On startup:
-1. Cancels all open orders from previous session
-2. Syncs `held_cache.json` to exactly match live Alpaca positions (removes stale entries)
-3. Closes positions already down > 0.2%
-4. Sets trailing stops on remaining positions (sized to current P&L)
-
-After every new entry, places a hard stop immediately. Stop audit runs every 5 minutes. **EOD close fires at 3:30 PM ET** for all stock positions (crypto runs 24/7 and is never force-closed).
-
-All buys use **notional (fractional) ordering** — every position spends exactly 9% of portfolio regardless of share price. No stock is ever skipped due to high price.
-
-### LearningAgent
-After every 10 closed trades (or daily at 4:05 PM ET), sends outcomes to **Claude Sonnet** for reflection. Extracted lessons are written to `AgentMemory` and injected into every future Predictor and Critic call.
+One safety net: if predictor score is neutral (−19 to +19), critic cannot make it more negative. CLOSE actions bypass the Critic entirely — exit speed matters.
 
 ### PortfolioAgent
-Tracks sector concentration across all open positions. Seeds from `held_cache.json` on startup. Warns when a sector exceeds 40%; RiskAgent hard-blocks at 50%.
+Tracks sector classification of all open positions. Seeds from `held_cache.json` on startup. RiskAgent uses this for sector concentration decisions.
+
+### RiskAgent
+The final gate before any order. All trade decisions delegated to Haiku. LLM receives full context:
+- Minutes since market open/close
+- All current positions with scores and sectors
+- Buying power vs slot size
+- Whether asset is shortable
+- VIX, regime, day P&L
+- Displacement candidates (if at position cap)
+
+LLM returns `{"decision": "APPROVE/BLOCK", "displace": "SYMBOL/null", "reasoning": "..."}`.
+
+Two mechanical gates (no LLM):
+- BEARISH signal on an existing long → immediate CLOSE
+- Cooldown block after a stop-out
+
+LLM failure defaults to **BLOCK** — never trade on unavailable judgment.
+
+Also handles `position.alert` from MonitorAgent for earnings analysis.
+
+### ExecutorAgent
+Places Alpaca orders and manages stops. Three concurrent loops:
+
+**Trade loop** — market orders via PaperBroker:
+- Stocks: whole shares only (`int(slot / price)`)
+- Crypto: notional ordering (`notional=slot`) — fractional, GTC
+
+**Stop audit** (every 5 min) — adaptive trailing stops:
+| Unrealized P&L | Trail |
+|---|---|
+| Big winner locked in | 0.5% |
+| Moderate winner | 1.5% |
+| Default | 3.0% |
+
+**EOD close** — 3:30 PM ET, closes all stock positions. Crypto stays open.
+
+On startup: cancels prior-session open orders, backfills `held_cache` for live positions.
+
+### LearningAgent
+Rolling buffer of last 100 closed trade outcomes. Every 10 trades or daily at 4:05 PM ET, calls Haiku to reflect on patterns. Writes 3–5 lessons to AgentMemory. These lessons are injected into every future Predictor and Critic call — the system improves over time.
 
 ### MonitorAgent
-Polls all open positions every 30 seconds. Fires `position.alert` for earnings approaching within 2 days (triggers pre-emptive close) or positions needing re-evaluation.
+Polls all open positions every 30 seconds. Fires two alert types:
+- `REEVAL` — position not re-evaluated in 30+ min → re-triggers full pipeline
+- `EARNINGS_REPORTED` — actual EPS landed in last 48h → RiskAgent calls Haiku to HOLD or CLOSE
 
-### MacroAgent
-Fetches VIX, SPY, QQQ, and market breadth every 5 minutes. Publishes a regime (`NEUTRAL`, `RISK_OFF`, `PANIC`) that RiskAgent uses to adjust buy thresholds.
+### PromptTunerAgent
+Loads optimized system prompts from disk if available, otherwise uses hardcoded defaults. Allows prompt experimentation without code changes.
+
+---
+
+## Position Sizing
+
+Each position = **7–12% of portfolio value** (scaled by news urgency), minimum $50:
+- High-urgency news (strong sentiment × many articles): up to 12%
+- No news: flat 9%
+- Stocks: whole shares (`int(slot / price)`)
+- Crypto: notional/fractional (`notional=slot`)
 
 ---
 
@@ -176,59 +179,23 @@ Trade closed → LearningAgent → Haiku reflection → AgentMemory
                               CriticAgent   ←
 ```
 
-After ≥ 50 closed outcomes, the **Weight Optimizer** runs Nelder-Mead to find optimal `[momentum, volume, technical, sentiment]` weights per archetype. Weights saved to `~/.stock_screener/weights.json`.
+Lessons are accumulated across sessions and persist in `~/.stock_screener/agent_memory.json`.
 
 ---
 
-## Position Sizing & Risk
+## Crypto vs Stocks
 
-- Each position = **9% of current portfolio value** (minimum $50)
-- **Fractional (notional) ordering** — spends exactly the slot size regardless of share price
-- Hard trailing stop on entry: long −1.5%, short +0.8%
-- Stop tiers based on unrealized P&L at startup:
-
-| P&L | Trailing Stop |
-|---|---|
-| ≥ +20% | 0.5% (lock in gains) |
-| ≥ +10% | 0.8% |
-| ≥ +5% | 1.5% |
-| 0–5% | 1.5% |
-| −0.5% to 0% | 0.5% (tight — near break-even) |
-| < −0.5% | Close immediately |
-
-- All stock positions closed EOD at **3:30 PM ET**
-- No new entries after **3:00 PM ET**
-
----
-
-## Trade History
-
-Trade history persists across restarts in `~/.stock_screener/trade_history.json` (last 100 trades). Each CLOSE entry records price, quantity, and P&L. The web dashboard displays this with green/red P&L indicators, refreshing every 5 seconds.
-
----
-
-## Web Dashboard
-
-```bash
-uvicorn web:app --reload --port 8000
-```
-
-Shows live portfolio equity, positions with P&L, trade history, VIX/SPY macro state, and AgentMemory lessons. Auto-refreshes every 5 seconds.
-
----
-
-## Quick Start
-
-```bash
-pip install -r requirements.txt
-
-python run_agents.py                  # stocks
-python run_agents.py --mode crypto    # crypto
-python run_agents.py --mode both      # both
-python run_agents.py --dry-run        # no orders
-
-uvicorn web:app --reload --port 8000  # dashboard (separate terminal)
-```
+| | Stocks | Crypto |
+|---|---|---|
+| Market hours | 9:30 AM – 4:00 PM ET | 24/7 |
+| Data stream | Alpaca IEX WebSocket | Alpaca Crypto WebSocket |
+| Price move threshold | 1.5% | 2.0% |
+| RVOL threshold | 1.2× | 1.0× |
+| Signal cooldown | 5 min | 30 min |
+| Order type | Whole shares | Notional (fractional) |
+| Short selling | Yes (if shortable) | Never |
+| EOD close | 3:30 PM ET | No (stays open) |
+| Max positions | 8 total, soft cap | 2 crypto max |
 
 ---
 
@@ -239,7 +206,7 @@ uvicorn web:app --reload --port 8000  # dashboard (separate terminal)
 ALPACA_API_KEY=...
 ALPACA_SECRET_KEY=...
 
-# Live trading
+# Live trading (set ALPACA_PAPER=false to activate)
 ALPACA_PAPER=false
 ALPACA_LIVE_API_KEY=...
 ALPACA_LIVE_SECRET_KEY=...
@@ -247,6 +214,9 @@ ALPACA_LIVE_SECRET_KEY=...
 # AWS (for Bedrock NLP)
 AWS_PROFILE=vignesh-sso-profile
 AWS_REGION=us-east-1
+
+# Optional — Polygon.io news
+POLYGON_API_KEY=...
 
 # Web dashboard auth
 ADMIN_USERNAME=admin
@@ -266,10 +236,9 @@ All stored in `~/.stock_screener/`:
 |---|---|
 | `held_cache.json` | Current positions — synced to Alpaca on every startup |
 | `cooldowns.json` | Per-symbol re-entry blocks after stop-outs |
-| `weights.json` | Learned scoring weights per archetype |
 | `agent_memory.json` | Lessons from LearningAgent reflections |
-| `trade_history.json` | Rolling last 100 closed trades with P&L |
 | `last_execution.json` | Most recent trade execution log |
+| `local_history.db` | SQLite trade history (local dev) |
 
 ---
 
@@ -282,7 +251,7 @@ aws sso login --profile vignesh-sso-profile
 aws logs tail /ecs/stock-screener --region us-east-1 --follow --profile vignesh-sso-profile
 ```
 
-Runs on ECS Fargate (1 vCPU, 4GB). NLP on Bedrock — no large model files in the Docker image.
+Runs on ECS Fargate (1 vCPU, 4 GB). All NLP on AWS Bedrock Haiku — no large model files in the Docker image.
 
 ---
 

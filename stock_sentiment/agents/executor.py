@@ -18,7 +18,7 @@ try:
 except ImportError:
     _ET = timezone(timedelta(hours=-4))  # type: ignore[assignment]
 
-from stock_sentiment.market.broker import _is_long_position
+from stock_sentiment.agents.broker import _is_long_position
 
 from .base import BaseAgent
 from .event_bus import EventBus
@@ -44,7 +44,7 @@ class ExecutorAgent(BaseAgent):
 
     def _get_broker(self):
         if self._broker is None:
-            from stock_sentiment.market.broker import PaperBroker
+            from stock_sentiment.agents.broker import PaperBroker
             self._broker = PaperBroker()
         return self._broker
 
@@ -110,23 +110,17 @@ class ExecutorAgent(BaseAgent):
                         "score": 50.0,
                     }
 
-            closed, stopped = [], []
+            closed: list[str] = []
+            stopped: list[str] = []
 
             for pos in positions:
                 sym = pos.symbol
                 pnl_pct = float(pos.unrealized_plpc) * 100
                 is_long = _is_long_position(pos)
 
-                # Loss > 0.5% on startup — cut it, don't wait for stop
-                if pnl_pct < -0.5:
-                    try:
-                        broker._close_position_safely(sym)
-                        held.pop(sym, None)
-                        closed.append(f"{sym} ({pnl_pct:+.1f}%)")
-                        self.log.info("Startup CLOSE %s: loss=%.1f%% exceeds stop threshold", sym, pnl_pct)
-                    except Exception as exc:
-                        self.log.error("Startup close failed %s: %s", sym, exc)
-                    continue
+                qty = abs(float(pos.qty))
+                if not qty.is_integer():
+                    continue  # no stop for fractional positions
 
                 # Still viable — tighter stop as profit grows
                 if pnl_pct >= 20.0:
@@ -146,7 +140,7 @@ class ExecutorAgent(BaseAgent):
                     close_side = OrderSide.SELL if is_long else OrderSide.BUY
                     req = TrailingStopOrderRequest(
                         symbol=sym,
-                        qty=abs(float(pos.qty)),
+                        qty=int(qty),
                         side=close_side,
                         time_in_force=TimeInForce.DAY,
                         trail_percent=trail,
@@ -201,11 +195,23 @@ class ExecutorAgent(BaseAgent):
                     )
                 )
                 if qty:
+                    from .macro import MacroAgent
+                    _macro = MacroAgent.current
                     held[sym] = {
                         "type": "DAY",
                         "direction": "LONG",
                         "entered_at": datetime.now(_ET).isoformat(),
                         "score": pred.overall_score,
+                        "rvol": getattr(pred, "volume_ratio", None),
+                        "rsi": getattr(pred, "rsi", None),
+                        "avg_sentiment": getattr(pred, "avg_sentiment", None),
+                        "change_today_pct": getattr(pred, "change_today_pct", None),
+                        "change_1w_pct": getattr(pred, "change_1w_pct", None),
+                        "regime": _macro.get("regime") if _macro else None,
+                        "vix": _macro.get("vix") if _macro else None,
+                        "critic_verdict": data.get("critic_verdict", ""),
+                        "approval_reason": data.get("reason", ""),
+                        "top_headlines": [h[0][:100] for h in (getattr(pred, "top_headlines", None) or [])[:3]],
                     }
                     self._save_held_cache(held)
                     self._exec_log["bought"].append({"symbol": sym, "price": price, "qty": qty})
@@ -215,7 +221,6 @@ class ExecutorAgent(BaseAgent):
                         "symbol": sym, "action": "BUY", "direction": "LONG",
                         "price": price, "qty": qty,
                         "prediction_score": pred.overall_score,
-                        "archetype": pred.archetype,
                     })
                     self.log.info("BUY %s  qty=%.3f  @$%.2f", sym, qty, price)
 
@@ -227,10 +232,22 @@ class ExecutorAgent(BaseAgent):
                     )
                 )
                 if qty:
+                    from .macro import MacroAgent
+                    _macro = MacroAgent.current
                     held[sym] = {
                         "type": "DAY", "direction": "SHORT",
                         "entered_at": datetime.now(_ET).isoformat(),
                         "score": pred.overall_score,
+                        "rvol": getattr(pred, "volume_ratio", None),
+                        "rsi": getattr(pred, "rsi", None),
+                        "avg_sentiment": getattr(pred, "avg_sentiment", None),
+                        "change_today_pct": getattr(pred, "change_today_pct", None),
+                        "change_1w_pct": getattr(pred, "change_1w_pct", None),
+                        "regime": _macro.get("regime") if _macro else None,
+                        "vix": _macro.get("vix") if _macro else None,
+                        "critic_verdict": data.get("critic_verdict", ""),
+                        "approval_reason": data.get("reason", ""),
+                        "top_headlines": [h[0][:100] for h in (getattr(pred, "top_headlines", None) or [])[:3]],
                     }
                     self._save_held_cache(held)
                     self._exec_log["shorted"].append({"symbol": sym, "price": price, "qty": qty})
@@ -240,7 +257,6 @@ class ExecutorAgent(BaseAgent):
                         "symbol": sym, "action": "SHORT", "direction": "SHORT",
                         "price": price, "qty": qty,
                         "prediction_score": pred.overall_score,
-                        "archetype": pred.archetype if pred else "",
                     })
                     self.log.info("SHORT %s  qty=%.3f  @$%.2f", sym, qty, price)
 
@@ -258,6 +274,13 @@ class ExecutorAgent(BaseAgent):
                             pnl = float(p.unrealized_pl)
                             pnl_pct = float(p.unrealized_plpc) * 100
                             break
+                except Exception:
+                    pass
+                cache_entry = held.get(sym, {})
+                hold_min = None
+                try:
+                    entered = datetime.fromisoformat(cache_entry["entered_at"])
+                    hold_min = int((datetime.now(_ET) - entered).total_seconds() / 60)
                 except Exception:
                     pass
                 await loop.run_in_executor(None, broker._close_position_safely, sym)
@@ -280,10 +303,26 @@ class ExecutorAgent(BaseAgent):
                     "pnl_pct": round(pnl_pct, 2) if pnl_pct else None,
                 })
                 await self.bus.publish("trade.closed", {
-                    "symbol": sym, "action": "CLOSE", "reason": reason,
-                    "prediction_score": pred.overall_score if pred else 0.0,
-                    "archetype": pred.archetype if pred else "",
-                    "critic_verdict": "",
+                    "symbol": sym,
+                    "action": "CLOSE",
+                    "reason": reason,
+                    "direction": direction,
+                    "pnl": round(pnl, 2) if pnl else None,
+                    "pnl_pct": round(pnl_pct, 2) if pnl_pct else None,
+                    "prediction_score": pred.overall_score if pred else cache_entry.get("score", 0.0),
+                    "critic_verdict": data.get("critic_verdict", cache_entry.get("critic_verdict", "")),
+                    "hold_duration_min": hold_min,
+                    "entry_price": entry_price or None,
+                    "close_price": close_price or None,
+                    "rvol": cache_entry.get("rvol"),
+                    "rsi": cache_entry.get("rsi"),
+                    "avg_sentiment": cache_entry.get("avg_sentiment"),
+                    "change_today_pct": cache_entry.get("change_today_pct"),
+                    "change_1w_pct": cache_entry.get("change_1w_pct"),
+                    "regime_at_entry": cache_entry.get("regime"),
+                    "vix_at_entry": cache_entry.get("vix"),
+                    "top_headlines": cache_entry.get("top_headlines", []),
+                    "approval_reason": cache_entry.get("approval_reason", ""),
                 })
                 self.log.info("CLOSE %s — %s", sym, reason)
 
@@ -302,14 +341,16 @@ class ExecutorAgent(BaseAgent):
             if not broker.client:
                 continue
             try:
-                # Verify every position still has an open stop — re-set if missing
-                # (Alpaca cancels DAY stops at 4 PM; this catches any gaps during the session)
                 positions = await loop.run_in_executor(None, broker.client.get_all_positions)
                 open_orders = await loop.run_in_executor(None, broker.client.get_orders)
                 stopped_syms = {o.symbol for o in open_orders}
                 for pos in positions:
                     if pos.symbol in stopped_syms:
                         continue
+                    qty = abs(float(pos.qty))
+                    is_crypto = "/" in pos.symbol
+                    if not qty.is_integer() and not is_crypto:
+                        continue  # no stop for fractional non-crypto positions
                     pnl_pct = float(pos.unrealized_plpc) * 100
                     is_long = _is_long_position(pos)
                     trail = 3.0 if pnl_pct >= 0 else 1.5
@@ -317,9 +358,9 @@ class ExecutorAgent(BaseAgent):
                     from alpaca.trading.enums import OrderSide, TimeInForce
                     req = TrailingStopOrderRequest(
                         symbol=pos.symbol,
-                        qty=abs(float(pos.qty)),
+                        qty=qty if is_crypto else int(qty),
                         side=OrderSide.SELL if is_long else OrderSide.BUY,
-                        time_in_force=TimeInForce.DAY,
+                        time_in_force=TimeInForce.GTC if is_crypto else TimeInForce.DAY,
                         trail_percent=trail,
                     )
                     await loop.run_in_executor(None, broker.client.submit_order, req)
@@ -351,12 +392,21 @@ class ExecutorAgent(BaseAgent):
                     await asyncio.sleep(1800)
                     continue
                 self.log.info("EOD close: %d positions", len(positions))
+                eod_cache = self._load_held_cache()
                 for pos in positions:
                     try:
                         close_price = float(pos.current_price)
-                        close_qty = abs(int(float(pos.qty)))
+                        close_qty = abs(float(pos.qty))  # preserve fractional qty for crypto
                         pnl = float(pos.unrealized_pl)
                         pnl_pct = float(pos.unrealized_plpc) * 100
+                        eod_direction = "SHORT" if float(pos.qty) < 0 else "LONG"
+                        cache_entry = eod_cache.get(pos.symbol, {})
+                        hold_min = None
+                        try:
+                            entered = datetime.fromisoformat(cache_entry["entered_at"])
+                            hold_min = int((datetime.now(_ET) - entered).total_seconds() / 60)
+                        except Exception:
+                            pass
                         await loop.run_in_executor(
                             None, broker._close_position_safely, pos.symbol
                         )
@@ -365,12 +415,25 @@ class ExecutorAgent(BaseAgent):
                             "price": close_price, "qty": close_qty,
                             "pnl": round(pnl, 2), "pnl_pct": round(pnl_pct, 2),
                         })
-                        held = self._load_held_cache()
-                        held.pop(pos.symbol, None)
-                        self._save_held_cache(held)
+                        eod_cache.pop(pos.symbol, None)
+                        self._save_held_cache(eod_cache)
                         await self.bus.publish("trade.closed", {
-                            "symbol": pos.symbol, "action": "CLOSE", "reason": "EOD",
-                            "prediction_score": 0.0, "archetype": "", "critic_verdict": "",
+                            "symbol": pos.symbol,
+                            "action": "CLOSE",
+                            "reason": "EOD",
+                            "direction": eod_direction,
+                            "pnl": round(pnl, 2),
+                            "pnl_pct": round(pnl_pct, 2),
+                            "prediction_score": cache_entry.get("score", 0.0),
+                            "critic_verdict": cache_entry.get("critic_verdict", ""),
+                            "hold_duration_min": hold_min,
+                            "rvol": cache_entry.get("rvol"),
+                            "rsi": cache_entry.get("rsi"),
+                            "avg_sentiment": cache_entry.get("avg_sentiment"),
+                            "regime_at_entry": cache_entry.get("regime"),
+                            "vix_at_entry": cache_entry.get("vix"),
+                            "top_headlines": cache_entry.get("top_headlines", []),
+                            "approval_reason": cache_entry.get("approval_reason", ""),
                         })
                     except Exception as exc:
                         self.log.error("EOD close failed %s: %s", pos.symbol, exc)

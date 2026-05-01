@@ -5,10 +5,9 @@ Triggers:
   • Daily at 4:05 PM ET (after market close)
 
 Each reflection cycle:
-  1. Groups outcomes by archetype
-  2. Sends last 50 outcomes to Claude Sonnet for pattern analysis with attribution
-  3. Writes archetype-specific lessons to AgentMemory
-  4. Triggers WeightOptimizer if ≥ 50 historical outcomes are in History
+  1. Sends last 50 outcomes to Claude Haiku for pattern analysis
+  2. Writes global lessons to AgentMemory
+  3. Triggers WeightOptimizer if ≥ 50 historical outcomes are in History
 
 Subscribes to: trade.closed
 Publishes to:  memory.updated
@@ -32,21 +31,26 @@ from .memory import AgentMemory
 
 _MIN_TRADES_FOR_REFLECTION = 10
 _MAX_BUFFER = 100
-_SONNET_MODEL = "us.anthropic.claude-sonnet-4-6-20250514-v1:0"
+_HAIKU_MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
 _SYSTEM_PROMPT = (
     "You are a trading system performance analyst performing root-cause attribution. "
-    "Review recent trade outcomes grouped by archetype. For each archetype, identify "
-    "2–3 systematic mistakes or patterns. Write concrete actionable instructions "
-    "the predictor or critic should follow to avoid repeating them. "
-    "Focus on: wrong archetype calls, missed macro/sector context, over-confidence "
-    "in weak signals, cases where the critic should have blocked a trade, "
-    "and patterns in the critic verdicts that were wrong. "
+    "Review recent trade outcomes and identify 3–5 systematic patterns or mistakes. "
+    "Write concrete actionable instructions the predictor or critic should follow.\n\n"
+    "Each outcome includes: symbol, direction (LONG/SHORT), prediction score, critic verdict, "
+    "P&L%, hold duration (minutes), exit reason, RVOL at entry, RSI at entry, "
+    "avg sentiment, regime/VIX at entry, and top headlines at entry.\n\n"
+    "Analyse across all dimensions:\n"
+    "  • Score ranges that reliably win or lose by direction\n"
+    "  • Regime/VIX combinations that precede losses\n"
+    "  • Hold duration: stopped out <30min = wrong entry; held >2h = good setup\n"
+    "  • RSI extremes at entry correlating with quick stop-outs\n"
+    "  • Critic verdicts that were wrong (e.g. BULLISH verdict but trade lost)\n"
+    "  • News patterns — headlines that looked bullish but preceded losses\n"
+    "  • RVOL at entry: does low RVOL correlate with failure?\n"
+    "  • Sentiment vs outcome mismatch\n"
     "Return ONLY valid JSON:\n"
-    '{"global_lessons": [{"pattern": "...", "instruction": "...", '
-    '"win_rate": 0.0, "sample_size": 0}], '
-    '"archetype_lessons": {"FRESH_BREAKOUT": [...], "BREAKOUT": [...], '
-    '"MOMENTUM": [...], "RECOVERY": [...]}}'
+    '{"global_lessons": [{"pattern": "...", "instruction": "...", "win_rate": 0.0, "sample_size": 0}]}'
 )
 
 
@@ -57,14 +61,7 @@ class LearningAgent(BaseAgent):
         self._memory = memory
         self._buffer: list[dict] = []
         self._trades_since_reflection = 0
-        self._bedrock = None
         self._region = os.environ.get("AWS_REGION", "us-east-1")
-
-    def _get_bedrock(self):
-        if self._bedrock is None:
-            import boto3
-            self._bedrock = boto3.client("bedrock-runtime", region_name=self._region)
-        return self._bedrock
 
     # ------------------------------------------------------------------
     # Entry point
@@ -125,28 +122,10 @@ class LearningAgent(BaseAgent):
                 self._memory.update(global_lessons, trades_reviewed=len(self._buffer))
                 total_lessons += len(global_lessons)
 
-            archetype_lessons: dict = result.get("archetype_lessons", {})
-            for archetype, lessons in archetype_lessons.items():
-                if lessons:
-                    self._memory.update(
-                        lessons,
-                        trades_reviewed=len(self._buffer),
-                        archetype=archetype,
-                    )
-                    total_lessons += len(lessons)
-
             if total_lessons:
-                await self.bus.publish("memory.updated", {
-                    "global_count": len(global_lessons),
-                    "archetype_counts": {a: len(v) for a, v in archetype_lessons.items() if v},
-                })
-                self.log.info(
-                    "Memory updated: %d global + %d archetype-specific lessons",
-                    len(global_lessons),
-                    sum(len(v) for v in archetype_lessons.values()),
-                )
+                await self.bus.publish("memory.updated", {"global_count": len(global_lessons)})
+                self.log.info("Memory updated: %d lessons", len(global_lessons))
 
-            await loop.run_in_executor(None, self._run_weight_optimizer)
         except Exception as exc:
             self.log.error("Reflection error: %s", exc)
 
@@ -167,22 +146,22 @@ class LearningAgent(BaseAgent):
     def _call_llm(self, history_stats: dict) -> dict:
         recent = self._buffer[-50:]
 
-        # Group by archetype for richer attribution
-        by_archetype: dict[str, list[dict]] = {}
-        for outcome in recent:
-            arch = outcome.get("archetype", "UNKNOWN")
-            by_archetype.setdefault(arch, []).append(outcome)
-
-        archetype_summaries = []
-        for arch, outcomes in by_archetype.items():
-            rows = [
-                f"  score={o.get('prediction_score', 0):.0f} "
-                f"critic={o.get('critic_verdict', '?')} "
-                f"action={o.get('action', '?')} "
-                f"reason={o.get('reason', '?')}"
-                for o in outcomes
-            ]
-            archetype_summaries.append(f"{arch} ({len(outcomes)} trades):\n" + "\n".join(rows))
+        rows = []
+        for o in recent:
+            pnl = o.get("pnl_pct")
+            pnl_str = f"{pnl:+.1f}%" if pnl is not None else "pnl=?"
+            headlines = "; ".join((o.get("top_headlines") or [])[:2])
+            row = (
+                f"sym={o.get('symbol', '?')} dir={o.get('direction', '?')} "
+                f"score={o.get('prediction_score', 0):.0f} critic={o.get('critic_verdict', '?')} "
+                f"pnl={pnl_str} hold={o.get('hold_duration_min', '?')}min "
+                f"exit={o.get('reason', '?')} rvol={o.get('rvol', '?')} "
+                f"rsi={o.get('rsi', '?')} sent={o.get('avg_sentiment', '?')} "
+                f"regime={o.get('regime_at_entry', '?')} vix={o.get('vix_at_entry', '?')}"
+            )
+            if headlines:
+                row += f" | news=[{headlines[:120]}]"
+            rows.append(row)
 
         stats_note = ""
         if history_stats:
@@ -193,14 +172,12 @@ class LearningAgent(BaseAgent):
             )
 
         user_text = (
-            f"Recent {len(recent)} trade outcomes by archetype:\n\n"
-            + "\n\n".join(archetype_summaries)
-            + stats_note
+            f"Recent {len(recent)} trade outcomes:\n" + "\n".join(rows) + stats_note
         )
 
         try:
-            resp = self._get_bedrock().converse(
-                modelId=_SONNET_MODEL,
+            resp = self.get_bedrock(self._region).converse(
+                modelId=_HAIKU_MODEL,
                 system=[{"text": _SYSTEM_PROMPT}],
                 messages=[{"role": "user", "content": [{"text": user_text}]}],
                 inferenceConfig={"maxTokens": 2048, "temperature": 0.3},
@@ -214,12 +191,3 @@ class LearningAgent(BaseAgent):
             self.log.warning("Reflection LLM failed: %s", exc)
             return {}
 
-    def _run_weight_optimizer(self) -> None:
-        try:
-            from stock_sentiment.history import History
-            from stock_sentiment.market.weight_optimizer import WeightOptimizer
-            hist = History()
-            WeightOptimizer(hist).optimize()
-            hist.close()
-        except Exception as exc:
-            self.log.warning("Weight optimizer skipped: %s", exc)

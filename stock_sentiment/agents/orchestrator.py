@@ -8,7 +8,7 @@ Agent pipeline:
     MacroAgent          → macro.context        (market regime, every 5 min)
     WatcherAgent        → market.signal        (RVOL + price gate, reactive)
     ScannerAgent        → market.signal        (batch scan every 15 min, proactive)
-    ScreenerAgent       → symbol.screened      (qualification + archetype)
+    ScreenerAgent       → symbol.screened      (qualification + regime gates)
     ResearchAgent       → symbol.researched    (options, technicals, short interest)
     NewsAgent           → symbol.analysed      (Polygon + Haiku sentiment)
     PredictorAgent      → symbol.predicted     (Haiku score)
@@ -16,7 +16,7 @@ Agent pipeline:
     PortfolioAgent      → portfolio.state      (sector concentration tracking)
     RiskAgent           → trade.approved       (VIX + concentration + cooldown)
     ExecutorAgent       → trade.executed / trade.closed
-    LearningAgent       → memory.updated       (Sonnet reflection, per-archetype)
+    LearningAgent       → memory.updated       (Sonnet reflection, global lessons)
     MonitorAgent        → position.alert       (earnings + re-eval)
 """
 
@@ -24,9 +24,8 @@ import asyncio
 import logging
 import signal
 
-from stock_sentiment.market.screener import SCREEN_UNIVERSE
-
 from .critic import CriticAgent
+from .crypto_watcher import CryptoWatcherAgent
 from .event_bus import EventBus
 from .executor import ExecutorAgent
 from .learning import LearningAgent
@@ -34,6 +33,7 @@ from .macro import MacroAgent
 from .memory import AgentMemory
 from .monitor import MonitorAgent
 from .news import NewsAgent
+from .prompt_tuner import PromptTunerAgent
 from .portfolio import PortfolioAgent
 from .predictor import PredictorAgent
 from .research import ResearchAgent
@@ -43,6 +43,82 @@ from .screener import ScreenerAgent
 from .watcher import WatcherAgent
 
 log = logging.getLogger("Orchestrator")
+
+SCREEN_UNIVERSE = [
+    "PLTR", "SNAP", "U", "PINS", "RBLX", "PATH", "DDOG", "NET", "CRWD", "ZS",
+    "MDB", "SNOW", "ROKU", "HOOD", "SOFI", "AFRM", "UPST", "IONQ", "RGTI", "QUBT",
+    "LUNR", "RKLB", "ASTS", "AMD", "INTC", "QCOM", "MU", "MRVL", "ON", "SMCI",
+    "UBER", "LYFT", "DASH", "ABNB", "TWLO", "OKTA", "ESTC", "DOCN", "BRZE", "MNDY",
+    "GLBE", "GLOB", "TOST", "GTLB", "IOT", "AI", "BBAI", "SOUN", "GRAB", "SE",
+    "SHOP", "SPOT", "OPEN", "DUOL", "BILL", "PCOR", "DT", "FRSH", "TENB", "RPD",
+    "CRDO", "ANET", "PANW", "FTNT", "S", "QLYS", "CHKP", "GEN", "NVDA", "TSM",
+    "AVGO", "ASML", "AMAT", "LRCX", "KLAC", "ADI", "TXN", "WOLF", "SLAB", "ACLS",
+    "RMBS", "DIOD", "INDI", "SITM", "CRUS", "LSCC", "MTSI", "NVTS", "POWI",
+    "V", "MA", "GS", "JPM", "BAC", "MS", "C", "WFC", "AXP", "BLK",
+    "MSTR", "COIN", "WULF", "IREN", "MARA", "RIOT", "CLSK", "HUT", "CORZ", "CIFR",
+    "PYPL", "NU", "IBKR", "ALLY", "STNE", "LC", "RKT", "PGR", "TRV", "CB",
+    "AFL", "MET", "PRU", "BX", "KKR", "APO", "CME", "ICE", "CBOE",
+    "SPGI", "MCO", "USB", "PNC", "TFC", "FITB",
+    "LMT", "RTX", "NOC", "GD", "BA", "LHX", "HWM", "TDG", "HII", "LDOS", "BWXT",
+
+    "AXON", "IRDM", "KTOS",
+    "XOM", "CVX", "COP", "OXY", "EOG", "SLB", "PBR", "TTE", "SHEL", "BP", "EQNR",
+    "MPC", "PSX", "VLO", "APA", "MUR", "DVN", "HAL", "OVV", "CTRA", "AR", "RRC", "EQT",
+    "CTVA", "CF", "MOS", "ADM", "BG",
+    "NEE", "FSLR", "ENPH", "PLUG", "RUN", "SEDG", "ARRY", "BE", "VIST", "SMR",
+    "OKLO", "LEU", "CCJ", "UUUU",
+    "ZIM", "MATX", "GNK", "DSX", "STNG", "FRO", "DAC", "EGLE", "SBLK",
+    "FCX", "AA", "CLF", "NUE", "NEM", "GOLD", "AU", "HMY", "KGC", "RGLD", "FNV",
+    "TSLA", "RACE", "UPS", "FDX", "NSC", "CSX", "UNP", "LUV", "DAL", "UAL", "AAL",
+    "F", "GM", "RIVN", "LCID", "NIO", "XPEV", "LI", "JOBY", "ACHR", "PSNY",
+    "PFE", "JNJ", "ABBV", "LLY", "UNH", "MRNA", "HIMS", "DOCS", "TDOC", "DNA",
+    "BEAM", "CRSP", "VKTX", "LEGN", "GERN", "IOVA", "CORT", "ISRG",
+    "NKE", "SBUX", "DIS", "AAPL", "AMZN", "WMT", "COST", "HD", "TGT", "TJX",
+    "CAVA", "BIRK", "SHAK", "BROS", "WING", "LULU", "DECK", "CROX",
+    "PLD", "AMT", "EQIX", "DLR", "IRM", "IIPR", "VICI", "O", "SPG",
+    "META", "GOOGL", "NFLX", "TTD", "RDDT", "DJT", "WBD", "FOXA", "MTCH", "BMBL",
+    "ZG", "APP", "CELH", "ARM", "TMDX", "GKOS",
+    "SAIA", "ODFL", "XPO", "PAYC", "WIX", "GFS", "NOW", "WDAY", "HUBS", "TEAM",
+    "MSFT", "ORCL", "IBM", "CRM", "ADBE", "INTU", "CSCO", "ACN", "DELL", "CDNS",
+    "SNPS", "HPQ", "HPE",
+    "PG", "KO", "PEP", "MO", "PM", "CL", "GIS", "MDLZ", "KHC", "HRL", "CLX", "KMB",
+    "CVS", "CI", "HCA", "MDT", "ABT", "BMY", "GILD", "BIIB", "REGN", "AMGN",
+    "TMO", "DHR", "BSX", "EW", "DXCM", "RMD", "ZTS", "IDXX", "IQV", "BDX", "ZBH",
+    "ELV", "HUM", "CNC",
+    "VRTX", "ILMN", "ALNY", "INCY", "BMRN", "SRPT", "RARE",
+    "CAT", "DE", "HON", "GE", "ETN", "ROK", "ITW", "PH", "IR", "AME", "XYL",
+    "DOV", "GNRC", "ROP", "FTV", "EMR", "MMM", "JCI", "CARR", "OTIS", "TT",
+    "CPRT", "VRSK", "CTAS",
+    "DHI", "LEN", "PHM", "TOL",
+    "COF", "SYF", "RF", "HBAN", "KEY", "MTB", "SCHW", "TROW", "IVZ", "BEN",
+    "FIS", "FISV", "GPN", "WU",
+    "ET", "KMI", "WMB", "OKE", "FANG",
+    "VST", "NRG", "AES",
+    "LIN", "APD", "ECL", "PPG", "SHW", "DD", "IFF", "EMN",
+    "LOW", "DLTR", "DG", "KR", "MCD", "YUM", "CMG", "QSR", "DPZ", "WEN",
+    "MAR", "HLT", "H", "MGM", "LVS", "WYNN", "CZR", "RCL", "CCL", "NCLH",
+    "EA", "TTWO", "DKNG", "LYV",
+    "PSA", "EXR", "AVB", "EQR", "WELL", "VTR", "CCI",
+    "VZ", "T", "TMUS",
+    "MRK", "AZN", "NVO",
+    "VEEV", "ASAN", "BOX", "SPT",
+    "MCHP", "SWKS", "MPWR", "NXPI",
+    "BIDU", "JD", "PDD", "BABA", "MELI",
+    "ZM", "DOCU", "RNG",
+    "URI", "PCAR", "FAST", "RSG", "WCN",
+    "WAL", "ZION",
+    "BURL", "FIVE",
+    "EXEL", "ACAD",
+    "CNQ", "CVE",
+    "HEI", "PRGO", "JAZZ",
+    "TKO", "CVNA",
+]
+
+CRYPTO_UNIVERSE = [
+    "BTC/USD", "ETH/USD", "SOL/USD", "DOGE/USD", "AVAX/USD", "LINK/USD",
+    "LTC/USD", "XRP/USD", "BCH/USD", "UNI/USD", "AAVE/USD", "DOT/USD",
+    "MATIC/USD", "MKR/USD", "CRV/USD", "GRT/USD", "BAT/USD", "SHIB/USD",
+]
 
 
 class Orchestrator:
@@ -54,12 +130,14 @@ class Orchestrator:
 
     async def run(self) -> None:
         stock_symbols = list(dict.fromkeys(SCREEN_UNIVERSE))
+        crypto_symbols = list(dict.fromkeys(CRYPTO_UNIVERSE))
 
         from .base import BaseAgent
         agents: list[BaseAgent] = [
             MacroAgent(self.bus),
             WatcherAgent(self.bus, stock_symbols),
             ScannerAgent(self.bus, stock_symbols),
+            CryptoWatcherAgent(self.bus, crypto_symbols),
             ScreenerAgent(self.bus),
             ResearchAgent(self.bus),
             NewsAgent(self.bus),
@@ -69,6 +147,7 @@ class Orchestrator:
             RiskAgent(self.bus),
             ExecutorAgent(self.bus, dry_run=self.dry_run),
             LearningAgent(self.bus, self.memory),
+            PromptTunerAgent(self.bus, self.memory),
             MonitorAgent(self.bus),
         ]
 
@@ -79,8 +158,8 @@ class Orchestrator:
 
         run_mode = "DRY-RUN" if self.dry_run else "LIVE"
         log.info(
-            "Multi-agent trading system started [%s] — %d agents, %d symbols",
-            run_mode, len(agents), len(stock_symbols),
+            "Multi-agent trading system started [%s] — %d agents, %d stocks, %d crypto",
+            run_mode, len(agents), len(stock_symbols), len(crypto_symbols),
         )
 
         loop = asyncio.get_running_loop()

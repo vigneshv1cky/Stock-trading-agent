@@ -3,16 +3,8 @@
 Subscribes to: symbol.predicted
 Publishes to:  symbol.reviewed
 
-Improvements over original bot version:
-  • 5-tier verdict system replacing the blunt CONFIRM / DOWNGRADE / REJECT:
-      UPGRADE   — Predictor was too conservative; push score up by 8 pts (max 85)
-      CONFIRM   — thesis solid; score unchanged
-      CAUTION   — real but non-fatal concerns; −8 pts
-      DOWNGRADE — notable risks; Critic sets the exact adjusted_score
-      REJECT    — severe risk; score hard-capped at 32 (forces BEARISH/NEUTRAL, blocks entry)
-  • Critic's adjusted_score is trusted (not overridden with fixed math),
-    validated only to stay within tier bounds
-  • Two-turn debate: Turn 1 raises concerns, Turn 2 gives binding verdict
+  • Turn 1: raise top 3 concerns, cite data, no score yet
+  • Turn 2: output adjusted_score directly — LLM owns the adjustment magnitude
   • CLOSE actions bypass the critic — speed matters for exits
 """
 
@@ -24,38 +16,34 @@ import re
 from .base import BaseAgent
 from .event_bus import EventBus
 from .memory import AgentMemory
+from .prompt_tuner import load_optimized_prompt
 
 _HAIKU_MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
-_REJECT_CAP = 32.0
-_UPGRADE_MAX = 85.0
-_UPGRADE_DELTA = 8.0
-_CAUTION_DELTA = 8.0
 
 _SYSTEM_PROMPT = (
     "You are a skeptical risk analyst stress-testing trade proposals. "
     "Your job is to find reasons the trade could FAIL — not to agree with the predictor. "
     "Examine: second-order sector risks, narrative over-extension, weak volume confirmation, "
-    "macro headwinds, earnings proximity, whether the options market (high P/C, elevated IV) "
-    "implies institutional hedging, and short-squeeze risk inflating a BEARISH setup. "
+    "macro headwinds, earnings proximity, RSI extremes suggesting exhaustion, "
+    "and whether ATR/volatility implies the move is already over. "
     "Be especially suspicious of BULLISH calls when VIX is elevated or SPY is declining. "
-    "Only UPGRADE if the predictor clearly undersold a high-conviction setup."
+    "Only raise the score if the predictor clearly undersold a high-conviction setup. "
+    "Scores range from -100 to 100: positive = BULLISH, negative = BEARISH. Be decisive — avoid scores near 0."
 )
 
 _CONCERN_PROMPT = (
     "List your top 3 specific concerns about this trade. "
-    "Cite the actual data points. Do not give a verdict yet."
+    "Cite the actual data points. Do not give a score yet."
 )
 
-_VERDICT_PROMPT = (
-    "Given your concerns, choose the most appropriate verdict:\n"
-    "  UPGRADE   — predictor too conservative, setup genuinely strong (score rises ≤8 pts, max 85)\n"
-    "  CONFIRM   — thesis survives all concerns, score unchanged\n"
-    "  CAUTION   — real but non-fatal risks (score drops ~8 pts)\n"
-    "  DOWNGRADE — notable risks clearly present; set an exact adjusted_score\n"
-    "  REJECT    — at least one concern is trade-blocking (score capped at 32)\n\n"
+_SCORE_PROMPT = (
+    "Given your concerns above, what should the adjusted score be?\n"
+    "The predictor gave {original:.0f}.\n"
+    "- Concerns are minor or unfounded → keep it close or push higher if undersold\n"
+    "- Concerns are real but survivable → lower it proportionally\n"
+    "- At least one concern is trade-blocking → push it below -36\n\n"
     "Return ONLY valid JSON:\n"
-    '{"verdict": "UPGRADE|CONFIRM|CAUTION|DOWNGRADE|REJECT", '
-    '"adjusted_score": <float 0-100>, "reasoning": "<one sentence>"}'
+    '{{"adjusted_score": <float -100 to 100>, "reasoning": "<one sentence>"}}'
 )
 
 
@@ -64,14 +52,7 @@ class CriticAgent(BaseAgent):
         super().__init__(bus, "CriticAgent")
         self._queue = bus.subscribe("symbol.predicted")
         self._memory = memory
-        self._bedrock = None
         self._region = os.environ.get("AWS_REGION", "us-east-1")
-
-    def _get_bedrock(self):
-        if self._bedrock is None:
-            import boto3
-            self._bedrock = boto3.client("bedrock-runtime", region_name=self._region)
-        return self._bedrock
 
     async def run(self) -> None:
         while True:
@@ -85,28 +66,27 @@ class CriticAgent(BaseAgent):
         loop = asyncio.get_running_loop()
         try:
             result = await loop.run_in_executor(None, self._debate, pred, llm_confidence)
-            verdict = result.get("verdict", "CONFIRM")
             reasoning = result.get("reasoning", "")
             raw_adjusted = float(result.get("adjusted_score", pred.overall_score))
 
             original_score = pred.overall_score
-            adjusted = self._apply_verdict(verdict, original_score, raw_adjusted)
-            rating = "BULLISH" if adjusted >= 60 else ("BEARISH" if adjusted <= 40 else "NEUTRAL")
+            adjusted = max(-100.0, min(100.0, raw_adjusted))
+            rating = "BULLISH" if adjusted >= 0 else "BEARISH"
 
             pred.overall_score = adjusted
             pred.confidence = adjusted
             pred.prediction = rating
             if reasoning:
-                pred.reasoning.append(f"Critic ({verdict}): {reasoning}")
+                pred.reasoning.append(f"Critic: {reasoning}")
 
             self.log.info(
-                "Critic: %s  %s  %.1f→%.1f [%s]",
-                sym, verdict, original_score, adjusted, rating,
+                "Critic: %s  %.1f→%.1f [%s]",
+                sym, original_score, adjusted, rating,
             )
             await self.bus.publish("symbol.reviewed", {
                 "symbol": sym,
                 "prediction": pred,
-                "critic_verdict": verdict,
+                "critic_verdict": rating,
                 "critic_reasoning": reasoning,
             })
         except Exception as exc:
@@ -114,36 +94,10 @@ class CriticAgent(BaseAgent):
             await self.bus.publish("symbol.reviewed", {
                 "symbol": sym,
                 "prediction": pred,
-                "critic_verdict": "CONFIRM",
+                "critic_verdict": pred.prediction,
                 "critic_reasoning": "critic unavailable",
             })
 
-    # ------------------------------------------------------------------
-    # Verdict → score mapping (validated within tier bounds)
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _apply_verdict(verdict: str, original: float, critic_adjusted: float) -> float:
-        # NEUTRAL predictions (41–59) cannot be rejected into BEARISH territory —
-        # a failed/uncertain predictor signal should never trigger a close or short
-        is_neutral = 41.0 <= original <= 59.0
-        if verdict == "UPGRADE":
-            upgraded = original + _UPGRADE_DELTA
-            return min(upgraded, _UPGRADE_MAX)
-        if verdict == "CONFIRM":
-            return original
-        if verdict == "CAUTION":
-            return max(0.0, original - _CAUTION_DELTA)
-        if verdict == "DOWNGRADE":
-            if is_neutral:
-                return original  # can't downgrade a neutral signal further
-            lo = max(0.0, min(critic_adjusted, original - 5.0))
-            return max(0.0, min(lo, 100.0))
-        if verdict == "REJECT":
-            if is_neutral:
-                return original  # REJECT on NEUTRAL → treat as CONFIRM
-            return min(original, _REJECT_CAP)
-        return original
 
     # ------------------------------------------------------------------
     # Two-turn adversarial debate — runs in executor
@@ -175,15 +129,15 @@ class CriticAgent(BaseAgent):
             research_block = (
                 f"\nResearch: RSI={research.get('rsi', 0):.0f} | "
                 f"BB%={research.get('bb_pct', 0):.2f} | "
-                f"P/C={research.get('put_call_ratio', 0):.2f} | "
-                f"IV={research.get('implied_volatility', 0):.1%} | "
-                f"Short={research.get('short_pct_float', 0):.1f}% of float"
+                f"MACD_hist={research.get('macd_hist', 0):+.4f} | "
+                f"ATR={research.get('atr_pct', 0):.1f}% | "
+                f"vol_trend={research.get('vol_trend', 0):+.1%}"
             )
             if research.get("synthesis"):
                 research_block += f"\nResearch: {research['synthesis']}"
 
         proposal = (
-            f"Trade: {pred.symbol} | {pred.archetype} | "
+            f"Trade: {pred.symbol} | "
             f"Predictor={pred.prediction} score={pred.overall_score:.1f} "
             f"confidence={llm_confidence:.0f}\n"
             f"RVOL={pred.volume_ratio:.1f}x | RSI={pred.rsi:.0f} | "
@@ -194,17 +148,18 @@ class CriticAgent(BaseAgent):
             f"{macro_block}{research_block}"
         )
 
-        lessons = self._memory.format_for_prompt(archetype=pred.archetype)
+        lessons = self._memory.format_for_prompt()
         if lessons:
             proposal = lessons + "\n\n" + proposal
 
-        bedrock = self._get_bedrock()
+        bedrock = self.get_bedrock(self._region)
+        active_system = load_optimized_prompt("critic_system", _SYSTEM_PROMPT)
 
         # Turn 1 — raise concerns
         try:
             r1 = bedrock.converse(
                 modelId=_HAIKU_MODEL,
-                system=[{"text": _SYSTEM_PROMPT}],
+                system=[{"text": active_system}],
                 messages=[
                     {"role": "user", "content": [{"text": proposal + "\n\n" + _CONCERN_PROMPT}]}
                 ],
@@ -220,11 +175,11 @@ class CriticAgent(BaseAgent):
         try:
             r2 = bedrock.converse(
                 modelId=_HAIKU_MODEL,
-                system=[{"text": _SYSTEM_PROMPT}],
+                system=[{"text": active_system}],
                 messages=[
                     {"role": "user", "content": [{"text": proposal + "\n\n" + _CONCERN_PROMPT}]},
                     {"role": "assistant", "content": [{"text": concerns_text}]},
-                    {"role": "user", "content": [{"text": _VERDICT_PROMPT}]},
+                    {"role": "user", "content": [{"text": _SCORE_PROMPT.format(original=pred.overall_score)}]},
                 ],
                 inferenceConfig={"maxTokens": 200, "temperature": 0.1},
             )

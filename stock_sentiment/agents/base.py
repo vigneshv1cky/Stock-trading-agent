@@ -3,15 +3,34 @@
 import asyncio
 import logging
 from abc import ABC, abstractmethod
+from typing import Any
 
 from .event_bus import EventBus
 
 
 class BaseAgent(ABC):
+    _bedrock_clients: dict[str, Any] = {}  # region → shared client
+
     def __init__(self, bus: EventBus, name: str):
         self.bus = bus
         self.name = name
         self.log = logging.getLogger(name)
+
+    @classmethod
+    def get_bedrock(cls, region: str = "us-east-1") -> Any:
+        """Shared Bedrock client per region with an enlarged connection pool.
+
+        All agents share this so the pool is not fragmented across instances.
+        """
+        if region not in cls._bedrock_clients:
+            import boto3
+            from botocore.config import Config  # type: ignore[import-untyped]
+            cls._bedrock_clients[region] = boto3.client(
+                "bedrock-runtime",
+                region_name=region,
+                config=Config(max_pool_connections=50),
+            )
+        return cls._bedrock_clients[region]
 
     @abstractmethod
     async def run(self) -> None: ...

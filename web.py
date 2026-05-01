@@ -36,7 +36,7 @@ _MACRO_TTL = 30
 def _get_broker():
     global _broker
     if _broker is None:
-        from stock_sentiment.market.broker import PaperBroker
+        from stock_sentiment.agents.broker import PaperBroker
         _broker = PaperBroker()
     return _broker
 
@@ -92,7 +92,7 @@ def api_positions():
                 "current_price": float(p.current_price),
                 "unrealized_pl": float(p.unrealized_pl),
                 "unrealized_plpc": float(p.unrealized_plpc) * 100,
-                "score": cache.get("score", 50.0),
+                "score": cache.get("score", 0.0),
                 "entered_at": cache.get("entered_at", ""),
             })
         result.sort(key=lambda x: x["unrealized_pl"], reverse=True)

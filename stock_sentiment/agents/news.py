@@ -5,26 +5,108 @@ Publishes to:  symbol.analysed
 """
 
 import asyncio
+import json
 import os
+import re
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-
-from stock_sentiment.news.base import Article, ScoredArticle
-from stock_sentiment.nlp.sentiment import SentimentAnalyzer
 
 from .base import BaseAgent
 from .event_bus import EventBus
 
 _POLYGON_KEY = os.environ.get("POLYGON_API_KEY", "")
 _MAX_ARTICLES = 10
-_LOOKBACK_DAYS = 7
+_LOOKBACK_HOURS = 1
 
+_HAIKU_MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+_SENTIMENT_SYSTEM = (
+    "You are a financial sentiment scorer for equity investors. "
+    "Score each numbered headline from -1.0 (very negative) to 1.0 (very positive). "
+    "Return ONLY a JSON array of numbers in order, no explanation."
+)
+
+
+# ---------------------------------------------------------------------------
+# Data types
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Article:
+    title: str
+    summary: str
+    source: str
+    url: str
+    published_at: datetime
+    raw_text: str = ""
+
+    def __post_init__(self):
+        if not self.raw_text:
+            self.raw_text = f"{self.title}. {self.summary}".strip()
+
+
+@dataclass
+class ScoredArticle:
+    article: Article
+    sentiment_label: str
+    sentiment_score: float
+    normalized_score: float
+    stock_symbols: list = field(default_factory=list)
+    relevance_scores: dict = field(default_factory=dict)
+
+
+@dataclass
+class SentimentResult:
+    label: str
+    score: float
+    normalized: float
+
+
+# ---------------------------------------------------------------------------
+# Sentiment helpers
+# ---------------------------------------------------------------------------
+
+def _neutral() -> SentimentResult:
+    return SentimentResult(label="neutral", score=0.5, normalized=0.0)
+
+
+def _from_score(s: float) -> SentimentResult:
+    s = max(-1.0, min(1.0, float(s)))
+    label = "positive" if s > 0.2 else ("negative" if s < -0.2 else "neutral")
+    return SentimentResult(label=label, score=abs(s), normalized=s)
+
+
+def _parse_scores(text_out: str, n: int) -> list[float] | None:
+    m = re.search(r'\[[\s\S]*\]', text_out)
+    if m:
+        try:
+            scores = json.loads(m.group())
+            if isinstance(scores, list):
+                while len(scores) < n:
+                    scores.append(0.0)
+                return [float(s) for s in scores[:n]]
+        except Exception:
+            pass
+    raw_nums = re.findall(r'-?\d+(?:\.\d+)?', text_out)
+    if raw_nums:
+        scores = [float(x) for x in raw_nums[:n]]
+        while len(scores) < n:
+            scores.append(0.0)
+        return scores
+    return None
+
+
+# ---------------------------------------------------------------------------
+# NewsAgent
+# ---------------------------------------------------------------------------
 
 class NewsAgent(BaseAgent):
+    _BATCH_SIZE = 50
+
     def __init__(self, bus: EventBus):
         super().__init__(bus, "NewsAgent")
         self._queue = bus.subscribe("symbol.screened")
-        self._sentiment = SentimentAnalyzer()
         self._polygon = None
+        self._region = os.environ.get("AWS_REGION", "us-east-1")
 
     def _get_polygon(self):
         if self._polygon is None and _POLYGON_KEY:
@@ -71,7 +153,7 @@ class NewsAgent(BaseAgent):
             return []
         try:
             now = datetime.now(timezone.utc)
-            since = (now - timedelta(days=_LOOKBACK_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            since = (now - timedelta(hours=_LOOKBACK_HOURS)).strftime("%Y-%m-%dT%H:%M:%SZ")
             articles: list[Article] = []
             for item in client.list_ticker_news(
                 ticker=sym,
@@ -113,14 +195,14 @@ class NewsAgent(BaseAgent):
             return []
 
     # ------------------------------------------------------------------
-    # Sentiment scoring via Bedrock
+    # Sentiment scoring via Bedrock Haiku
     # ------------------------------------------------------------------
 
     def _score_articles(self, articles: list[Article]) -> list[ScoredArticle]:
         if not articles:
             return []
         texts = [a.raw_text for a in articles]
-        results = self._sentiment.analyze_batch(texts)
+        results = self._analyze_batch(texts)
         return [
             ScoredArticle(
                 article=art,
@@ -130,3 +212,28 @@ class NewsAgent(BaseAgent):
             )
             for art, res in zip(articles, results)
         ]
+
+    def _analyze_batch(self, texts: list[str]) -> list[SentimentResult]:
+        results: list[SentimentResult] = []
+        for batch_start in range(0, len(texts), self._BATCH_SIZE):
+            batch = texts[batch_start: batch_start + self._BATCH_SIZE]
+            results.extend(self._score_batch(batch, batch_start))
+        return results
+
+    def _score_batch(self, texts: list[str], offset: int) -> list[SentimentResult]:
+        numbered = "\n".join(f"{offset + i + 1}. {t}" for i, t in enumerate(texts))
+        try:
+            resp = self.get_bedrock(self._region).converse(
+                modelId=_HAIKU_MODEL,
+                system=[{"text": _SENTIMENT_SYSTEM}],
+                messages=[{"role": "user", "content": [{"text": numbered}]}],
+                inferenceConfig={"maxTokens": 512, "temperature": 0},
+            )
+            text_out = resp["output"]["message"]["content"][0]["text"].strip()
+            scores = _parse_scores(text_out, len(texts))
+            if scores is not None:
+                return [_from_score(s) for s in scores]
+            self.log.debug("Haiku returned unparseable sentiment output (offset=%d)", offset)
+        except Exception as e:
+            self.log.warning("Sentiment batch failed (offset=%d): %s", offset, e)
+        return [_neutral() for _ in texts]

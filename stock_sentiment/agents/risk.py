@@ -3,18 +3,19 @@
 Subscribes to: symbol.reviewed, position.alert
 Publishes to:  trade.approved
 
-Improvements over original bot version:
-  • Market-hours gate: no new entries in first 15 min (9:30–9:45) or last 15 min of session
-  • Portfolio drawdown circuit breaker: halt new LONG entries if day P&L < –2 %
-  • Earnings lookahead: 4–7 days away → require score 5 pts above threshold (soft penalty)
-  • Same-sector penalty: already hold a position in same sector → require score 5 pts higher
-  • Macro overlay: RISK_OFF +5, PANIC +10 on buy threshold (unchanged from prior)
-  • All blocks are logged with reason so LearningAgent can learn from them
+All trade approval decisions are delegated to Haiku. The only code-level gates are:
+  • BEARISH on existing long → immediate CLOSE (speed matters for exits)
+  • Cooldown: 1-hour re-entry block after a stop-out (set by broker)
+
+Haiku judges everything else: time of day, duplicate prevention, position caps,
+displacement choice, buying power, shortability, VIX/regime, sector concentration,
+and drawdown risk.
 """
 
 import asyncio
 import json
 import os
+import re
 from datetime import datetime, timedelta, timezone
 
 try:
@@ -25,19 +26,62 @@ except ImportError:
 
 from .base import BaseAgent
 from .event_bus import EventBus
+from .prompt_tuner import load_optimized_prompt
 
 _COOLDOWN_FILE = os.path.expanduser("~/.stock_screener/cooldowns.json")
 _HELD_CACHE = os.path.expanduser("~/.stock_screener/held_cache.json")
-_MAX_POSITIONS = 8
-_MAX_SHORTS = 8
-_SHORT_MAX_SCORE = 35
-_SECTOR_CONCENTRATION_BLOCK = 50.0   # % — hard block
-_SECTOR_PENALTY_PTS = 5.0            # extra pts required when same sector held
-_EARNINGS_SOFT_DAYS = 7              # days — require +5 pts above threshold
-_DRAWDOWN_HALT_PCT = -2.0            # % — halt new longs below this daily P&L
-_NO_ENTRY_OPEN_MIN = 15              # skip first 15 min (price discovery)
-_NO_ENTRY_CLOSE_MIN = 60             # skip last 60 min — no new entries after 3:00 PM
-_DISPLACEMENT_MARGIN = 5.0           # new signal must beat worst held position by this many pts
+
+_HAIKU_MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+
+_EARNINGS_SYSTEM_PROMPT = (
+    "You are a trading system analyst deciding whether to HOLD or CLOSE an existing position "
+    "immediately after an earnings announcement.\n\n"
+    "For LONG positions:\n"
+    "  • EPS beat > +5% with neutral or raised guidance → HOLD\n"
+    "  • EPS miss < -5% OR lowered guidance OR negative management tone → CLOSE\n"
+    "  • Inline (surprise within ±5%): use news headlines to break the tie\n"
+    "For SHORT positions: reverse logic — beats are bad (CLOSE), misses are good (HOLD).\n\n"
+    "News headlines carry the guidance tone and management commentary — weight them heavily. "
+    "A large EPS beat with a stock dropping in after-hours means the market is reading something negative — CLOSE the long.\n\n"
+    "Return ONLY valid JSON:\n"
+    '{{"decision": "HOLD" or "CLOSE", "reasoning": "<one sentence>"}}'
+)
+_RISK_SYSTEM_PROMPT = (
+    "You are a risk manager for an algorithmic swing trading system. "
+    "Make a holistic APPROVE or BLOCK decision for the given trade signal.\n\n"
+    "TIME OF DAY:\n"
+    "  • First 15 min after open (before 9:45 AM ET): block most signals (gap-fill noise); "
+    "approve only if score ≥ 70\n"
+    "  • Last 60 min before close (after 3:00 PM ET): block new entries; "
+    "approve only if score ≥ 80 (exceptional setup)\n\n"
+    "POSITION LIMITS (soft targets: ≤8 total, ≤8 shorts):\n"
+    "  • Already in this symbol → BLOCK (no doubling into same name)\n"
+    "  • At the limit with displacement candidates → specify displace=SYMBOL "
+    "if new signal beats it by ≥10 score pts; otherwise BLOCK\n"
+    "  • At the limit with no displacement candidates → BLOCK\n\n"
+    "FINANCIAL FACTS:\n"
+    "  • Buying power < slot → BLOCK\n"
+    "  • Shortable: NO → BLOCK the short\n\n"
+    "MARKET CONDITIONS:\n"
+    "  • VIX <15: calm — score ≥25 for longs, ≥40 for shorts\n"
+    "  • VIX 15-25: normal — score ≥35 for longs, ≥50 for shorts\n"
+    "  • VIX 25-35: elevated — score ≥50 for longs, ≥65 for shorts\n"
+    "  • VIX >35: crisis — score ≥70 for longs; block most shorts\n"
+    "  • RISK_OFF regime: raise thresholds ~15 pts; PANIC: raise ~25 pts or block\n"
+    "  • RISK_ON with strong score: lean APPROVE\n"
+    "  • Day P&L < −2%: block new longs; Day P&L < −4%: block all new entries\n"
+    "  • Sector concentration >40% of portfolio: block more of that sector\n\n"
+    "CRYPTO ASSETS (symbol contains '/', e.g. BTC/USD):\n"
+    "  • LONG only — always BLOCK shorts on crypto\n"
+    "  • No time-of-day gate (crypto trades 24/7)\n"
+    "  • Score ≥50 required (higher noise floor vs equities)\n"
+    "  • PANIC regime: BLOCK all new crypto entries\n"
+    "  • Cap 2 crypto positions simultaneously\n\n"
+    "Return ONLY valid JSON:\n"
+    '{{"decision": "APPROVE" or "BLOCK", '
+    '"displace": "<SYMBOL to close to make room, or null>", '
+    '"reasoning": "<one sentence>"}}'
+)
 
 
 class RiskAgent(BaseAgent):
@@ -45,10 +89,11 @@ class RiskAgent(BaseAgent):
         super().__init__(bus, "RiskAgent")
         self._queue = bus.subscribe("symbol.reviewed", "position.alert")
         self._broker = None
+        self._region = os.environ.get("AWS_REGION", "us-east-1")
 
     def _get_broker(self):
         if self._broker is None:
-            from stock_sentiment.market.broker import PaperBroker
+            from stock_sentiment.agents.broker import PaperBroker
             self._broker = PaperBroker()
         return self._broker
 
@@ -69,175 +114,92 @@ class RiskAgent(BaseAgent):
     async def _evaluate(self, data: dict) -> None:
         sym = data["symbol"]
         pred = data["prediction"]
+        critic_verdict = data.get("critic_verdict", "")
         loop = asyncio.get_running_loop()
         try:
             broker = self._get_broker()
             if not broker.client:
                 return
 
-            # ---- Market-hours gate ----
-            now = datetime.now(_ET)
-            minutes_since_open = (now.hour - 9) * 60 + (now.minute - 30)
-            minutes_to_close = (16 * 60) - (now.hour * 60 + now.minute)
-            if minutes_since_open < _NO_ENTRY_OPEN_MIN:
-                self.log.info("Hours gate (open): %s at %s", sym, now.strftime("%H:%M"))
-                return
-            if minutes_to_close < _NO_ENTRY_CLOSE_MIN:
-                self.log.info("Hours gate (close): %s at %s", sym, now.strftime("%H:%M"))
-                return
-
-            # ---- Fetch account state ----
+            # ---- Fetch account and position state ----
             vix = await loop.run_in_executor(None, broker._get_vix)
-            threshold = broker._threshold_from_vix(vix)
             account = await loop.run_in_executor(None, broker.client.get_account)
             positions = await loop.run_in_executor(None, broker.client.get_all_positions)
 
             portfolio_value = float(account.equity)
-            cash = float(account.cash)
+            buying_power = float(account.buying_power)
             last_equity = float(account.last_equity)
             day_pnl_pct = (portfolio_value - last_equity) / last_equity * 100 if last_equity else 0.0
-            from stock_sentiment.market.broker import _is_long_position
+
+            from stock_sentiment.agents.broker import _is_long_position
             long_syms = {p.symbol for p in positions if _is_long_position(p)}
             short_syms = {p.symbol for p in positions if not _is_long_position(p)}
             held_syms = long_syms | short_syms
 
-            # held_cache is updated synchronously by ExecutorAgent on every fill —
-            # use it as the authoritative cap check to avoid Alpaca latency race conditions
+            # held_cache bridges the race-condition window between order submission
+            # and Alpaca position confirmation — do not prune here.
             held_cache = self._load_held_cache()
-            held_syms = held_syms | set(held_cache.keys())
-            cache_shorts = {s for s, v in held_cache.items() if v.get("direction") == "SHORT"}
-            short_syms = short_syms | cache_shorts
+            already_entered = held_syms | set(held_cache.keys())
 
-            # ---- Macro overlay ----
             from .macro import MacroAgent
             macro = MacroAgent.current
             regime = macro.get("regime", "NEUTRAL") if macro else "NEUTRAL"
-            if regime == "RISK_OFF":
-                threshold = min(threshold + 5, 85)
-            elif regime == "PANIC":
-                threshold = min(threshold + 10, 90)
 
-            # ---- Earnings soft penalty ----
-            days_to_earn = getattr(pred, "days_to_earnings", None)
-            if days_to_earn is not None and _EARNINGS_SOFT_DAYS >= days_to_earn > 3:
-                threshold += 5.0
-                self.log.debug("Earnings penalty +5 for %s (%dd)", sym, days_to_earn)
-
-            # ---- Same-sector penalty ----
             from .portfolio import PortfolioAgent, get_sector
             portfolio_state = PortfolioAgent.current
             sym_sector = get_sector(sym)
-            sector_conc = portfolio_state.get("sector_concentration", {}).get(sym_sector, 0.0)
-            if sector_conc > 0:
-                threshold += _SECTOR_PENALTY_PTS
-                self.log.debug("Sector penalty +%.0f for %s (%s=%.0f%%)",
-                               _SECTOR_PENALTY_PTS, sym, sym_sector, sector_conc)
 
             action: str | None = None
             block_reason = ""
 
-            if pred.prediction == "BULLISH" and pred.overall_score >= threshold:
-                if sym in held_syms:
-                    return
+            if pred.prediction == "BEARISH" and sym in long_syms:
+                # Immediate exit — no LLM delay for closing a losing long
+                action = "CLOSE"
 
-                # Score-based displacement: at cap, evict weakest long if new signal is stronger
-                displacement_long: tuple[str, float] | None = None
-                if len(held_syms) >= _MAX_POSITIONS:
-                    displacement_long = self._find_displacement_target(
-                        "BUY", pred.overall_score, held_cache
-                    )
-                    if displacement_long:
-                        self.log.debug(
-                            "Displacement candidate LONG: %s entry_score=%.1f "
-                            "(cache score — may be stale vs current conviction)",
-                            displacement_long[0], displacement_long[1],
-                        )
-                        held_cache.pop(displacement_long[0], None)
-                        self._save_held_cache(held_cache)
-                        held_syms.discard(displacement_long[0])
+            else:
+                direction = "LONG" if pred.prediction == "BULLISH" else "SHORT"
 
-                # Slot size scaled by news urgency (recency-weighted sentiment × article breadth)
                 slot = broker._slot_size_for_score(
-                    portfolio_value, pred.avg_sentiment, pred.bullish_count
+                    portfolio_value,
+                    pred.avg_sentiment if direction == "LONG" else -pred.avg_sentiment,
+                    pred.bullish_count if direction == "LONG" else pred.bearish_count,
                 )
 
-                # Drawdown circuit breaker — halt new longs on bad days
-                if day_pnl_pct < _DRAWDOWN_HALT_PCT:
-                    block_reason = (
-                        f"drawdown halt (day P&L={day_pnl_pct:.1f}% < {_DRAWDOWN_HALT_PCT}%)"
-                    )
-                elif len(held_syms) >= _MAX_POSITIONS:
-                    block_reason = f"position cap ({_MAX_POSITIONS})"
-                elif cash < slot:
-                    block_reason = f"insufficient cash (${cash:.0f} < ${slot:.0f})"
-                elif self._sector_blocked(sym_sector, portfolio_state):
-                    block_reason = f"sector concentration ({sym_sector}={sector_conc:.0f}%)"
-                else:
-                    action = "BUY"
-                    if displacement_long:
-                        d_sym, d_score = displacement_long
+                # Fetch shortability as a broker fact to pass into LLM context
+                shortable: bool | None = None
+                if direction == "SHORT":
+                    shortable = await loop.run_in_executor(None, broker._can_short, sym)
+
+                context = self._build_context(
+                    sym=sym, pred=pred, direction=direction,
+                    now=datetime.now(_ET), vix=vix, regime=regime,
+                    day_pnl_pct=day_pnl_pct, sym_sector=sym_sector,
+                    portfolio_state=portfolio_state, held_syms=held_syms,
+                    short_syms=short_syms, already_entered=already_entered,
+                    held_cache=held_cache, buying_power=buying_power,
+                    slot=slot, shortable=shortable,
+                )
+
+                llm_result = await loop.run_in_executor(
+                    None, self._llm_risk_decision, sym, context
+                )
+
+                if llm_result["decision"] == "APPROVE":
+                    action = "BUY" if direction == "LONG" else "SHORT"
+
+                    displace_sym = llm_result.get("displace")
+                    if displace_sym and displace_sym in held_cache:
+                        held_cache.pop(displace_sym, None)
+                        self._save_held_cache(held_cache)
                         await self.bus.publish("trade.approved", {
-                            "symbol": d_sym, "action": "CLOSE", "prediction": None,
-                            "reason": "",
+                            "symbol": displace_sym, "action": "CLOSE",
+                            "prediction": None, "reason": "",
                             "portfolio_value": portfolio_value,
                         })
-                        self.log.info(
-                            "Displacement: closing %s (%.1f) for %s (%.1f)",
-                            d_sym, d_score, sym, pred.overall_score,
-                        )
-
-            elif pred.prediction == "BEARISH":
-                if sym in long_syms:
-                    action = "CLOSE"
-                elif (
-                    pred.overall_score <= _SHORT_MAX_SCORE
-                    and sym not in held_syms
-                ):
-                    # Score-based displacement: at cap, evict weakest short if new signal is stronger
-                    displacement_short: tuple[str, float] | None = None
-                    if len(held_syms) >= _MAX_POSITIONS:
-                        displacement_short = self._find_displacement_target(
-                            "SHORT", pred.overall_score, held_cache
-                        )
-                        if displacement_short:
-                            self.log.debug(
-                                "Displacement candidate SHORT: %s entry_score=%.1f "
-                                "(cache score — may be stale vs current conviction)",
-                                displacement_short[0], displacement_short[1],
-                            )
-                            held_cache.pop(displacement_short[0], None)
-                            self._save_held_cache(held_cache)
-                            held_syms.discard(displacement_short[0])
-                            short_syms.discard(displacement_short[0])
-
-                    # Slot size: invert sentiment so strong negative news → bigger short
-                    slot = broker._slot_size_for_score(
-                        portfolio_value, -pred.avg_sentiment, pred.bearish_count
-                    )
-
-                    if len(short_syms) >= _MAX_SHORTS:
-                        block_reason = f"short cap ({_MAX_SHORTS})"
-                    elif len(held_syms) >= _MAX_POSITIONS:
-                        block_reason = f"position cap ({_MAX_POSITIONS})"
-                    elif cash < slot:
-                        block_reason = "insufficient cash"
-                    elif self._sector_blocked(sym_sector, portfolio_state):
-                        block_reason = f"sector concentration ({sym_sector}={sector_conc:.0f}%)"
-                    else:
-                        can_short = await loop.run_in_executor(None, broker._can_short, sym)
-                        if can_short:
-                            action = "SHORT"
-                            if displacement_short:
-                                d_sym, d_score = displacement_short
-                                await self.bus.publish("trade.approved", {
-                                    "symbol": d_sym, "action": "CLOSE", "prediction": None,
-                                    "reason": "",
-                                    "portfolio_value": portfolio_value,
-                                })
-                                self.log.info(
-                                    "Displacement: closing %s (%.1f) for %s (%.1f)",
-                                    d_sym, d_score, sym, pred.overall_score,
-                                )
+                        self.log.info("Displacement: closing %s for %s (%.1f)",
+                                      displace_sym, sym, pred.overall_score)
+                else:
+                    block_reason = f"LLM: {llm_result.get('reasoning', 'blocked')}"
 
             if action and action != "CLOSE" and self._in_cooldown(sym):
                 self.log.info("Cooldown blocked: %s", sym)
@@ -245,37 +207,115 @@ class RiskAgent(BaseAgent):
 
             if action:
                 reason = (
-                    f"{pred.prediction} score={pred.overall_score:.1f} ≥ {threshold:.0f}"
-                    f" (VIX={vix:.1f} regime={regime})"
+                    f"{pred.prediction} score={pred.overall_score:.1f} "
+                    f"(VIX={vix:.1f} regime={regime})"
                     if action != "CLOSE"
                     else "BEARISH downgrade of long position"
                 )
                 self.log.info("Approved: %s %s — %s", sym, action, reason)
                 await self.bus.publish("trade.approved", {
-                    "symbol": sym,
-                    "action": action,
-                    "prediction": pred,
-                    "reason": reason,
+                    "symbol": sym, "action": action,
+                    "prediction": pred, "reason": reason,
                     "portfolio_value": portfolio_value,
+                    "critic_verdict": critic_verdict,
                 })
             elif block_reason:
-                self.log.info("Blocked %s [score=%.1f threshold=%.0f]: %s",
-                              sym, pred.overall_score, threshold, block_reason)
+                self.log.info("Blocked %s [score=%.1f]: %s",
+                              sym, pred.overall_score, block_reason)
 
         except Exception as exc:
             self.log.error("Risk error %s: %s", sym, exc)
 
     # ------------------------------------------------------------------
-    # Sector concentration hard block
+    # Build comprehensive context string for LLM
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _sector_blocked(sector: str, portfolio_state: dict) -> bool:
-        total = portfolio_state.get("total_count", 0)
-        if total < 3:
-            return False
-        conc = portfolio_state.get("sector_concentration", {}).get(sector, 0.0)
-        return conc >= _SECTOR_CONCENTRATION_BLOCK
+    def _build_context(
+        sym: str,
+        pred,
+        direction: str,
+        now: datetime,
+        vix: float,
+        regime: str,
+        day_pnl_pct: float,
+        sym_sector: str,
+        portfolio_state: dict,
+        held_syms: set,
+        short_syms: set,
+        already_entered: set,
+        held_cache: dict,
+        buying_power: float,
+        slot: float,
+        shortable: bool | None,
+    ) -> str:
+        minutes_since_open = (now.hour - 9) * 60 + (now.minute - 30)
+        minutes_to_close = (16 * 60) - (now.hour * 60 + now.minute)
+
+        cache_dir = "LONG" if direction == "LONG" else "SHORT"
+        candidates = [
+            f"{s}(score={d.get('score', 0):.0f})"
+            for s, d in held_cache.items()
+            if d.get("direction") == cache_dir
+        ]
+
+        sector_breakdown = portfolio_state.get("sector_concentration", {})
+        top_sectors = sorted(sector_breakdown.items(), key=lambda x: x[1], reverse=True)[:5]
+        sector_str = ", ".join(f"{s}={v:.0f}%" for s, v in top_sectors) or "none"
+
+        financial = f"Buying power: ${buying_power:.0f} | Slot: ${slot:.0f}"
+        if shortable is not None:
+            financial += f" | {'Shortable: YES' if shortable else 'Shortable: NO'}"
+
+        asset_note = " | Asset=CRYPTO" if "/" in sym else ""
+        return (
+            f"Trade: {sym}{asset_note} | Direction={direction} | Score={pred.overall_score:.1f}\n"
+            f"Time: {now.strftime('%H:%M ET')} | "
+            f"{minutes_since_open}min since open | {minutes_to_close}min to close\n"
+            f"Already in position: {'YES' if sym in already_entered else 'no'}\n"
+            f"Portfolio: {len(held_syms)} positions ({len(short_syms)} shorts) | "
+            f"Soft limits: ≤8 total, ≤8 shorts\n"
+            f"Displacement candidates ({direction}): "
+            f"{', '.join(candidates) if candidates else 'none'}\n"
+            f"{financial}\n"
+            f"Market: VIX={vix:.1f} | Regime={regime} | Day P&L={day_pnl_pct:+.1f}%\n"
+            f"Sector: {sym_sector} ({sector_breakdown.get(sym_sector, 0.0):.0f}% of portfolio) | "
+            f"Breakdown: {sector_str}\n"
+            f"Signal reasoning: {'; '.join(pred.reasoning[:2])}"
+        )
+
+    # ------------------------------------------------------------------
+    # LLM risk decision — runs in executor (blocking Bedrock call)
+    # ------------------------------------------------------------------
+
+    def _llm_risk_decision(self, sym: str, context: str) -> dict:
+        """Returns {"decision": "APPROVE"|"BLOCK", "displace": str|None, "reasoning": str}."""
+        try:
+            resp = self.get_bedrock(self._region).converse(
+                modelId=_HAIKU_MODEL,
+                system=[{"text": load_optimized_prompt("risk_system", _RISK_SYSTEM_PROMPT)}],
+                messages=[{"role": "user", "content": [{"text": context}]}],
+                inferenceConfig={"maxTokens": 200, "temperature": 0.1},
+            )
+            content = resp.get("output", {}).get("message", {}).get("content", [])
+            text = content[0]["text"].strip() if content else ""
+            if text.startswith("```"):
+                text = re.sub(r"^```[a-z]*\n?", "", text).rstrip("`").strip()
+            m = re.search(r"\{.*\}", text, re.DOTALL)
+            if m:
+                result = json.loads(m.group())
+                displace = result.get("displace")
+                if displace in (None, "null", "", "none"):
+                    result["displace"] = None
+                self.log.debug(
+                    "LLM risk %s → %s  displace=%s  (%s)",
+                    sym, result.get("decision"), result.get("displace"),
+                    result.get("reasoning"),
+                )
+                return result
+        except Exception as exc:
+            self.log.warning("LLM risk failed %s: %s — defaulting BLOCK", sym, exc)
+        return {"decision": "BLOCK", "displace": None, "reasoning": "llm unavailable"}
 
     # ------------------------------------------------------------------
     # Position alert → CLOSE or re-trigger screener
@@ -285,26 +325,120 @@ class RiskAgent(BaseAgent):
         sym = data["symbol"]
         alert_type = data["alert_type"]
 
-        if alert_type == "EARNINGS":
-            await self.bus.publish("trade.approved", {
-                "symbol": sym,
-                "action": "CLOSE",
-                "prediction": None,
-                "reason": data["detail"],
-                "portfolio_value": 0,
-            })
+        if alert_type == "EARNINGS_REPORTED":
+            asyncio.create_task(self._analyze_earnings(data))
         elif alert_type == "REEVAL":
             await self.bus.publish("market.signal", {
-                "symbol": sym,
-                "price": 0,
-                "rvol": 1.5,
-                "price_change_pct": 0,
-                "trigger_type": "REEVAL",
+                "symbol": sym, "price": 0, "rvol": 1.5,
+                "price_change_pct": 0, "trigger_type": "REEVAL",
                 "timestamp": datetime.now(_ET).isoformat(),
             })
 
     # ------------------------------------------------------------------
-    # Cooldown check
+    # Earnings analysis — Haiku decides HOLD or CLOSE after results land
+    # ------------------------------------------------------------------
+
+    async def _analyze_earnings(self, data: dict) -> None:
+        sym = data["symbol"]
+        loop = asyncio.get_running_loop()
+        try:
+            broker = self._get_broker()
+            if not broker.client:
+                return
+
+            positions = await loop.run_in_executor(None, broker.client.get_all_positions)
+            pos = next((p for p in positions if p.symbol == sym), None)
+            if not pos:
+                return  # Position already closed
+
+            from stock_sentiment.agents.broker import _is_long_position
+            direction = "LONG" if _is_long_position(pos) else "SHORT"
+            pnl_pct = float(pos.unrealized_plpc) * 100
+
+            headlines = await loop.run_in_executor(None, self._fetch_earnings_news, sym)
+            result = await loop.run_in_executor(
+                None, self._llm_earnings_decision, sym, data, direction, pnl_pct, headlines
+            )
+
+            decision = result.get("decision", "HOLD")
+            reasoning = result.get("reasoning", "")
+            self.log.info("Earnings decision %s: %s — %s", sym, decision, reasoning)
+
+            if decision == "CLOSE":
+                account = await loop.run_in_executor(None, broker.client.get_account)
+                await self.bus.publish("trade.approved", {
+                    "symbol": sym, "action": "CLOSE",
+                    "prediction": None,
+                    "reason": f"Earnings analysis: {reasoning}",
+                    "portfolio_value": float(account.equity),
+                })
+        except Exception as exc:
+            self.log.error("Earnings analysis error %s: %s", sym, exc)
+
+    def _fetch_earnings_news(self, sym: str) -> str:
+        """Fetch last 24 h of news headlines for the earnings decision context."""
+        try:
+            import os as _os
+            import datetime as _dt
+            from datetime import timezone as _tz
+            polygon_key = _os.environ.get("POLYGON_API_KEY", "")
+            if not polygon_key:
+                return "No news (POLYGON_API_KEY not set)"
+            import polygon  # type: ignore[import-untyped]
+            client = polygon.RESTClient(api_key=polygon_key)
+            since = (_dt.datetime.now(_tz.utc) - _dt.timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            articles = list(client.list_ticker_news(
+                ticker=sym, published_utc_gte=since,
+                limit=8, sort="published_utc", order="desc",
+            ))
+            if not articles:
+                return "No recent news"
+            lines = [
+                f"- {a.title} ({a.publisher.name if a.publisher else '?'})"
+                for a in articles[:8]
+            ]
+            return "\n".join(lines)
+        except Exception as exc:
+            self.log.debug("Earnings news fetch failed %s: %s", sym, exc)
+            return "News fetch failed"
+
+    def _llm_earnings_decision(
+        self, sym: str, data: dict, direction: str, pnl_pct: float, headlines: str
+    ) -> dict:
+        reported = data.get("reported_eps")
+        estimate = data.get("estimated_eps")
+        surprise = data.get("surprise_pct", 0.0)
+
+        eps_line = f"Reported EPS: {reported:.2f}" if reported is not None else "EPS: unknown"
+        if estimate is not None:
+            eps_line += f" vs estimate {estimate:.2f}  (surprise {surprise:+.1f}%)"
+
+        context = (
+            f"Symbol: {sym} | Direction: {direction} | Current P&L: {pnl_pct:+.1f}%\n"
+            f"Earnings date: {data.get('earnings_date', 'today')}\n"
+            f"{eps_line}\n\n"
+            f"Recent news headlines (last 24 h):\n{headlines}"
+        )
+        try:
+            resp = self.get_bedrock(self._region).converse(
+                modelId=_HAIKU_MODEL,
+                system=[{"text": _EARNINGS_SYSTEM_PROMPT}],
+                messages=[{"role": "user", "content": [{"text": context}]}],
+                inferenceConfig={"maxTokens": 150, "temperature": 0.1},
+            )
+            content = resp.get("output", {}).get("message", {}).get("content", [])
+            text = content[0]["text"].strip() if content else ""
+            if text.startswith("```"):
+                text = re.sub(r"^```[a-z]*\n?", "", text).rstrip("`").strip()
+            m = re.search(r"\{.*\}", text, re.DOTALL)
+            if m:
+                return json.loads(m.group())
+        except Exception as exc:
+            self.log.warning("Earnings LLM failed %s: %s — defaulting HOLD", sym, exc)
+        return {"decision": "HOLD", "reasoning": "llm unavailable"}
+
+    # ------------------------------------------------------------------
+    # Cache helpers
     # ------------------------------------------------------------------
 
     @staticmethod
@@ -325,35 +459,6 @@ class RiskAgent(BaseAgent):
                 json.dump(cache, fh, indent=2)
         except Exception:
             pass
-
-    @staticmethod
-    def _find_displacement_target(
-        action: str, new_score: float, held_cache: dict
-    ) -> tuple[str, float] | None:
-        """Return (symbol, score) of the weakest same-direction position to displace, or None."""
-        if action == "BUY":
-            candidates = {
-                sym: data.get("score", 50.0)
-                for sym, data in held_cache.items()
-                if data.get("direction") == "LONG"
-            }
-            if not candidates:
-                return None
-            worst = min(candidates, key=candidates.__getitem__)
-            if new_score >= candidates[worst] + _DISPLACEMENT_MARGIN:
-                return worst, candidates[worst]
-        elif action == "SHORT":
-            candidates = {
-                sym: data.get("score", 50.0)
-                for sym, data in held_cache.items()
-                if data.get("direction") == "SHORT"
-            }
-            if not candidates:
-                return None
-            worst = max(candidates, key=candidates.__getitem__)
-            if new_score <= candidates[worst] - _DISPLACEMENT_MARGIN:
-                return worst, candidates[worst]
-        return None
 
     def _in_cooldown(self, sym: str) -> bool:
         try:

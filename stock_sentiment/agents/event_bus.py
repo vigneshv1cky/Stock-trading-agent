@@ -24,12 +24,3 @@ class EventBus:
                 q.put_nowait(msg)
             except asyncio.QueueFull:
                 pass  # slow consumer — drop rather than block the publisher
-
-    def publish_nowait(self, topic: str, data: Any) -> None:
-        """Sync-safe fire-and-forget for use inside non-async callbacks."""
-        msg = {"topic": topic, "data": data, "ts": time.time()}
-        for q in self._queues.get(topic, []):
-            try:
-                q.put_nowait(msg)
-            except asyncio.QueueFull:
-                pass
