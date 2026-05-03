@@ -147,14 +147,6 @@ class ResearchAgent(BaseAgent):
 
         # ---- Claude synthesis ----
         try:
-            from .macro import MacroAgent
-            macro = MacroAgent.current
-            macro_note = (
-                f"Market: {macro.get('regime', 'UNKNOWN')} | "
-                f"VIX={macro.get('vix', 0):.1f} | "
-                f"SPY={macro.get('spy_change_pct', 0):+.1f}%"
-            ) if macro else "No macro data"
-
             user_text = (
                 f"{sym} | RVOL={result.get('rvol', 0):.1f}x "
                 f"price={result.get('price_change_pct', 0):+.1f}%\n"
@@ -162,8 +154,7 @@ class ResearchAgent(BaseAgent):
                 f"BB={result.get('bb_pct', 0):.2f} "
                 f"MACD_hist={result.get('macd_hist', 0):+.4f} "
                 f"ATR={result.get('atr_pct', 0):.1f}% "
-                f"vol_trend={result.get('vol_trend', 0):+.1%}\n"
-                f"{macro_note}"
+                f"vol_trend={result.get('vol_trend', 0):+.1%}"
             )
             resp = self.get_bedrock(self._region).converse(
                 modelId=_HAIKU_MODEL,
@@ -253,14 +244,6 @@ class ResearchAgent(BaseAgent):
             self.log.debug("Crypto technicals failed %s: %s", sym, exc)
 
         try:
-            from .macro import MacroAgent
-            macro = MacroAgent.current
-            macro_note = (
-                f"Market: {macro.get('regime', 'UNKNOWN')} | "
-                f"VIX={macro.get('vix', 0):.1f} | "
-                f"SPY={macro.get('spy_change_pct', 0):+.1f}%"
-            ) if macro else "No macro data"
-
             user_text = (
                 f"{sym} (crypto) | RVOL={result.get('rvol', 0):.1f}x "
                 f"price={result.get('price_change_pct', 0):+.1f}%\n"
@@ -268,8 +251,7 @@ class ResearchAgent(BaseAgent):
                 f"BB={result.get('bb_pct', 0):.2f} "
                 f"MACD_hist={result.get('macd_hist', 0):+.4f} "
                 f"ATR={result.get('atr_pct', 0):.1f}% "
-                f"vol_trend={result.get('vol_trend', 0):+.1%}\n"
-                f"{macro_note}"
+                f"vol_trend={result.get('vol_trend', 0):+.1%}"
             )
             resp = self.get_bedrock(self._region).converse(
                 modelId=_HAIKU_MODEL,

@@ -97,7 +97,15 @@ _SECTOR_MAP: dict[str, list[str]] = {
         # Autos
         "F", "GM", "PSNY",
         # Travel/leisure
-        "ABNB",
+        "ABNB", "BKNG", "EXPE",
+        # Cruise lines
+        "NCLH", "RCL", "CCL",
+        # Hotels
+        "MAR", "HLT", "H",
+        # Casinos / gaming
+        "MGM", "WYNN", "LVS", "CZR",
+        # Restaurants
+        "DPZ", "QSR", "YUM", "WEN",
         # Retail
         "TJX", "WING", "BURL", "FIVE",
         # Homebuilders
@@ -204,6 +212,7 @@ class PortfolioAgent(BaseAgent):
 
             self._update_state()
             await self.bus.publish("portfolio.state", PortfolioAgent.current)
+            self._log_book_summary()
 
     async def _publish_loop(self) -> None:
         while True:
@@ -246,3 +255,22 @@ class PortfolioAgent(BaseAgent):
                     "Sector concentration: %s at %.0f%% (%d/%d positions)",
                     dominant, max_conc, sector_counts.get(dominant, 0), total,
                 )
+
+    def _log_book_summary(self) -> None:
+        state = PortfolioAgent.current
+        total = state["total_count"]
+        if total == 0:
+            self.log.info("Portfolio: empty")
+            return
+        longs = [s for s, p in state["positions"].items() if p["direction"] == "LONG"]
+        shorts = [s for s, p in state["positions"].items() if p["direction"] == "SHORT"]
+        top_sectors = sorted(
+            state["sector_concentration"].items(), key=lambda x: x[1], reverse=True
+        )[:4]
+        sector_str = " ".join(f"{s}={v:.0f}%" for s, v in top_sectors)
+        self.log.info(
+            "Portfolio: %dL %dS | longs=[%s] shorts=[%s] | %s",
+            len(longs), len(shorts),
+            ",".join(longs), ",".join(shorts),
+            sector_str or "no sectors",
+        )

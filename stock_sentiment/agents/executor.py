@@ -37,6 +37,7 @@ class ExecutorAgent(BaseAgent):
         self._queue = bus.subscribe("trade.approved")
         self.dry_run = dry_run
         self._broker = None
+        self._held_cache_lock = asyncio.Lock()
         self._exec_log: dict = {
             "timestamp": "", "trigger": "AGENT",
             "bought": [], "sold": [], "shorted": [], "covered": [], "swapped": [],
@@ -98,7 +99,9 @@ class ExecutorAgent(BaseAgent):
                 self._save_held_cache(held)
                 return
 
-            # Backfill held_cache for any live position not already tracked
+            # Backfill held_cache for any live position not already tracked.
+            # Score=0 marks unknown-conviction positions so the LLM can displace them
+            # when a scored signal arrives (score=50 made every legacy position look strong).
             from datetime import datetime as _dt
             for pos in positions:
                 if pos.symbol not in held:
@@ -107,7 +110,7 @@ class ExecutorAgent(BaseAgent):
                         "type": "DAY",
                         "direction": "LONG" if is_long else "SHORT",
                         "entered_at": _dt.now(_ET).isoformat(),
-                        "score": 50.0,
+                        "score": 0.0,
                     }
 
             closed: list[str] = []
@@ -185,35 +188,34 @@ class ExecutorAgent(BaseAgent):
             return
 
         try:
-            held = self._load_held_cache()
-
             if action == "BUY":
+                self.log.info("Executor: submitting BUY %s (score=%.1f)", sym, pred.overall_score)
                 price, qty = await loop.run_in_executor(
                     None, lambda: broker._place_market_buy(
                         sym, pred.current_price, portfolio_value,
                         pred.avg_sentiment, pred.bullish_count,
                     )
                 )
+                if not qty:
+                    self.log.error("BUY %s FAILED — broker returned qty=0 (Alpaca rejected or price issue)", sym)
                 if qty:
-                    from .macro import MacroAgent
-                    _macro = MacroAgent.current
-                    held[sym] = {
-                        "type": "DAY",
-                        "direction": "LONG",
-                        "entered_at": datetime.now(_ET).isoformat(),
-                        "score": pred.overall_score,
-                        "rvol": getattr(pred, "volume_ratio", None),
-                        "rsi": getattr(pred, "rsi", None),
-                        "avg_sentiment": getattr(pred, "avg_sentiment", None),
-                        "change_today_pct": getattr(pred, "change_today_pct", None),
-                        "change_1w_pct": getattr(pred, "change_1w_pct", None),
-                        "regime": _macro.get("regime") if _macro else None,
-                        "vix": _macro.get("vix") if _macro else None,
-                        "critic_verdict": data.get("critic_verdict", ""),
-                        "approval_reason": data.get("reason", ""),
-                        "top_headlines": [h[0][:100] for h in (getattr(pred, "top_headlines", None) or [])[:3]],
-                    }
-                    self._save_held_cache(held)
+                    async with self._held_cache_lock:
+                        held = self._load_held_cache()
+                        held[sym] = {
+                            "type": "DAY",
+                            "direction": "LONG",
+                            "entered_at": datetime.now(_ET).isoformat(),
+                            "score": pred.overall_score,
+                            "rvol": getattr(pred, "volume_ratio", None),
+                            "rsi": getattr(pred, "rsi", None),
+                            "avg_sentiment": getattr(pred, "avg_sentiment", None),
+                            "change_today_pct": getattr(pred, "change_today_pct", None),
+                            "change_1w_pct": getattr(pred, "change_1w_pct", None),
+                            "critic_verdict": data.get("critic_verdict", ""),
+                            "approval_reason": data.get("reason", ""),
+                            "top_headlines": [h[0][:100] for h in (getattr(pred, "top_headlines", None) or [])[:3]],
+                        }
+                        self._save_held_cache(held)
                     self._exec_log["bought"].append({"symbol": sym, "price": price, "qty": qty})
                     self._flush_log()
                     self._append_history({"action": "BUY", "symbol": sym, "price": price, "qty": qty})
@@ -232,24 +234,22 @@ class ExecutorAgent(BaseAgent):
                     )
                 )
                 if qty:
-                    from .macro import MacroAgent
-                    _macro = MacroAgent.current
-                    held[sym] = {
-                        "type": "DAY", "direction": "SHORT",
-                        "entered_at": datetime.now(_ET).isoformat(),
-                        "score": pred.overall_score,
-                        "rvol": getattr(pred, "volume_ratio", None),
-                        "rsi": getattr(pred, "rsi", None),
-                        "avg_sentiment": getattr(pred, "avg_sentiment", None),
-                        "change_today_pct": getattr(pred, "change_today_pct", None),
-                        "change_1w_pct": getattr(pred, "change_1w_pct", None),
-                        "regime": _macro.get("regime") if _macro else None,
-                        "vix": _macro.get("vix") if _macro else None,
-                        "critic_verdict": data.get("critic_verdict", ""),
-                        "approval_reason": data.get("reason", ""),
-                        "top_headlines": [h[0][:100] for h in (getattr(pred, "top_headlines", None) or [])[:3]],
-                    }
-                    self._save_held_cache(held)
+                    async with self._held_cache_lock:
+                        held = self._load_held_cache()
+                        held[sym] = {
+                            "type": "DAY", "direction": "SHORT",
+                            "entered_at": datetime.now(_ET).isoformat(),
+                            "score": pred.overall_score,
+                            "rvol": getattr(pred, "volume_ratio", None),
+                            "rsi": getattr(pred, "rsi", None),
+                            "avg_sentiment": getattr(pred, "avg_sentiment", None),
+                            "change_today_pct": getattr(pred, "change_today_pct", None),
+                            "change_1w_pct": getattr(pred, "change_1w_pct", None),
+                            "critic_verdict": data.get("critic_verdict", ""),
+                            "approval_reason": data.get("reason", ""),
+                            "top_headlines": [h[0][:100] for h in (getattr(pred, "top_headlines", None) or [])[:3]],
+                        }
+                        self._save_held_cache(held)
                     self._exec_log["shorted"].append({"symbol": sym, "price": price, "qty": qty})
                     self._flush_log()
                     self._append_history({"action": "SHORT", "symbol": sym, "price": price, "qty": qty})
@@ -276,7 +276,9 @@ class ExecutorAgent(BaseAgent):
                             break
                 except Exception:
                     pass
-                cache_entry = held.get(sym, {})
+                async with self._held_cache_lock:
+                    held = self._load_held_cache()
+                    cache_entry = held.get(sym, {})
                 hold_min = None
                 try:
                     entered = datetime.fromisoformat(cache_entry["entered_at"])
@@ -284,8 +286,10 @@ class ExecutorAgent(BaseAgent):
                 except Exception:
                     pass
                 await loop.run_in_executor(None, broker._close_position_safely, sym)
-                held.pop(sym, None)
-                self._save_held_cache(held)
+                async with self._held_cache_lock:
+                    held = self._load_held_cache()
+                    held.pop(sym, None)
+                    self._save_held_cache(held)
                 reason = data.get("reason", "")
                 self._exec_log["sold"].append({
                     "symbol": sym, "reason": reason,
@@ -319,8 +323,6 @@ class ExecutorAgent(BaseAgent):
                     "avg_sentiment": cache_entry.get("avg_sentiment"),
                     "change_today_pct": cache_entry.get("change_today_pct"),
                     "change_1w_pct": cache_entry.get("change_1w_pct"),
-                    "regime_at_entry": cache_entry.get("regime"),
-                    "vix_at_entry": cache_entry.get("vix"),
                     "top_headlines": cache_entry.get("top_headlines", []),
                     "approval_reason": cache_entry.get("approval_reason", ""),
                 })
@@ -343,6 +345,18 @@ class ExecutorAgent(BaseAgent):
             try:
                 positions = await loop.run_in_executor(None, broker.client.get_all_positions)
                 open_orders = await loop.run_in_executor(None, broker.client.get_orders)
+
+                # Reconcile held_cache against live positions — catches manual liquidations
+                live_syms = {p.symbol for p in positions}
+                async with self._held_cache_lock:
+                    held = self._load_held_cache()
+                    removed = [s for s in list(held.keys()) if s not in live_syms]
+                    for s in removed:
+                        held.pop(s)
+                    if removed:
+                        self._save_held_cache(held)
+                        self.log.info("Cache reconcile: removed manually-closed %s", ", ".join(removed))
+
                 stopped_syms = {o.symbol for o in open_orders}
                 for pos in positions:
                     if pos.symbol in stopped_syms:
@@ -430,8 +444,6 @@ class ExecutorAgent(BaseAgent):
                             "rvol": cache_entry.get("rvol"),
                             "rsi": cache_entry.get("rsi"),
                             "avg_sentiment": cache_entry.get("avg_sentiment"),
-                            "regime_at_entry": cache_entry.get("regime"),
-                            "vix_at_entry": cache_entry.get("vix"),
                             "top_headlines": cache_entry.get("top_headlines", []),
                             "approval_reason": cache_entry.get("approval_reason", ""),
                         })

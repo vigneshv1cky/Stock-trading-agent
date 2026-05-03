@@ -6,8 +6,8 @@ so signals fire even on low-volatility days when nothing crosses the RVOL gate.
 Publishes to: market.signal  (same topic as WatcherAgent — reuses full pipeline)
 
 Scan logic (looser than WatcherAgent to surface quieter setups):
-  • RVOL ≥ 1.2×  (vs WatcherAgent's 1.5×)
-  • |price change from open| ≥ 1.0%  (vs 2.0%)
+  • RVOL ≥ 1.5×  (vs WatcherAgent's 2.0×)
+  • |price change from open| ≥ 1.5%  (vs 2.0%)
   • Not already held, not in cooldown
   • Only during 9:45 AM – 3:30 PM ET
   • 15-min per-symbol debounce (avoids flooding pipeline every scan)
@@ -28,8 +28,8 @@ from .base import BaseAgent
 from .event_bus import EventBus
 
 _SCAN_INTERVAL_S  = 900      # scan every 15 min
-_RVOL_MIN         = 1.2      # looser than WatcherAgent (1.5)
-_MOVE_MIN_PCT     = 1.0      # looser than WatcherAgent (2.0%)
+_RVOL_MIN         = 1.5      # looser than WatcherAgent (2.0)
+_MOVE_MIN_PCT     = 1.5      # looser than WatcherAgent (2.0%)
 _DEBOUNCE_S       = 900      # don't re-signal same symbol within 15 min
 _OPEN_GATE_MIN    = 15       # skip first 15 min (9:30–9:45)
 _CLOSE_GATE_MIN   = 30       # skip last 30 min before 4 PM
@@ -74,13 +74,8 @@ class ScannerAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     def _scan(self, loop: asyncio.AbstractEventLoop) -> int:
-        from .macro import MacroAgent
-
-        macro  = MacroAgent.current
-        regime = macro.get("regime", "NEUTRAL") if macro else "NEUTRAL"
-
-        rvol_min = _RVOL_MIN * (1.2 if regime == "RISK_OFF" else 1.5 if regime == "PANIC" else 1.0)
-        move_min = _MOVE_MIN_PCT * (1.2 if regime == "RISK_OFF" else 1.5 if regime == "PANIC" else 1.0)
+        rvol_min = _RVOL_MIN
+        move_min = _MOVE_MIN_PCT
 
         held_syms = self._load_held_syms()
 
@@ -133,13 +128,14 @@ class ScannerAgent(BaseAgent):
                         "price":            current_price,
                         "rvol":             round(rvol, 2),
                         "price_change_pct": round(price_change_pct, 2),
+                        "vol_direction":    "UP" if price_change_pct > 0 else "DOWN",
                         "trigger_type":     "SCAN",
                         "timestamp":        now_et.isoformat(),
                     }),
                     loop,
                 )
-                self.log.info("Scan signal: %s  RVOL=%.1fx  change=%+.1f%%  regime=%s",
-                              sym, rvol, price_change_pct, regime)
+                self.log.info("Scan signal: %s  RVOL=%.1fx  change=%+.1f%%",
+                              sym, rvol, price_change_pct)
                 fired += 1
 
             except Exception:

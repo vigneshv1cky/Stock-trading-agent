@@ -26,12 +26,16 @@ except ImportError:
 
 from .base import BaseAgent
 from .event_bus import EventBus
-from .prompt_tuner import load_optimized_prompt
 
 _COOLDOWN_FILE = os.path.expanduser("~/.stock_screener/cooldowns.json")
 _HELD_CACHE = os.path.expanduser("~/.stock_screener/held_cache.json")
 
 _HAIKU_MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+
+# Directional exposure caps — enforced in code BEFORE the LLM call
+_MAX_LONGS = 7
+_MAX_SHORTS = 7
+_MAX_NET_SHORT = 3  # short_count - long_count must stay ≤ this for new short entries
 
 _EARNINGS_SYSTEM_PROMPT = (
     "You are a trading system analyst deciding whether to HOLD or CLOSE an existing position "
@@ -47,36 +51,28 @@ _EARNINGS_SYSTEM_PROMPT = (
     '{{"decision": "HOLD" or "CLOSE", "reasoning": "<one sentence>"}}'
 )
 _RISK_SYSTEM_PROMPT = (
-    "You are a risk manager for an algorithmic swing trading system. "
-    "Make a holistic APPROVE or BLOCK decision for the given trade signal.\n\n"
-    "TIME OF DAY:\n"
-    "  • First 15 min after open (before 9:45 AM ET): block most signals (gap-fill noise); "
-    "approve only if score ≥ 70\n"
-    "  • Last 60 min before close (after 3:00 PM ET): block new entries; "
-    "approve only if score ≥ 80 (exceptional setup)\n\n"
-    "POSITION LIMITS (soft targets: ≤8 total, ≤8 shorts):\n"
-    "  • Already in this symbol → BLOCK (no doubling into same name)\n"
-    "  • At the limit with displacement candidates → specify displace=SYMBOL "
-    "if new signal beats it by ≥10 score pts; otherwise BLOCK\n"
-    "  • At the limit with no displacement candidates → BLOCK\n\n"
-    "FINANCIAL FACTS:\n"
-    "  • Buying power < slot → BLOCK\n"
-    "  • Shortable: NO → BLOCK the short\n\n"
-    "MARKET CONDITIONS:\n"
-    "  • VIX <15: calm — score ≥25 for longs, ≥40 for shorts\n"
-    "  • VIX 15-25: normal — score ≥35 for longs, ≥50 for shorts\n"
-    "  • VIX 25-35: elevated — score ≥50 for longs, ≥65 for shorts\n"
-    "  • VIX >35: crisis — score ≥70 for longs; block most shorts\n"
-    "  • RISK_OFF regime: raise thresholds ~15 pts; PANIC: raise ~25 pts or block\n"
-    "  • RISK_ON with strong score: lean APPROVE\n"
-    "  • Day P&L < −2%: block new longs; Day P&L < −4%: block all new entries\n"
-    "  • Sector concentration >40% of portfolio: block more of that sector\n\n"
-    "CRYPTO ASSETS (symbol contains '/', e.g. BTC/USD):\n"
-    "  • LONG only — always BLOCK shorts on crypto\n"
-    "  • No time-of-day gate (crypto trades 24/7)\n"
-    "  • Score ≥50 required (higher noise floor vs equities)\n"
-    "  • PANIC regime: BLOCK all new crypto entries\n"
-    "  • Cap 2 crypto positions simultaneously\n\n"
+    "You are a position manager for an algorithmic trading system. "
+    "Gate 1 (signal strength) has already been verified in code — do NOT re-evaluate it. "
+    "Evaluate Gates 2-4 in order. If ALL pass, return APPROVE. Do not invent reasons to block.\n\n"
+    "GATE 2 — POSITION MANAGEMENT:\n"
+    "  • Already in position: YES → BLOCK\n"
+    "  • Directional headroom (from context): if long_slots_available > 0 for a LONG, or short_slots_available > 0 for a SHORT, "
+    "there is room without displacement.\n"
+    "  • Displacement needed when total_positions >= 10 OR the relevant directional cap has no slots left:\n"
+    "    - Find the candidate with the LOWEST score (shown sorted in context)\n"
+    "    - If that score is 5+ pts less than this signal's score → set displace=SYMBOL, APPROVE\n"
+    "    - If no candidate qualifies → BLOCK\n"
+    "  • IMPORTANT: Closing a SHORT to open a LONG (or vice versa) is valid displacement — it IMPROVES balance.\n"
+    "    If portfolio is all-SHORT and this is a LONG signal, displacing the weakest short is the correct action.\n"
+    "  • Buying power < slot size → BLOCK\n"
+    "  • Shortable: NO for a SHORT trade → BLOCK\n\n"
+    "GATE 3 — RISK LIMITS:\n"
+    "  • Day P&L below −2%: BLOCK new longs\n"
+    "  • Day P&L below −4%: BLOCK all new entries\n"
+    "  • Sector concentration above 40% and this trade adds more of that sector → BLOCK\n\n"
+    "GATE 4 — TIME (stocks only, not crypto):\n"
+    "  • Before 9:45 AM ET or after 3:25 PM ET → BLOCK\n\n"
+    "CRYPTO extra: LONG only, max 2 crypto positions, no time gate.\n\n"
     "Return ONLY valid JSON:\n"
     '{{"decision": "APPROVE" or "BLOCK", '
     '"displace": "<SYMBOL to close to make room, or null>", '
@@ -87,7 +83,7 @@ _RISK_SYSTEM_PROMPT = (
 class RiskAgent(BaseAgent):
     def __init__(self, bus: EventBus):
         super().__init__(bus, "RiskAgent")
-        self._queue = bus.subscribe("symbol.reviewed", "position.alert")
+        self._queue = bus.subscribe("symbol.predicted", "position.alert")
         self._broker = None
         self._region = os.environ.get("AWS_REGION", "us-east-1")
 
@@ -102,7 +98,7 @@ class RiskAgent(BaseAgent):
             msg = await self._queue.get()
             topic = msg["topic"]
             data = msg["data"]
-            if topic == "symbol.reviewed":
+            if topic == "symbol.predicted":
                 asyncio.create_task(self._evaluate(data))
             elif topic == "position.alert":
                 asyncio.create_task(self._handle_alert(data))
@@ -114,7 +110,6 @@ class RiskAgent(BaseAgent):
     async def _evaluate(self, data: dict) -> None:
         sym = data["symbol"]
         pred = data["prediction"]
-        critic_verdict = data.get("critic_verdict", "")
         loop = asyncio.get_running_loop()
         try:
             broker = self._get_broker()
@@ -122,7 +117,6 @@ class RiskAgent(BaseAgent):
                 return
 
             # ---- Fetch account and position state ----
-            vix = await loop.run_in_executor(None, broker._get_vix)
             account = await loop.run_in_executor(None, broker.client.get_account)
             positions = await loop.run_in_executor(None, broker.client.get_all_positions)
 
@@ -139,11 +133,10 @@ class RiskAgent(BaseAgent):
             # held_cache bridges the race-condition window between order submission
             # and Alpaca position confirmation — do not prune here.
             held_cache = self._load_held_cache()
-            already_entered = held_syms | set(held_cache.keys())
-
-            from .macro import MacroAgent
-            macro = MacroAgent.current
-            regime = macro.get("regime", "NEUTRAL") if macro else "NEUTRAL"
+            # Open orders (stops, pending fills) also block re-entry — prevents wash trades
+            open_orders = await loop.run_in_executor(None, broker.client.get_orders)
+            order_syms = {o.symbol for o in open_orders}
+            already_entered = held_syms | set(held_cache.keys()) | order_syms
 
             from .portfolio import PortfolioAgent, get_sector
             portfolio_state = PortfolioAgent.current
@@ -159,6 +152,34 @@ class RiskAgent(BaseAgent):
             else:
                 direction = "LONG" if pred.prediction == "BULLISH" else "SHORT"
 
+                # ---- Hard directional exposure caps — code gate, LLM cannot override ----
+                long_count = len(long_syms)
+                short_count = len(short_syms)
+                if direction == "SHORT" and short_count >= _MAX_SHORTS:
+                    self.log.info("Short cap: %s blocked (%d/%d shorts)", sym, short_count, _MAX_SHORTS)
+                    return
+                if direction == "SHORT" and (short_count - long_count) > _MAX_NET_SHORT:
+                    self.log.info("Net-short cap: %s blocked (net=%d, max %d)",
+                                  sym, short_count - long_count, _MAX_NET_SHORT)
+                    return
+                if direction == "LONG" and long_count >= _MAX_LONGS:
+                    self.log.info("Long cap: %s blocked (%d/%d longs)", sym, long_count, _MAX_LONGS)
+                    return
+
+                self.log.info(
+                    "Risk eval: %s %s score=%.1f | port=%d pos (%dL/%dS)",
+                    sym, direction, pred.overall_score,
+                    len(held_syms), long_count, short_count,
+                )
+
+                # ---- Gate 1: Signal strength — Python enforced, no LLM arithmetic ----
+                g1_ok, g1_reason = self._passes_gate1(
+                    pred.overall_score, direction, "/" in sym
+                )
+                if not g1_ok:
+                    self.log.info("Gate1 blocked %s: %s", sym, g1_reason)
+                    return
+
                 slot = broker._slot_size_for_score(
                     portfolio_value,
                     pred.avg_sentiment if direction == "LONG" else -pred.avg_sentiment,
@@ -172,19 +193,29 @@ class RiskAgent(BaseAgent):
 
                 context = self._build_context(
                     sym=sym, pred=pred, direction=direction,
-                    now=datetime.now(_ET), vix=vix, regime=regime,
+                    now=datetime.now(_ET),
                     day_pnl_pct=day_pnl_pct, sym_sector=sym_sector,
                     portfolio_state=portfolio_state, held_syms=held_syms,
-                    short_syms=short_syms, already_entered=already_entered,
+                    long_syms=long_syms, short_syms=short_syms,
+                    already_entered=already_entered,
                     held_cache=held_cache, buying_power=buying_power,
                     slot=slot, shortable=shortable,
+                    gate1_reason=g1_reason,
                 )
 
                 llm_result = await loop.run_in_executor(
                     None, self._llm_risk_decision, sym, context
                 )
 
-                if llm_result["decision"] == "APPROVE":
+                llm_decision = llm_result["decision"]
+                llm_reasoning = llm_result.get("reasoning", "")
+                self.log.info(
+                    "Risk LLM: %s %s %s → %s | %s",
+                    sym, direction, f"score={pred.overall_score:.0f}",
+                    llm_decision, llm_reasoning,
+                )
+
+                if llm_decision == "APPROVE":
                     action = "BUY" if direction == "LONG" else "SHORT"
 
                     displace_sym = llm_result.get("displace")
@@ -196,19 +227,29 @@ class RiskAgent(BaseAgent):
                             "prediction": None, "reason": "",
                             "portfolio_value": portfolio_value,
                         })
-                        self.log.info("Displacement: closing %s for %s (%.1f)",
-                                      displace_sym, sym, pred.overall_score)
+                        self.log.info("Displacement: closing %s to make room for %s",
+                                      displace_sym, sym)
                 else:
-                    block_reason = f"LLM: {llm_result.get('reasoning', 'blocked')}"
+                    block_reason = f"LLM: {llm_reasoning}"
 
             if action and action != "CLOSE" and self._in_cooldown(sym):
                 self.log.info("Cooldown blocked: %s", sym)
                 return
 
+            # Sector concentration hard check — post-LLM, pre-order (catches race where
+            # LLM approved before a parallel fill updated sector state)
+            if action in ("BUY", "SHORT"):
+                sector_conc = (portfolio_state or {}).get("sector_concentration", {})
+                current_pct = sector_conc.get(sym_sector, 0.0)
+                if current_pct >= 40.0:
+                    self.log.info("Sector post-check blocked %s: %s at %.0f%%",
+                                  sym, sym_sector, current_pct)
+                    action = None
+                    block_reason = f"Sector post-check: {sym_sector} already at {current_pct:.0f}%"
+
             if action:
                 reason = (
-                    f"{pred.prediction} score={pred.overall_score:.1f} "
-                    f"(VIX={vix:.1f} regime={regime})"
+                    f"{pred.prediction} score={pred.overall_score:.1f}"
                     if action != "CLOSE"
                     else "BEARISH downgrade of long position"
                 )
@@ -217,7 +258,7 @@ class RiskAgent(BaseAgent):
                     "symbol": sym, "action": action,
                     "prediction": pred, "reason": reason,
                     "portfolio_value": portfolio_value,
-                    "critic_verdict": critic_verdict,
+                    "critic_verdict": pred.prediction,
                 })
             elif block_reason:
                 self.log.info("Blocked %s [score=%.1f]: %s",
@@ -236,30 +277,32 @@ class RiskAgent(BaseAgent):
         pred,
         direction: str,
         now: datetime,
-        vix: float,
-        regime: str,
         day_pnl_pct: float,
         sym_sector: str,
         portfolio_state: dict,
         held_syms: set,
+        long_syms: set,
         short_syms: set,
         already_entered: set,
         held_cache: dict,
         buying_power: float,
         slot: float,
         shortable: bool | None,
+        gate1_reason: str = "",
     ) -> str:
         minutes_since_open = (now.hour - 9) * 60 + (now.minute - 30)
         minutes_to_close = (16 * 60) - (now.hour * 60 + now.minute)
 
-        cache_dir = "LONG" if direction == "LONG" else "SHORT"
-        candidates = [
-            f"{s}(score={d.get('score', 0):.0f})"
-            for s, d in held_cache.items()
-            if d.get("direction") == cache_dir
-        ]
+        # All held positions shown as candidates — LLM may displace any direction
+        candidates = sorted(
+            [
+                f"{s}({d.get('direction', '?')} score={d.get('score', 0):.0f})"
+                for s, d in held_cache.items()
+            ],
+            key=lambda x: float(x.split("score=")[1].rstrip(")"))
+        )
 
-        sector_breakdown = portfolio_state.get("sector_concentration", {})
+        sector_breakdown = portfolio_state.get("sector_concentration", {}) if portfolio_state else {}
         top_sectors = sorted(sector_breakdown.items(), key=lambda x: x[1], reverse=True)[:5]
         sector_str = ", ".join(f"{s}={v:.0f}%" for s, v in top_sectors) or "none"
 
@@ -268,21 +311,50 @@ class RiskAgent(BaseAgent):
             financial += f" | {'Shortable: YES' if shortable else 'Shortable: NO'}"
 
         asset_note = " | Asset=CRYPTO" if "/" in sym else ""
+        long_count, short_count = len(long_syms), len(short_syms)
+        total_count = len(held_syms)
+        long_slots = max(0, _MAX_LONGS - long_count)
+        short_slots = max(0, _MAX_SHORTS - short_count)
+        needs_displacement = total_count >= 10 or (
+            direction == "LONG" and long_slots == 0
+        ) or (
+            direction == "SHORT" and short_slots == 0
+        )
+        gate1_line = f"Gate 1 (signal strength): PASSED — {gate1_reason}\n" if gate1_reason else ""
         return (
+            f"{gate1_line}"
             f"Trade: {sym}{asset_note} | Direction={direction} | Score={pred.overall_score:.1f}\n"
             f"Time: {now.strftime('%H:%M ET')} | "
             f"{minutes_since_open}min since open | {minutes_to_close}min to close\n"
             f"Already in position: {'YES' if sym in already_entered else 'no'}\n"
-            f"Portfolio: {len(held_syms)} positions ({len(short_syms)} shorts) | "
-            f"Soft limits: ≤8 total, ≤8 shorts\n"
-            f"Displacement candidates ({direction}): "
+            f"Portfolio: {total_count} positions "
+            f"({long_count} longs, {short_count} shorts) | "
+            f"Slots available: {long_slots} long, {short_slots} short | "
+            f"Displacement needed: {'YES' if needs_displacement else 'no'}\n"
+            f"Displacement candidates (lowest score first): "
             f"{', '.join(candidates) if candidates else 'none'}\n"
             f"{financial}\n"
-            f"Market: VIX={vix:.1f} | Regime={regime} | Day P&L={day_pnl_pct:+.1f}%\n"
+            f"Day P&L={day_pnl_pct:+.1f}%\n"
             f"Sector: {sym_sector} ({sector_breakdown.get(sym_sector, 0.0):.0f}% of portfolio) | "
             f"Breakdown: {sector_str}\n"
             f"Signal reasoning: {'; '.join(pred.reasoning[:2])}"
         )
+
+    # ------------------------------------------------------------------
+    # Gate 1 — enforced in Python to avoid LLM arithmetic errors
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _passes_gate1(score: float, direction: str, is_crypto: bool) -> tuple[bool, str]:
+        if is_crypto:
+            if direction != "LONG":
+                return False, "crypto is LONG only"
+            ok = score >= 70
+            return ok, f"crypto LONG score {score:.0f} vs threshold 70"
+        if direction == "LONG":
+            return score >= 60, f"LONG score {score:.0f} vs threshold 60"
+        else:  # SHORT
+            return score <= 35, f"SHORT score {score:.0f} vs threshold ≤35"
 
     # ------------------------------------------------------------------
     # LLM risk decision — runs in executor (blocking Bedrock call)
@@ -293,7 +365,7 @@ class RiskAgent(BaseAgent):
         try:
             resp = self.get_bedrock(self._region).converse(
                 modelId=_HAIKU_MODEL,
-                system=[{"text": load_optimized_prompt("risk_system", _RISK_SYSTEM_PROMPT)}],
+                system=[{"text": _RISK_SYSTEM_PROMPT}],
                 messages=[{"role": "user", "content": [{"text": context}]}],
                 inferenceConfig={"maxTokens": 200, "temperature": 0.1},
             )
@@ -378,14 +450,19 @@ class RiskAgent(BaseAgent):
     def _fetch_earnings_news(self, sym: str) -> str:
         """Fetch last 24 h of news headlines for the earnings decision context."""
         try:
-            import os as _os
             import datetime as _dt
             from datetime import timezone as _tz
-            polygon_key = _os.environ.get("POLYGON_API_KEY", "")
+            polygon_key = os.environ.get("POLYGON_API_KEY", "")
             if not polygon_key:
                 return "No news (POLYGON_API_KEY not set)"
             import polygon  # type: ignore[import-untyped]
+            from requests.adapters import HTTPAdapter  # type: ignore[import-untyped]
             client = polygon.RESTClient(api_key=polygon_key)
+            try:
+                adapter = HTTPAdapter(pool_connections=2, pool_maxsize=10)
+                client.session.mount("https://", adapter)
+            except Exception:
+                pass
             since = (_dt.datetime.now(_tz.utc) - _dt.timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
             articles = list(client.list_ticker_news(
                 ticker=sym, published_utc_gte=since,

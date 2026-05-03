@@ -15,8 +15,8 @@ from .event_bus import EventBus
 
 _UTC = timezone.utc
 
-_RVOL_THRESHOLD = 1
-_PRICE_MOVE_THRESHOLD = 0.5  # % — crypto noise floor (vs 0.7% for stocks)
+_RVOL_THRESHOLD = 1.5
+_PRICE_MOVE_THRESHOLD = 3.0  # % — crypto noise floor (higher volatility than equities)
 _SIGNAL_COOLDOWN_S = 1800  # 30 min — 24/7 market gets longer debounce
 _MINUTES_PER_DAY = 1440.0
 
@@ -193,6 +193,7 @@ class CryptoWatcherAgent(BaseAgent):
                 "price": price,
                 "rvol": rvol,
                 "price_change_pct": price_change_pct,
+                "vol_direction": "UP" if price_change_pct > 0 else "DOWN",
                 "trigger_type": "SIGNAL",
                 "asset_class": "crypto",
                 "timestamp": now_utc.isoformat(),

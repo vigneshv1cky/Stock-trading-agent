@@ -1,12 +1,9 @@
-"""ScreenerAgent — qualifies a single symbol on market.signal using quality and regime gates.
+"""ScreenerAgent — qualifies a single symbol on market.signal using quality gates.
 
-Improvements over the original bot version:
   • Quality filters: price ≥ $5, avg daily volume ≥ 100 k shares
   • Time-of-day gate: no new signals in first 15 min or last 15 min of session
-  • Relative strength: stock move vs its sector ETF (from MacroAgent)
-  • Volume direction: volume spike on up-bar is bullish, down-bar is suspect
-  • Macro-aware thresholds: RISK_OFF / PANIC require tighter RVOL + price move
-  • Earnings lookahead: 7-day soft warning (score penalty) vs 3-day hard block
+  • Signal gate: RVOL ≥ 1.5, |price change| ≥ 2.0% for stocks; RVOL ≥ 1.2, |price change| ≥ 2.5% for crypto (extreme RVOL ≥ 8x bypasses move gate)
+  • Earnings lookahead: soft context for LLM
 """
 
 import asyncio
@@ -49,13 +46,11 @@ _MARKET_OPEN_HOUR, _MARKET_OPEN_MIN = 9, 30
 _NO_ENTRY_OPEN_MIN = 15  # skip first 15 min (gap-fill noise)
 _NO_ENTRY_CLOSE_MIN = 15  # skip last 15 min before 4 PM close
 
-# Macro-regime multipliers for RVOL / price-move gate
-_REGIME_RVOL_MULT = {"RISK_ON": 1.0, "NEUTRAL": 1.0, "RISK_OFF": 1.3, "PANIC": 1.6}
-_REGIME_MOVE_MULT = {"RISK_ON": 1.0, "NEUTRAL": 1.0, "RISK_OFF": 1.2, "PANIC": 1.5}
-
 
 class ScreenerAgent(BaseAgent):
     _semaphore: asyncio.Semaphore = asyncio.Semaphore(5)
+    _last_screened: dict[str, float] = {}
+    _SCREEN_COOLDOWN_S: float = 300.0  # 5 min per symbol (non-REEVAL)
 
     def __init__(self, bus: EventBus):
         super().__init__(bus, "ScreenerAgent")
@@ -69,16 +64,25 @@ class ScreenerAgent(BaseAgent):
     async def _process(self, signal: dict) -> None:
         sym = signal["symbol"]
 
+        # Dedup: skip re-screening the same symbol within 5 min (Watcher+Scanner fire same symbols)
+        if signal.get("trigger_type") != "REEVAL":
+            now_mono = asyncio.get_event_loop().time()
+            last = ScreenerAgent._last_screened.get(sym, 0.0)
+            if now_mono - last < ScreenerAgent._SCREEN_COOLDOWN_S:
+                self.log.info("Dedup skip: %s (%.0fs ago)", sym, now_mono - last)
+                return
+            ScreenerAgent._last_screened[sym] = now_mono
+
         # Time-of-day gate — stocks only; crypto is 24/7
         if "/" not in sym:
             now = datetime.now(_ET)
             minutes_since_open = (now.hour - _MARKET_OPEN_HOUR) * 60 + (now.minute - _MARKET_OPEN_MIN)
             minutes_to_close = (16 * 60) - (now.hour * 60 + now.minute)
             if minutes_since_open < _NO_ENTRY_OPEN_MIN:
-                self.log.debug("Time gate (open): %s at %s", sym, now.strftime("%H:%M"))
+                self.log.info("Time gate (open): %s at %s", sym, now.strftime("%H:%M"))
                 return
             if minutes_to_close < _NO_ENTRY_CLOSE_MIN:
-                self.log.debug("Time gate (close): %s at %s", sym, now.strftime("%H:%M"))
+                self.log.info("Time gate (close): %s at %s", sym, now.strftime("%H:%M"))
                 return
 
         loop = asyncio.get_running_loop()
@@ -87,16 +91,17 @@ class ScreenerAgent(BaseAgent):
                 stock = await loop.run_in_executor(None, self._screen, sym, signal)
             if stock:
                 self.log.info(
-                    "Screened: %s  RVOL=%.1fx  today=%+.1f%%  RS=%.1f%%  vol_dir=%s",
+                    "Screened ✓: %s  RVOL=%.1fx  today=%+.1f%%  vol_dir=%s  trigger=%s",
                     sym,
                     stock.volume_ratio,
                     stock.change_today_pct,
-                    stock.change_1w_pct,
                     signal.get("vol_direction", "?"),
+                    signal.get("trigger_type", "WATCH"),
                 )
                 await self.bus.publish("symbol.screened", {"symbol": sym, "screened_stock": stock, "signal": signal})
             else:
-                self.log.debug("Rejected: %s", sym)
+                self.log.info("Screened ✗: %s  RVOL=%.1fx  today=%+.1f%%  (below signal thresholds)",
+                              sym, signal.get("rvol", 0), signal.get("price_change_pct", 0))
         except Exception as exc:
             self.log.error("Screener error %s: %s", sym, exc)
 
@@ -108,11 +113,6 @@ class ScreenerAgent(BaseAgent):
         if "/" in sym:
             return self._screen_crypto(sym, signal)
         import yfinance as yf
-
-        from .macro import MacroAgent
-
-        macro = MacroAgent.current
-        regime = macro.get("regime", "NEUTRAL") if macro else "NEUTRAL"
 
         ticker = yf.Ticker(sym)
         df = ticker.history(period="3mo", auto_adjust=False)
@@ -133,19 +133,36 @@ class ScreenerAgent(BaseAgent):
             self.log.debug("Volume filter: %s avg=%.0f", sym, avg_vol)
             return None
 
+        trigger = signal.get("trigger_type", "")
+        is_reeval = trigger == "REEVAL"
+        is_news = trigger == "NEWS_CATALYST"
+
         rvol = signal["rvol"]
         change_today = signal["price_change_pct"]
 
-        # ---- Regime-adjusted RVOL / move thresholds ----
-        # REEVAL signals re-check an existing position — skip entry-quality gates
-        is_reeval = signal.get("trigger_type") == "REEVAL"
-        if not is_reeval:
-            rvol_min = 1.2 * _REGIME_RVOL_MULT.get(regime, 1.0)
-            move_min = 1.5 * _REGIME_MOVE_MULT.get(regime, 1.0)
+        # NEWS_CATALYST: compute real intraday metrics; skip if price already moved
+        # (a moved stock would be caught by WatcherAgent instead)
+        if is_news:
+            snapshot = self._fetch_intraday_snapshot(sym)
+            if snapshot:
+                open_p, cur_p_intra, day_vol = snapshot
+                if open_p > 0:
+                    change_today = (cur_p_intra - open_p) / open_p * 100
+                if abs(change_today) >= 1.5:
+                    self.log.debug("NEWS_CATALYST skip %s: already moved %+.1f%%",
+                                   sym, change_today)
+                    return None
+                now_et = datetime.now(_ET)
+                minutes_elapsed = max(1, (now_et.hour - 9) * 60 + (now_et.minute - 30))
+                expected_vol = avg_vol * (minutes_elapsed / 390.0)
+                rvol = day_vol / expected_vol if expected_vol > 0 else 0.0
+
+        # REEVAL and NEWS_CATALYST bypass the entry signal gate
+        if not is_reeval and not is_news:
             # Extreme RVOL (≥8x) overrides the price-move minimum — the volume IS the signal
             extreme_rvol = rvol >= 8.0
-            if rvol < rvol_min or (abs(change_today) < move_min and not extreme_rvol):
-                self.log.debug("Regime gate (%s): %s RVOL=%.1f move=%.1f%%", regime, sym, rvol, change_today)
+            if rvol < 1.5 or (abs(change_today) < 2.0 and not extreme_rvol):
+                self.log.debug("Signal gate: %s RVOL=%.1f move=%.1f%%", sym, rvol, change_today)
                 return None
 
         # ---- Momentum metrics ----
@@ -155,14 +172,6 @@ class ScreenerAgent(BaseAgent):
         change_3m = (cur_p - base_3m) / base_3m * 100 if base_3m > 0 else 0.0
         change_1m = (cur_p - base_1m) / base_1m * 100 if base_1m > 0 else 0.0
         change_1w = (cur_p - base_1w) / base_1w * 100 if base_1w > 0 else 0.0
-        # ---- Relative strength vs sector ----
-        rel_strength = self._relative_strength(sym, change_today, macro)
-        signal["rel_strength_vs_sector"] = rel_strength
-
-        # ---- PANIC regime: only allow extreme RVOL signals ----
-        if regime == "PANIC" and rvol < 5.0:
-            self.log.debug("Panic filter: dropping %s RVOL=%.1f", sym, rvol)
-            return None
 
         return ScreenedStock(
             symbol=sym,
@@ -176,6 +185,21 @@ class ScreenerAgent(BaseAgent):
             change_today_pct=change_today,
         )
 
+    @staticmethod
+    def _fetch_intraday_snapshot(sym: str) -> Optional[tuple[float, float, float]]:
+        """Returns (open_price, current_price, cumulative_volume) from today's 1-min bars."""
+        try:
+            import yfinance as yf
+            df = yf.Ticker(sym).history(period="1d", interval="1m")
+            if df is None or len(df) < 2:
+                return None
+            opens = df["Open"].astype(float)
+            closes = df["Close"].astype(float)
+            volumes = df["Volume"].astype(float)
+            return float(opens.iloc[0]), float(closes.iloc[-1]), float(volumes.sum())
+        except Exception:
+            return None
+
     # ------------------------------------------------------------------
     # Crypto screening — uses Alpaca Crypto Historical instead of yfinance
     # ------------------------------------------------------------------
@@ -188,11 +212,6 @@ class ScreenerAgent(BaseAgent):
         except ImportError:
             self.log.warning("alpaca-py not installed — cannot screen crypto %s", sym)
             return None
-
-        from .macro import MacroAgent
-
-        macro = MacroAgent.current
-        regime = macro.get("regime", "NEUTRAL") if macro else "NEUTRAL"
 
         try:
             from datetime import timezone as _tz
@@ -223,19 +242,9 @@ class ScreenerAgent(BaseAgent):
         is_reeval = signal.get("trigger_type") == "REEVAL"
 
         if not is_reeval:
-            rvol_min = 1.0 * _REGIME_RVOL_MULT.get(regime, 1.0)
-            move_min = 1.5 * _REGIME_MOVE_MULT.get(regime, 1.0)
             extreme_rvol = rvol >= 8.0
-            if rvol < rvol_min or (abs(change_today) < move_min and not extreme_rvol):
-                self.log.info(
-                    "Crypto rejected (%s): %s RVOL=%.1f(min=%.1f) move=%.1f%%(min=%.1f%%)",
-                    regime,
-                    sym,
-                    rvol,
-                    rvol_min,
-                    change_today,
-                    move_min,
-                )
+            if rvol < 1.2 or (abs(change_today) < 2.5 and not extreme_rvol):
+                self.log.info("Crypto rejected: %s RVOL=%.1f move=%.1f%%", sym, rvol, change_today)
                 return None
 
         base_3m = closes[0]
@@ -244,10 +253,6 @@ class ScreenerAgent(BaseAgent):
         change_3m = (cur_p - base_3m) / base_3m * 100 if base_3m > 0 else 0.0
         change_1m = (cur_p - base_1m) / base_1m * 100 if base_1m > 0 else 0.0
         change_1w = (cur_p - base_1w) / base_1w * 100 if base_1w > 0 else 0.0
-
-        if regime == "PANIC" and rvol < 5.0:
-            self.log.debug("Panic filter: dropping crypto %s RVOL=%.1f", sym, rvol)
-            return None
 
         return ScreenedStock(
             symbol=sym,
@@ -262,18 +267,3 @@ class ScreenerAgent(BaseAgent):
             asset_class="crypto",
         )
 
-    # ------------------------------------------------------------------
-    # Relative strength vs sector ETF (uses MacroAgent's sector data)
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _relative_strength(sym: str, stock_change_pct: float, macro: dict) -> float:
-        """Return stock_change - sector_change. Positive = outperforming sector."""
-        if not macro:
-            return 0.0
-        from .portfolio import get_sector
-
-        sector = get_sector(sym)
-        sector_perf = macro.get("sector_performance", {})
-        sector_change = sector_perf.get(sector, 0.0)
-        return round(stock_change_pct - sector_change, 2)

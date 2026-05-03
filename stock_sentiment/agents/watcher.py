@@ -1,6 +1,6 @@
 """WatcherAgent — streams 1-min bars from Alpaca WebSocket and fires market.signal events.
 
-Signal gate: RVOL ≥ 1.5 AND |intraday_change| ≥ 2 %
+Signal gate: RVOL ≥ 2.0 AND |intraday_change| ≥ 2.0%
 Debounce:    5-min per-symbol cooldown prevents pipeline spam.
 Fallback:    yfinance 1-min poll every 90 s when no Alpaca keys are set.
 """
@@ -19,8 +19,8 @@ except ImportError:
 from .base import BaseAgent
 from .event_bus import EventBus
 
-_RVOL_THRESHOLD = 1.5
-_PRICE_MOVE_THRESHOLD = 0.7   # % intraday
+_RVOL_THRESHOLD = 2.0
+_PRICE_MOVE_THRESHOLD = 2.0   # % intraday
 _SIGNAL_COOLDOWN_S = 300      # 5 min per symbol
 _TRADING_MINUTES = 390.0      # 6.5 h × 60
 
@@ -284,6 +284,7 @@ class WatcherAgent(BaseAgent):
             "price": price,
             "rvol": rvol,
             "price_change_pct": price_change_pct,
+            "vol_direction": "UP" if price_change_pct > 0 else "DOWN",
             "trigger_type": trigger,
             "timestamp": now_et.isoformat(),
         })

@@ -5,18 +5,16 @@ Usage:
     asyncio.run(Orchestrator(dry_run=True).run())   # no trade execution
 
 Agent pipeline:
-    MacroAgent          → macro.context        (market regime, every 5 min)
     WatcherAgent        → market.signal        (RVOL + price gate, reactive)
     ScannerAgent        → market.signal        (batch scan every 15 min, proactive)
     ScreenerAgent       → symbol.screened      (qualification + regime gates)
-    ResearchAgent       → symbol.researched    (options, technicals, short interest)
+    ResearchAgent       → symbol.researched    (technicals: RSI, BB, MACD, ATR)
     NewsAgent           → symbol.analysed      (Polygon + Haiku sentiment)
-    PredictorAgent      → symbol.predicted     (Haiku score)
-    CriticAgent         → symbol.reviewed      (adversarial Haiku)
+    PredictorAgent      → symbol.predicted     (Haiku 4-step conviction score)
     PortfolioAgent      → portfolio.state      (sector concentration tracking)
-    RiskAgent           → trade.approved       (VIX + concentration + cooldown)
+    RiskAgent           → trade.approved       (Gate 1 Python + Haiku Gates 2-4)
     ExecutorAgent       → trade.executed / trade.closed
-    LearningAgent       → memory.updated       (Sonnet reflection, global lessons)
+    LearningAgent       → memory.updated       (Haiku reflection, global lessons)
     MonitorAgent        → position.alert       (earnings + re-eval)
 """
 
@@ -24,16 +22,14 @@ import asyncio
 import logging
 import signal
 
-from .critic import CriticAgent
 from .crypto_watcher import CryptoWatcherAgent
 from .event_bus import EventBus
 from .executor import ExecutorAgent
 from .learning import LearningAgent
-from .macro import MacroAgent
 from .memory import AgentMemory
 from .monitor import MonitorAgent
 from .news import NewsAgent
-from .prompt_tuner import PromptTunerAgent
+from .news_watcher import NewsWatcherAgent
 from .portfolio import PortfolioAgent
 from .predictor import PredictorAgent
 from .research import ResearchAgent
@@ -134,20 +130,18 @@ class Orchestrator:
 
         from .base import BaseAgent
         agents: list[BaseAgent] = [
-            MacroAgent(self.bus),
             WatcherAgent(self.bus, stock_symbols),
             ScannerAgent(self.bus, stock_symbols),
             CryptoWatcherAgent(self.bus, crypto_symbols),
+            NewsWatcherAgent(self.bus, stock_symbols),
             ScreenerAgent(self.bus),
             ResearchAgent(self.bus),
             NewsAgent(self.bus),
             PredictorAgent(self.bus, self.memory),
-            CriticAgent(self.bus, self.memory),
             PortfolioAgent(self.bus),
             RiskAgent(self.bus),
             ExecutorAgent(self.bus, dry_run=self.dry_run),
             LearningAgent(self.bus, self.memory),
-            PromptTunerAgent(self.bus, self.memory),
             MonitorAgent(self.bus),
         ]
 
@@ -160,7 +154,7 @@ class Orchestrator:
         log.info(
             "Multi-agent trading system started [%s] — %d agents, %d stocks, %d crypto",
             run_mode, len(agents), len(stock_symbols), len(crypto_symbols),
-        )
+        )  # agent count is now dynamic — len(agents) is the source of truth
 
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGTERM, signal.SIGINT):

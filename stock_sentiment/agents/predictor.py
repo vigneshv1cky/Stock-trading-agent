@@ -29,15 +29,12 @@ except ImportError:
 from .base import BaseAgent
 from .event_bus import EventBus
 from .memory import AgentMemory
-from .prompt_tuner import load_optimized_prompt
 
 _HAIKU_MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
-# Red flag severity caps
-_SEVERITY_CAPS = {"NONE": 100, "MINOR": 100, "MODERATE": 0, "FATAL": -44}
+# Red flag severity caps (0-100 scale, 50 = neutral)
+_SEVERITY_CAPS = {"NONE": 100, "MINOR": 100, "MODERATE": 50, "FATAL": 20}
 
-# Minimum LLM confidence to publish a directional signal
-_MIN_CONFIDENCE = 35.0
 
 _SYSTEM_PROMPT = (
     "You are a quantitative equity analyst scoring a single stock for intraday swing trading. "
@@ -48,15 +45,16 @@ _SYSTEM_PROMPT = (
     "Weight today's news heavily. Flag second-order sector risks.\n"
     "STEP 3 – RISK FACTORS: List the top 2 risks. "
     "Consider: earnings proximity, high short interest squeeze risk, elevated IV, macro regime.\n"
-    "STEP 4 – FINAL SCORE: Synthesise steps 1-3 into a -100 to 100 score and a confidence level.\n\n"
-    "Scoring: 0=neutral, >20=BULLISH, <-20=BEARISH.\n"
+    "STEP 4 – FINAL SCORE: Synthesise steps 1-3 into a 0 to 100 score and a confidence level.\n\n"
+    "Scoring: 50=neutral, >60=BULLISH, <40=BEARISH.\n"
     "Assess the signal type yourself from the data: breakout, dip-buy, momentum, mean-reversion, or volume event. "
-    "For sharp intraday drops with company-specific bad news (earnings miss, guidance cut, downgrade): score strongly BEARISH. "
-    "If news is ABSENT, lean BEARISH unless RVOL ≥ 5x — unexplained volume spikes alone rarely justify a long.\n"
-    "Scoring: positive = BULLISH bias, negative = BEARISH bias. Be decisive — avoid scores near 0.\n"
-    "red_flag_severity: NONE | MINOR (no cap) | MODERATE (score capped 0) | FATAL (trade-blocking).\n"
+    "For sharp intraday drops with company-specific bad news (earnings miss, guidance cut, downgrade): score strongly BEARISH (low number). "
+    "If news is ABSENT, rely entirely on technicals and price/volume action — do NOT default to BEARISH. "
+    "A strong technical setup (RSI not overbought, MACD positive, RVOL ≥ 2x, price breakout) justifies BULLISH even without news.\n"
+    "Scoring: above 50 = BULLISH bias, below 50 = BEARISH bias. Be decisive — avoid scores near 50.\n"
+    "red_flag_severity: NONE | MINOR (no cap) | MODERATE (score capped 50) | FATAL (score capped 20, trade-blocking).\n"
     "confidence: 0-100, how certain you are in your score given available data.\n"
-    'Return ONLY valid JSON: {"score": <-100 to 100>, "confidence": <0-100>, '
+    'Return ONLY valid JSON: {"score": <0 to 100>, "confidence": <0-100>, '
     '"red_flag_severity": "NONE|MINOR|MODERATE|FATAL", "reasoning": "<2 sentences max>"}'
 )
 
@@ -106,14 +104,12 @@ class PredictorAgent(BaseAgent):
         articles = data["scored_articles"]
         loop = asyncio.get_running_loop()
         try:
-            from .macro import MacroAgent
             from .research import ResearchAgent
-            macro_ctx = MacroAgent.current
             research = ResearchAgent.get_cached(sym)
             sub = self._compute_sub_scores(stock, articles, research)
 
             llm = await loop.run_in_executor(
-                None, self._llm_score, stock, articles, sub, macro_ctx, research
+                None, self._llm_score, stock, articles, sub, research
             )
 
             llm_score = float(llm.get("score", 0.0))
@@ -125,27 +121,18 @@ class PredictorAgent(BaseAgent):
             cap = _SEVERITY_CAPS.get(severity, 100)
             score = min(score, float(cap))
 
-            # Confidence gate: AI not certain enough → skip this signal entirely
-            if llm_confidence < _MIN_CONFIDENCE:
-                self.log.debug("Low confidence (%.0f) — skipping %s", llm_confidence, sym)
+            # Skip neutral/ambiguous signals — score=50 means MODERATE cap hit or LLM fallback
+            if score == 50.0:
+                self.log.info("Predictor SKIP %s: score=50 (llm_score=%.0f severity=%s conf=%.0f)",
+                              sym, llm_score, severity, llm_confidence)
                 return
 
-            # Macro: drop BULLISH signals in PANIC regime entirely
-            regime = macro_ctx.get("regime", "NEUTRAL") if macro_ctx else "NEUTRAL"
-            if regime == "PANIC" and score >= 0:
-                self.log.debug("PANIC regime — dropping BULLISH signal for %s", sym)
-                return
-
-            rating = "BULLISH" if score >= 0 else "BEARISH"
+            rating = "BULLISH" if score > 50 else "BEARISH"
 
             reasoning: list[str] = [
                 f"RVOL: {stock.volume_ratio:.1f}x  Today: {stock.change_today_pct:+.1f}%",
                 f"LLM score={llm_score:.0f} confidence={llm_confidence:.0f}",
             ]
-            if macro_ctx:
-                reasoning.append(
-                    f"Macro: {regime} | VIX={macro_ctx.get('vix', 0):.1f}"
-                )
             if research and research.get("synthesis"):
                 reasoning.append(f"Research: {research['synthesis'][:120]}")
             if llm.get("reasoning"):
@@ -175,7 +162,6 @@ class PredictorAgent(BaseAgent):
         stock,
         articles,
         sub: dict,
-        macro_ctx: dict,
         research: Optional[dict],
     ) -> dict:
         now = datetime.now(_ET)
@@ -199,18 +185,6 @@ class PredictorAgent(BaseAgent):
             else ""
         )
 
-        macro_block = ""
-        if macro_ctx:
-            macro_block = (
-                f"\nMarket regime: {macro_ctx.get('regime')} | "
-                f"VIX={macro_ctx.get('vix', 0):.1f} | "
-                f"SPY={macro_ctx.get('spy_change_pct', 0):+.1f}% | "
-                f"QQQ={macro_ctx.get('qqq_change_pct', 0):+.1f}% | "
-                f"Breadth={macro_ctx.get('breadth')} | "
-                f"Leading: {', '.join(macro_ctx.get('leading_sectors', []))} | "
-                f"Lagging: {', '.join(macro_ctx.get('lagging_sectors', []))}"
-            )
-
         research_block = ""
         if research:
             research_block = (
@@ -229,7 +203,7 @@ class PredictorAgent(BaseAgent):
 
         user_text = (
             f"Current time: {now.strftime('%Y-%m-%d %H:%M ET')}\n"
-            f"{macro_block}{research_block}\n\n"
+            f"{research_block}\n\n"
             f"Stock: {stock.symbol}{earnings_note}\n"
             f"{signal} | 1w={stock.change_1w_pct:+.1f}% | "
             f"1m={stock.change_1m_pct:+.1f}% | 3m={stock.change_3m_pct:+.1f}%\n"
@@ -245,15 +219,15 @@ class PredictorAgent(BaseAgent):
         try:
             resp = self.get_bedrock(self._region).converse(
                 modelId=_HAIKU_MODEL,
-                system=[{"text": load_optimized_prompt("predictor_system", _SYSTEM_PROMPT)}],
+                system=[{"text": _SYSTEM_PROMPT}],
                 messages=[{"role": "user", "content": [{"text": user_text}]}],
                 inferenceConfig={"maxTokens": 600, "temperature": 0},
             )
-            return self._parse_response(resp, 0.0)
+            return self._parse_response(resp, 50.0)
         except Exception as exc:
             self.log.warning("LLM fallback %s: %s", stock.symbol, exc)
             return {
-                "score": 0.0,
+                "score": 50.0,
                 "confidence": 25.0,  # below _MIN_CONFIDENCE → signal skipped
                 "red_flag_severity": "NONE",
                 "reasoning": "",

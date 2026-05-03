@@ -1,9 +1,11 @@
+import logging
 import os
 import time
 
 from rich.console import Console
 
 console = Console()
+_log = logging.getLogger("PaperBroker")
 
 try:
     from alpaca.trading.client import TradingClient
@@ -164,8 +166,13 @@ class PaperBroker:
         Works for both long (market sell) and short (market buy to cover) positions."""
         try:
             open_orders = self.client.get_orders(filter=GetOrdersRequest(status=QueryOrderStatus.OPEN, symbols=[symbol]))
-            for order in open_orders:
-                self.client.cancel_order_by_id(order_id=order.id)
+            if open_orders:
+                for order in open_orders:
+                    try:
+                        self.client.cancel_order_by_id(order_id=order.id)
+                    except Exception:
+                        pass
+                time.sleep(1)  # let Alpaca process cancellations before closing
             self.client.close_position(symbol_or_asset_id=symbol)
         except Exception as e:
             console.print(f"  [red]✖  Error closing {symbol}: {e}[/red]")
@@ -247,13 +254,7 @@ class PaperBroker:
             console.print(f"  [dim]Skipping {symbol}: slot ${slot:.0f} < price ${live_price:.2f}[/dim]")
             return 0.0, 0.0
 
-        console.print(
-            f"  [green]✔  BUY {symbol}[/green]"
-            f"  [dim]slot=[/dim][bold]${slot:.0f}[/bold]"
-            f"  [dim]qty=[/dim][bold]{qty}[/bold]"
-            f"  [dim]@[/dim] ${live_price:.2f} [dim]({price_source})[/dim]"
-        )
-
+        _log.info("Submitting BUY %s  qty=%d  @$%.2f  slot=$%.0f", symbol, qty, live_price, slot)
         try:
             self.client.submit_order(MarketOrderRequest(
                 symbol=symbol,
@@ -261,11 +262,18 @@ class PaperBroker:
                 side=OrderSide.BUY,
                 time_in_force=TimeInForce.DAY,
             ))
+            console.print(
+                f"  [green]✔  BUY {symbol}[/green]"
+                f"  [dim]slot=[/dim][bold]${slot:.0f}[/bold]"
+                f"  [dim]qty=[/dim][bold]{qty}[/bold]"
+                f"  [dim]@[/dim] ${live_price:.2f} [dim]({price_source})[/dim]"
+            )
             placed = self._place_stop_for_new_position(symbol, qty, is_long=True, entry_price=live_price)
             if not placed:
                 console.print(f"  [yellow]⚠  {symbol} entered WITHOUT stop — audit will retry next cycle[/yellow]")
             return live_price, qty
         except Exception as e:
+            _log.error("BUY order REJECTED for %s: %s", symbol, e)
             console.print(f"  [red]✖  Market buy failed for {symbol}: {e}[/red]")
             return 0.0, 0.0
 
@@ -297,13 +305,7 @@ class PaperBroker:
             console.print(f"  [dim]Skipping short {symbol}: slot ${slot:.0f} < price ${live_price:.2f}[/dim]")
             return 0.0, 0.0
 
-        console.print(
-            f"  [red]✔  SHORT {symbol}[/red]"
-            f"  [dim]notional=[/dim][bold]${slot:.0f}[/bold]"
-            f"  [dim]≈[/dim][bold]{qty}[/bold]"
-            f"  [dim]@[/dim] ${live_price:.2f} [dim]({price_source})[/dim]"
-        )
-
+        _log.info("Submitting SHORT %s  qty=%d  @$%.2f  slot=$%.0f", symbol, qty, live_price, slot)
         try:
             self.client.submit_order(MarketOrderRequest(
                 symbol=symbol,
@@ -311,11 +313,18 @@ class PaperBroker:
                 side=OrderSide.SELL,
                 time_in_force=TimeInForce.DAY,
             ))
+            console.print(
+                f"  [red]✔  SHORT {symbol}[/red]"
+                f"  [dim]slot=[/dim][bold]${slot:.0f}[/bold]"
+                f"  [dim]qty=[/dim][bold]{qty}[/bold]"
+                f"  [dim]@[/dim] ${live_price:.2f} [dim]({price_source})[/dim]"
+            )
             time.sleep(2)  # wait for short fill before placing BUY stop (prevents wash-trade rejection)
             placed = self._place_stop_for_new_position(symbol, qty, is_long=False, entry_price=live_price)
             if not placed:
                 console.print(f"  [yellow]⚠  {symbol} shorted WITHOUT stop — audit will retry next cycle[/yellow]")
             return live_price, qty
         except Exception as e:
+            _log.error("SHORT order REJECTED for %s: %s", symbol, e)
             console.print(f"  [red]✖  Market short failed for {symbol}: {e}[/red]")
             return 0.0, 0.0
