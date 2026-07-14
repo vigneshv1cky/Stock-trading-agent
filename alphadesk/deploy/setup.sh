@@ -7,6 +7,21 @@ echo "── system packages ──"
 sudo apt-get update -qq
 sudo apt-get install -y -qq python3-venv python3-pip
 
+echo "── swap (small-host guard: LLM CLI spawns need headroom) ──"
+TOTAL_MB=$(free -m | awk '/^Mem:/{print $2}')
+if [[ "$TOTAL_MB" -lt 2048 && ! -f /swapfile ]]; then
+  echo "  ${TOTAL_MB}MB RAM detected — creating 3GB swapfile"
+  sudo fallocate -l 3G /swapfile
+  sudo chmod 600 /swapfile
+  sudo mkswap /swapfile >/dev/null
+  sudo swapon /swapfile
+  echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab >/dev/null
+  sudo sysctl -q vm.swappiness=10
+  echo 'vm.swappiness=10' | sudo tee /etc/sysctl.d/99-alphadesk.conf >/dev/null
+else
+  echo "  ${TOTAL_MB}MB RAM — no swap needed (or swapfile exists)"
+fi
+
 echo "── python venv + deps ──"
 python3 --version
 python3 -m venv .venv

@@ -53,7 +53,8 @@ for _role in list(MODEL_MAP):
 
 MAX_PICKS_PER_WINDOW = 5
 MAX_DEBATES_PER_DAY = 40
-MAX_CONCURRENT_WORKFLOWS = 4
+# env-overridable for small hosts (e.g. 1GB GCP e2-micro → set 1: debates queue)
+MAX_CONCURRENT_WORKFLOWS = int(os.environ.get("MAX_CONCURRENT_WORKFLOWS", "4"))
 SYMBOL_REPICK_COOLDOWN_MIN = 15
 SOLO_ARM_EVERY_N = 3            # every Nth pick also goes to the solo agent
 TRIAGE_WINDOW_S = 120
