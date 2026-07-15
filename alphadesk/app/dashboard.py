@@ -109,6 +109,31 @@ def api_graph():
     return Graph.default().summary()
 
 
+@app.get("/api/find-trades")
+async def api_find_trades(hours: float = 48.0, max_debates: int = 6):
+    """Server-Sent Events stream of a live 'Find Trades' run — the committee
+    scanning news and debating opportunities in real time."""
+    import json as _json
+
+    from fastapi.responses import StreamingResponse
+
+    from alphadesk.desk.stream import stream_find_trades
+
+    async def gen():
+        try:
+            async for event in stream_find_trades(hours=hours, max_debates=max_debates):
+                yield f"data: {_json.dumps(event)}\n\n"
+        except Exception as exc:  # never leave the client hanging
+            yield f"data: {_json.dumps({'type': 'status', 'msg': f'run error: {exc}'})}\n\n"
+            yield f"data: {_json.dumps({'type': 'done', 'board': []})}\n\n"
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 # ---------------------------------------------------------------------------
 # SPA — static bundle with index fallback (client handles the rest)
 # ---------------------------------------------------------------------------

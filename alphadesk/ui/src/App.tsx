@@ -8,6 +8,7 @@ import {
   type Stats,
   type TokenRow,
 } from "@/lib/api"
+import { FindTrades } from "@/components/FindTrades"
 import { PickSheet } from "@/components/PickSheet"
 import {
   Accordion,
@@ -87,6 +88,8 @@ export default function App() {
         </h1>
         {funnel?.paused && <Badge variant="destructive">PAUSED: {funnel.paused}</Badge>}
       </header>
+
+      <FindTrades onDone={refresh} />
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
         <StatCard

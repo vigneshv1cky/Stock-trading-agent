@@ -22,28 +22,38 @@ def _setup_logging() -> None:
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
-async def _run() -> None:
+def _web_server():
     import os
 
     import uvicorn
 
-    from alphadesk.app import scheduler
     from alphadesk.app.dashboard import app as dashboard_app
 
-    server = uvicorn.Server(uvicorn.Config(
+    return uvicorn.Server(uvicorn.Config(
         dashboard_app,
         host=os.environ.get("DASHBOARD_HOST", "127.0.0.1"),  # VM sets 0.0.0.0
         port=int(os.environ.get("DASHBOARD_PORT", "8000")),
         log_level="warning",
     ))
-    await asyncio.gather(scheduler.run_forever(), server.serve())
+
+
+async def _run() -> None:
+    """Legacy autonomous mode: 24/7 scheduler + dashboard."""
+    from alphadesk.app import scheduler
+    await asyncio.gather(scheduler.run_forever(), _web_server().serve())
+
+
+async def _serve() -> None:
+    """v2 on-demand mode: dashboard only. Trades run when you click the button."""
+    await _web_server().serve()
 
 
 def main() -> None:
     _setup_logging()
     parser = argparse.ArgumentParser(prog="alphadesk")
     sub = parser.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("run")
+    sub.add_parser("run", help="autonomous: 24/7 scheduler + dashboard (legacy)")
+    sub.add_parser("dashboard", help="v2 on-demand: dashboard only — trades run on button click")
     p_back = sub.add_parser("backfill")
     p_back.add_argument("--hours", type=float, default=72)
     p_desk = sub.add_parser("desk", help="convene the committee NOW on recent news")
@@ -61,6 +71,14 @@ def main() -> None:
         from alphadesk.ledger import store
         store.install_token_sink()
         asyncio.run(_run())
+    elif args.cmd == "dashboard":
+        from alphadesk.ledger import store
+        store.install_token_sink()
+        log = logging.getLogger("alphadesk")
+        log.info("Dashboard on http://%s:%s — click Find Trades to run",
+                 __import__("os").environ.get("DASHBOARD_HOST", "127.0.0.1"),
+                 __import__("os").environ.get("DASHBOARD_PORT", "8000"))
+        asyncio.run(_serve())
     elif args.cmd == "backfill":
         from alphadesk.ingest.news import catch_up
         from alphadesk.ledger import store
