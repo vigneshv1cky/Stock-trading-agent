@@ -41,6 +41,8 @@ interface BoardRow {
   verdict: string
   approved: boolean
   summary: string
+  take?: boolean
+  chief_reason?: string
 }
 
 const BUBBLE: Record<string, string> = {
@@ -144,19 +146,24 @@ export function FindTrades({ onDone }: { onDone: () => void }) {
   const [status, setStatus] = useState("")
   const [feed, setFeed] = useState<Ev[]>([])
   const [board, setBoard] = useState<BoardRow[] | null>(null)
+  const [chief, setChief] = useState<string>("")
   const esRef = useRef<EventSource | null>(null)
 
   function run() {
     setRunning(true)
     setFeed([])
     setBoard(null)
+    setChief("")
     setStatus("Starting…")
     const es = new EventSource("/api/find-trades?hours=48&max_debates=6")
     esRef.current = es
     es.onmessage = (e) => {
       const ev: Ev = JSON.parse(e.data)
       if (ev.type === "status") setStatus(ev.msg ?? "")
-      else if (ev.type === "done") {
+      else if (ev.type === "chief") {
+        setChief(ev.summary ?? "")
+        setBoard(ev.board ?? [])
+      } else if (ev.type === "done") {
         setBoard(ev.board ?? [])
         setRunning(false)
         es.close()
@@ -193,34 +200,48 @@ export function FindTrades({ onDone }: { onDone: () => void }) {
 
         {board && (
           <div className="mb-4 space-y-2">
+            {chief && (
+              <div className="rounded-md border-l-4 border-l-amber-500 bg-muted/40 p-3">
+                <div className="text-xs font-semibold uppercase tracking-wider text-amber-500">
+                  Chief Strategist — head-to-head read
+                </div>
+                <p className="mt-1 text-sm">{chief}</p>
+              </div>
+            )}
             <div className="text-sm font-semibold">
-              Opportunities found ({board.filter((b) => b.approved).length} on the book)
+              Ranked opportunities ({board.filter((b) => b.take).length} to take)
             </div>
-            {board.map((r) => (
+            {board.map((r, i) => (
               <div
                 key={r.id}
-                className="flex items-center gap-3 rounded-md border p-2.5 text-sm"
+                className={`rounded-md border p-2.5 text-sm ${r.take ? "border-green-700 bg-green-950/20" : "opacity-70"}`}
               >
-                {r.direction === "LONG" ? (
-                  <ArrowUp className="h-4 w-4 text-green-500" />
-                ) : (
-                  <ArrowDown className="h-4 w-4 text-red-500" />
-                )}
-                <span
-                  className={`font-bold ${r.direction === "LONG" ? "text-green-500" : "text-red-500"}`}
-                >
-                  {r.direction}
-                </span>
-                <span className="font-bold">{r.symbol}</span>
-                <Badge variant="secondary">{r.edge}</Badge>
-                <span className="text-muted-foreground">{r.horizon_days}d</span>
-                <span className="text-muted-foreground">conviction {r.conviction}</span>
-                {r.approved ? (
-                  <Badge className="ml-auto bg-green-600">ON THE BOOK</Badge>
-                ) : (
-                  <Badge variant="outline" className="ml-auto">
-                    rejected
-                  </Badge>
+                <div className="flex items-center gap-3">
+                  <span className="text-muted-foreground">#{i + 1}</span>
+                  {r.direction === "LONG" ? (
+                    <ArrowUp className="h-4 w-4 text-green-500" />
+                  ) : (
+                    <ArrowDown className="h-4 w-4 text-red-500" />
+                  )}
+                  <span
+                    className={`font-bold ${r.direction === "LONG" ? "text-green-500" : "text-red-500"}`}
+                  >
+                    {r.direction}
+                  </span>
+                  <span className="font-bold">{r.symbol}</span>
+                  <Badge variant="secondary">{r.edge}</Badge>
+                  <span className="text-muted-foreground">{r.horizon_days}d</span>
+                  <span className="text-muted-foreground">conv {r.conviction}</span>
+                  {r.take ? (
+                    <Badge className="ml-auto bg-green-600">TAKE</Badge>
+                  ) : (
+                    <Badge variant="outline" className="ml-auto">
+                      pass
+                    </Badge>
+                  )}
+                </div>
+                {r.chief_reason && (
+                  <p className="mt-1.5 pl-8 text-muted-foreground">{r.chief_reason}</p>
                 )}
               </div>
             ))}

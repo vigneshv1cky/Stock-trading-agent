@@ -151,6 +151,61 @@ def analyst_rebuttal(symbol: str, thesis: dict, concerns: list[dict],
                      decision_id=decision_id)
 
 
+_CHIEF_SYSTEM = (
+    "You are the Chief Strategist of a trading research desk. Your analysts have "
+    "each INDEPENDENTLY debated one opportunity and produced a call. Do NOT "
+    "re-analyze them — COMPARE them head-to-head and decide which are genuinely "
+    "the best to commit capital to right now.\n"
+    "Rules for comparison:\n"
+    "  • Conviction scores came from separate debates and are NOT directly "
+    "comparable — re-judge on one common standard.\n"
+    "  • Evidence QUALITY beats the raw number: a hard catalyst (confirmed "
+    "filing, earnings, signed policy) outranks a single-source rumor even at a "
+    "similar score.\n"
+    "  • REDUNDANCY/CORRELATION: if several ideas are effectively the same bet "
+    "(same sector, same driver, same direction), do NOT stack them — keep only "
+    "the best expression.\n"
+    "  • A weak slate means take fewer or none; a strong slate can support more.\n"
+    "Rank ALL ideas best-to-worst. Mark take=true ONLY for the ones you'd "
+    "actually put on. Give each a one-line COMPARATIVE reason (why it ranks "
+    "here versus the others).\n"
+    'Return ONLY JSON: {"ranked": [{"symbol": "<TICKER>", "take": true|false, '
+    '"reason": "..."}], "summary": "<your read of the whole slate, 2-3 sentences>"}'
+)
+
+_CHIEF_SCHEMA = {
+    "ranked": {
+        "type": list, "maxitems": 12,
+        "items": {
+            "symbol": {"type": str, "maxlen": 10},
+            "take": {"type": bool},
+            "reason": {"type": str, "maxlen": 300},
+        },
+    },
+    "summary": {"type": str, "maxlen": 800},
+}
+
+
+def chief_synthesis(opportunities: list[dict], decision_id: str | None) -> dict:
+    """Head-to-head comparison across all debated ideas → ranked selection.
+
+    `opportunities`: board rows with symbol, direction, horizon_days, edge,
+    conviction, confidence, verdict, summary (the arbiter's take).
+    """
+    lines = []
+    for o in opportunities:
+        lines.append(json.dumps({
+            "symbol": o["symbol"], "direction": o["direction"],
+            "horizon_days": o["horizon_days"], "edge": o.get("edge"),
+            "conviction": o.get("conviction"), "confidence": o.get("confidence"),
+            "verdict": o.get("verdict"), "committee_take": o.get("approved"),
+            "note": (o.get("summary") or "")[:300],
+        }))
+    user = "Debated opportunities to compare:\n" + wrap_data("ideas", "\n".join(lines))
+    return call_role("chief", _CHIEF_SYSTEM, user, schema=_CHIEF_SCHEMA,
+                     decision_id=decision_id)
+
+
 def arbiter_verdict(symbol: str, thesis: dict, concerns: list[dict], rebuttal: dict,
                     fact_flags: list[str], decision_id: str | None) -> dict:
     user = (

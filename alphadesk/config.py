@@ -40,6 +40,7 @@ MODEL_MAP: dict[str, str] = {
     "arbiter": "opus",         # final verdict
     "solo": "opus",            # single-agent control arm
     "synthesizer": "opus",     # daily Top-N ranking (Phase 2)
+    "chief": "opus",           # comparative head-to-head selection across debated ideas
 }
 
 for _role in list(MODEL_MAP):

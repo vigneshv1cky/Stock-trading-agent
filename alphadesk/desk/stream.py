@@ -182,5 +182,30 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6):
         board.append(row)
         yield _ev("decision", **row)
 
+    # Chief — genuine head-to-head comparison across every debated idea
+    # (not just sorting isolated conviction numbers). One Opus call.
+    if len(board) >= 1:
+        yield _ev("status", msg="Chief comparing all opportunities head-to-head…")
+        try:
+            chief = await loop.run_in_executor(
+                None, lambda: committee.chief_synthesis(board, "chief"))
+            ranking = {r["symbol"].upper(): r for r in chief.get("ranked", [])}
+            order = {r["symbol"].upper(): i for i, r in enumerate(chief.get("ranked", []))}
+            for row in board:
+                cr = ranking.get(row["symbol"].upper())
+                row["take"] = bool(cr["take"]) if cr else row["approved"]
+                row["chief_reason"] = cr["reason"] if cr else ""
+            board.sort(key=lambda r: order.get(r["symbol"].upper(), 999))
+            store.add_run("FIND_TRADES", board)
+            yield _ev("chief", board=board, summary=chief.get("summary", ""))
+            yield _ev("done", board=board)
+            return
+        except LLMError as exc:
+            log.warning("Chief synthesis failed (%s) — falling back to score sort", exc)
+
+    # fallback: no Chief → sort isolated scores
+    for row in board:
+        row["take"] = row["approved"]
+        row["chief_reason"] = ""
     board.sort(key=lambda r: (not r["approved"], -abs(r["conviction"] - 50)))
     yield _ev("done", board=board)

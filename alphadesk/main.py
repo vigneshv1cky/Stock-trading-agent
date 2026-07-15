@@ -44,8 +44,24 @@ async def _run() -> None:
 
 
 async def _serve() -> None:
-    """v2 on-demand mode: dashboard only. Trades run when you click the button."""
-    await _web_server().serve()
+    """v2 on-demand mode: dashboard + hourly portfolio grader (pure code, no
+    LLM). Trades run only when you click Find Trades; the grader keeps the
+    paper portfolio marking even while nothing else runs."""
+
+    async def _grader_loop():
+        from alphadesk.ledger.grader import grade_due
+        loop = asyncio.get_running_loop()
+        log = logging.getLogger("alphadesk.grader")
+        while True:
+            try:
+                n = await loop.run_in_executor(None, grade_due)
+                if n:
+                    log.info("Graded %d positions", n)
+            except Exception as exc:
+                log.error("grader error: %s", exc)
+            await asyncio.sleep(3600)
+
+    await asyncio.gather(_grader_loop(), _web_server().serve())
 
 
 def main() -> None:
