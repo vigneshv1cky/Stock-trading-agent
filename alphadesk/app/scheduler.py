@@ -30,6 +30,15 @@ log = logging.getLogger("alphadesk.scheduler")
 _pending: dict[str, list[dict]] = {}
 _paused_reason: str | None = None
 _batch_done: dict[str, str] = {}  # kind → date string of last run
+_last_heartbeat: float = 0.0      # monotonic ts of the last completed ingest cycle
+
+
+def heartbeat_age_s() -> float:
+    """Seconds since the ingest loop last completed a cycle (inf if never)."""
+    import time
+    if _last_heartbeat == 0.0:
+        return float("inf")
+    return time.monotonic() - _last_heartbeat
 
 
 def _merge_candidates(new: dict[str, list[dict]]) -> None:
@@ -45,6 +54,8 @@ def _drain_pending() -> dict[str, list[dict]]:
 
 
 async def _ingest_loop() -> None:
+    global _last_heartbeat
+    import time as _time
     since = datetime.now(timezone.utc) - timedelta(hours=2)
     while True:
         try:
@@ -53,6 +64,7 @@ async def _ingest_loop() -> None:
             since = datetime.now(timezone.utc) - timedelta(minutes=10)
             if candidates:
                 _merge_candidates(candidates)
+            _last_heartbeat = _time.monotonic()  # liveness for /healthz
         except Exception as exc:
             log.error("ingest loop error: %s", exc)
         await asyncio.sleep(NEWS_POLL_INTERVAL_S)

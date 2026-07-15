@@ -23,6 +23,10 @@ app = FastAPI(title="AlphaDesk")
 
 @app.middleware("http")
 async def _basic_auth(request: Request, call_next):
+    # /healthz is the ONLY unauthenticated path — the external watchdog's probe.
+    # It exposes liveness only, never data.
+    if request.url.path == "/healthz":
+        return await call_next(request)
     user = os.environ.get("ADMIN_USERNAME", "")
     password = os.environ.get("ADMIN_PASSWORD", "")
     if not user or not password:
@@ -43,6 +47,28 @@ async def _basic_auth(request: Request, call_next):
             "unauthorized", status_code=401, headers={"WWW-Authenticate": "Basic realm=alphadesk"}
         )
     return await call_next(request)
+
+
+@app.get("/healthz", include_in_schema=False)
+def healthz():
+    """Liveness for the GCP uptime check: 200 while the ingest loop is
+    cycling, 503 if it has been silent >30 min (hung loop / dead scheduler).
+    First 30 min after boot count as healthy (startup grace)."""
+    from alphadesk.app import scheduler
+    age = scheduler.heartbeat_age_s()
+    if age < 1800 or age == float("inf") and _process_age_s() < 1800:
+        return {"ok": True}
+    if age == float("inf"):
+        return Response("scheduler never ticked", status_code=503)
+    return Response(f"ingest silent {int(age)}s", status_code=503)
+
+
+_BOOT_MONO = __import__("time").monotonic()
+
+
+def _process_age_s() -> float:
+    import time
+    return time.monotonic() - _BOOT_MONO
 
 
 # ---------------------------------------------------------------------------

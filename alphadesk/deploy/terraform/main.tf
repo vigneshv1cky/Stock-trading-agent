@@ -109,3 +109,99 @@ output "external_ip" {
   value       = google_compute_instance.alphadesk.network_interface[0].access_config[0].nat_ip
   description = "SSH: ssh ubuntu@<this>; dashboard: http://<this>:8000"
 }
+
+# ---------------------------------------------------------------------------
+# Reliability: external watchdog (uptime check → email) + daily disk snapshots
+# ---------------------------------------------------------------------------
+
+variable "alert_email" {
+  description = "Email for engine-down alerts"
+  type        = string
+  default     = "muruganvignesh0810@gmail.com"
+}
+
+resource "google_project_service" "monitoring" {
+  service            = "monitoring.googleapis.com"
+  disable_on_destroy = false
+}
+
+resource "google_monitoring_notification_channel" "email" {
+  display_name = "alphadesk alerts"
+  type         = "email"
+  labels = {
+    email_address = var.alert_email
+  }
+  depends_on = [google_project_service.monitoring]
+}
+
+# Probes /healthz (the only unauthenticated path — liveness only) every 5 min
+resource "google_monitoring_uptime_check_config" "healthz" {
+  display_name = "alphadesk-healthz"
+  timeout      = "10s"
+  period       = "300s"
+
+  http_check {
+    path    = "/healthz"
+    port    = 8000
+    use_ssl = false
+  }
+
+  monitored_resource {
+    type = "uptime_url"
+    labels = {
+      project_id = var.project_id
+      host       = google_compute_instance.alphadesk.network_interface[0].access_config[0].nat_ip
+    }
+  }
+  depends_on = [google_project_service.monitoring]
+}
+
+resource "google_monitoring_alert_policy" "engine_down" {
+  display_name = "AlphaDesk engine down"
+  combiner     = "OR"
+
+  conditions {
+    display_name = "healthz failing"
+    condition_threshold {
+      filter          = "metric.type=\"monitoring.googleapis.com/uptime_check/check_passed\" AND metric.label.check_id=\"${google_monitoring_uptime_check_config.healthz.uptime_check_id}\" AND resource.type=\"uptime_url\""
+      comparison      = "COMPARISON_GT"
+      threshold_value = 1
+      duration        = "600s"
+      aggregations {
+        alignment_period     = "300s"
+        per_series_aligner   = "ALIGN_NEXT_OLDER"
+        cross_series_reducer = "REDUCE_COUNT_FALSE"
+        group_by_fields      = ["resource.label.*"]
+      }
+      trigger {
+        count = 1
+      }
+    }
+  }
+
+  notification_channels = [google_monitoring_notification_channel.email.id]
+}
+
+# Daily boot-disk snapshot (~03:00 ET), 7-day retention — the ledger's backup
+resource "google_compute_resource_policy" "daily_snapshot" {
+  name   = "alphadesk-daily-snapshot"
+  region = var.region
+
+  snapshot_schedule_policy {
+    schedule {
+      daily_schedule {
+        days_in_cycle = 1
+        start_time    = "07:00" # UTC
+      }
+    }
+    retention_policy {
+      max_retention_days = 7
+    }
+  }
+}
+
+resource "google_compute_disk_resource_policy_attachment" "boot_snapshots" {
+  name = google_compute_resource_policy.daily_snapshot.name
+  disk = google_compute_instance.alphadesk.name # boot disk inherits instance name
+  zone = var.zone
+}

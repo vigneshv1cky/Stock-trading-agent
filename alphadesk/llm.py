@@ -198,7 +198,13 @@ def _one_shot(model: str, system: str, user: str) -> tuple[str, int, int]:
                     raise RuntimeError(getattr(msg, "result", None) or "error result")
                 text = (getattr(msg, "result", "") or "").strip()
                 usage = getattr(msg, "usage", None) or {}
-                tin = int(usage.get("input_tokens", 0) or 0)
+                # full context size: fresh input + cache reads + cache writes
+                # (input_tokens alone wildly under-reports on the cached CLI)
+                tin = (
+                    int(usage.get("input_tokens", 0) or 0)
+                    + int(usage.get("cache_read_input_tokens", 0) or 0)
+                    + int(usage.get("cache_creation_input_tokens", 0) or 0)
+                )
                 tout = int(usage.get("output_tokens", 0) or 0)
         return text, tin, tout
 
