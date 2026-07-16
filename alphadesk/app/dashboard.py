@@ -110,10 +110,12 @@ def api_graph():
 
 
 @app.get("/api/find-trades")
-async def api_find_trades(hours: float = 48.0, max_debates: int = 6, expose: bool = True):
+async def api_find_trades(request: Request, hours: float = 48.0,
+                          max_debates: int = 6, expose: bool = False):
     """Server-Sent Events stream of a live 'Find Trades' run — the committee
-    scanning news and debating opportunities in real time. expose=True runs the
-    (heavier, web-grounded) Exposure Desk to surface supply-chain ripples."""
+    scanning news and debating opportunities in real time. expose=true runs the
+    (heavier, web-grounded) Exposure Desk to surface supply-chain ripples —
+    off by default to conserve quota."""
     import json as _json
 
     from fastapi.responses import StreamingResponse
@@ -122,7 +124,10 @@ async def api_find_trades(hours: float = 48.0, max_debates: int = 6, expose: boo
 
     async def gen():
         try:
-            async for event in stream_find_trades(hours=hours, max_debates=max_debates, expose=expose):
+            async for event in stream_find_trades(
+                hours=hours, max_debates=max_debates, expose=expose,
+                is_disconnected=request.is_disconnected,
+            ):
                 yield f"data: {_json.dumps(event)}\n\n"
         except Exception as exc:  # never leave the client hanging
             yield f"data: {_json.dumps({'type': 'status', 'msg': f'run error: {exc}'})}\n\n"

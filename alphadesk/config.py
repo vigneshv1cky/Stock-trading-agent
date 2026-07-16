@@ -42,6 +42,7 @@ MODEL_MAP: dict[str, str] = {
     "synthesizer": "opus",     # daily Top-N ranking (Phase 2)
     "chief": "opus",           # comparative head-to-head selection across debated ideas
     "exposure_specialist": "sonnet",  # supplier/customer/competitor mapping (web-grounded)
+    "exposure_synth": "opus",         # assembles ripple candidates from the mapped neighborhood
 }
 
 # Exposure Desk fires only on the top-N most material shocks per run (cost gate)
@@ -66,6 +67,8 @@ TRIAGE_WINDOW_S = 120
 NEWS_POLL_INTERVAL_S = 300
 LLM_TIMEOUT_S = 120
 LLM_TOOL_TIMEOUT_S = 300  # longer cap for tool-using calls (web-search round-trips)
+LLM_MAX_CONCURRENCY = int(os.environ.get("LLM_MAX_CONCURRENCY", "4"))  # caps concurrent CLI spawns (memory)
+USE_GRAPH = os.environ.get("ALPHADESK_GRAPH", "off").lower() in ("on", "1", "true")  # v2 drops Neo4j
 FRICTION_BPS_PER_SIDE = 15      # grading haircut; doubled for LOW_LIQUIDITY
 LOW_LIQUIDITY_DOLLAR_VOL = 10_000_000  # avg daily dollar volume below this → tag
 

@@ -56,10 +56,15 @@ def _intensity(articles: list[dict]) -> float:
     return abs(_avg_sentiment(articles)) * len(articles)
 
 
-async def stream_find_trades(hours: float = 48.0, max_debates: int = 6, expose: bool = True):
+async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
+                             expose: bool = False, is_disconnected=None):
     """Async generator of deliberation events. Broad news window (default 48h —
-    a batch run can afford to look far wider than the old live-tick engine)."""
+    a batch run can afford to look far wider than the old live-tick engine).
+    Stops early if the client disconnects (no more wasted LLM spend)."""
     loop = asyncio.get_running_loop()
+
+    async def _gone() -> bool:
+        return bool(is_disconnected and await is_disconnected())
 
     yield _ev("status", msg=f"Scanning the last {int(hours)}h of world + financial news…")
     since = datetime.now(timezone.utc).timestamp() - hours * 3600
@@ -84,7 +89,7 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6, expose: 
     # Exposure Desk — expand the most material shocks into ripple candidates
     # (the connected, tradable names that haven't moved). Gated to the top-N
     # most intense shocks for cost. Set expose=False for a light run.
-    if expose and candidates:
+    if expose and candidates and not await _gone():
         shocks = sorted(candidates.items(), key=lambda kv: -_intensity(kv[1]))
         shock_inputs = [
             (sym, " | ".join(a.get("title", "")[:120] for a in arts[:3]))
@@ -162,6 +167,9 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6, expose: 
 
     board: list[dict] = []
     for pick_idx, pick in enumerate(picks):
+        if await _gone():   # client closed the tab — stop burning quota
+            log.info("Find Trades client disconnected — stopping after %d debates", pick_idx)
+            return
         sym = pick["symbol"]
         decision_id = f"{sym}-{uuid.uuid4().hex[:8]}"
         price_ctx = window.get(sym, {}).get("price")

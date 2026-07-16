@@ -173,6 +173,7 @@ export function FindTrades({ onDone }: { onDone: () => void }) {
   const [feed, setFeed] = useState<Ev[]>([])
   const [board, setBoard] = useState<BoardRow[] | null>(null)
   const [chief, setChief] = useState<string>("")
+  const [deep, setDeep] = useState(false)
   const esRef = useRef<EventSource | null>(null)
 
   function run() {
@@ -181,7 +182,7 @@ export function FindTrades({ onDone }: { onDone: () => void }) {
     setBoard(null)
     setChief("")
     setStatus("Starting…")
-    const es = new EventSource("/api/find-trades?hours=48&max_debates=6")
+    const es = new EventSource(`/api/find-trades?hours=48&max_debates=6&expose=${deep}`)
     esRef.current = es
     es.onmessage = (e) => {
       const ev: Ev = JSON.parse(e.data)
@@ -209,7 +210,17 @@ export function FindTrades({ onDone }: { onDone: () => void }) {
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle className="text-lg">Find Trades</CardTitle>
-        <Button onClick={run} disabled={running}>
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-1.5 text-sm text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={deep}
+              disabled={running}
+              onChange={(e) => setDeep(e.target.checked)}
+            />
+            Deep scan (supply-chain ripples)
+          </label>
+          <Button onClick={run} disabled={running}>
           {running ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Scanning…
@@ -219,7 +230,8 @@ export function FindTrades({ onDone }: { onDone: () => void }) {
               <Search className="mr-2 h-4 w-4" /> Find Trades
             </>
           )}
-        </Button>
+          </Button>
+        </div>
       </CardHeader>
       <CardContent>
         {status && <p className="mb-3 text-sm text-muted-foreground">{status}</p>}

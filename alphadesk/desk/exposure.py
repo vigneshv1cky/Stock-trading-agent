@@ -98,9 +98,10 @@ def map_exposure(shock: str, event: str, decision_id: str | None = None) -> dict
     web-grounded task), then the synthesist. Returns {shock, candidates, neighborhood}."""
     from concurrent.futures import ThreadPoolExecutor
 
+    did = f"exposure-{shock}"  # per-shock id → clean token attribution
     with ThreadPoolExecutor(max_workers=3) as pool:
         futures = {
-            key: pool.submit(_specialist, angle, instr, shock, event, decision_id)
+            key: pool.submit(_specialist, angle, instr, shock, event, did)
             for angle, key, instr in _ANGLES
         }
         combined = {key: fut.result() for key, fut in futures.items()}
@@ -120,8 +121,8 @@ def map_exposure(shock: str, event: str, decision_id: str | None = None) -> dict
         + "\nMapped neighborhood:\n" + wrap_data("neighborhood", str(combined))
     )
     try:
-        out = call_role("chief", synth_system, synth_user, schema=_SYNTH_SCHEMA,
-                        decision_id=decision_id)
+        out = call_role("exposure_synth", synth_system, synth_user, schema=_SYNTH_SCHEMA,
+                        decision_id=did)
         candidates = [c for c in (out.get("candidates") or []) if in_universe(c["symbol"])]
     except LLMError as exc:
         log.warning("Chain synthesist failed for %s: %s", shock, exc)

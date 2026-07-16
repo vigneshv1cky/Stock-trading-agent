@@ -21,9 +21,20 @@ import threading
 import time
 from typing import Any, Callable, Optional
 
-from alphadesk.config import LLM_TIMEOUT_S, LLM_TOOL_TIMEOUT_S, MODEL_MAP, TIERS, in_universe
+from alphadesk.config import (
+    LLM_MAX_CONCURRENCY,
+    LLM_TIMEOUT_S,
+    LLM_TOOL_TIMEOUT_S,
+    MODEL_MAP,
+    TIERS,
+    in_universe,
+)
 
 log = logging.getLogger("alphadesk.llm")
+
+# Caps concurrent Claude CLI subprocesses (~250MB each) across ALL parallel
+# calls — briefs, exposure specialists, etc. — so fan-outs don't spike memory.
+_spawn_gate = threading.Semaphore(LLM_MAX_CONCURRENCY)
 
 _LADDER_WINDOW_S = 900   # downgraded tier persists this long before retrying base
 _BREAKER_WINDOW_S = 900  # full pause when even the bottom tier is rate-limited
@@ -214,28 +225,29 @@ def _one_shot(model: str, system: str, user: str,
         return text, tin, tout
 
     coro = asyncio.wait_for(_run(), timeout=timeout)
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-    # called from inside an event loop (e.g. news.poll in an async context):
-    # run in a dedicated thread with its own loop rather than exploding.
-    box: dict[str, Any] = {}
-
-    def _in_thread() -> None:
+    with _spawn_gate:  # cap concurrent CLI subprocesses (memory)
         try:
-            box["value"] = asyncio.run(coro)
-        except BaseException as exc:  # noqa: BLE001 — re-raised below
-            box["error"] = exc
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coro)
+        # called from inside an event loop (e.g. news.poll in an async context):
+        # run in a dedicated thread with its own loop rather than exploding.
+        box: dict[str, Any] = {}
 
-    t = threading.Thread(target=_in_thread, daemon=True)
-    t.start()
-    t.join(timeout + 10)
-    if "error" in box:
-        raise box["error"]
-    if "value" not in box:
-        raise TimeoutError("LLM call thread timed out")
-    return box["value"]
+        def _in_thread() -> None:
+            try:
+                box["value"] = asyncio.run(coro)
+            except BaseException as exc:  # noqa: BLE001 — re-raised below
+                box["error"] = exc
+
+        t = threading.Thread(target=_in_thread, daemon=True)
+        t.start()
+        t.join(timeout + 10)
+        if "error" in box:
+            raise box["error"]
+        if "value" not in box:
+            raise TimeoutError("LLM call thread timed out")
+        return box["value"]
 
 
 def call_role(
