@@ -164,10 +164,12 @@ ALPHADESK_GRAPH=off           # set on/1/true to enable the Neo4j graph
 
 ## Tech debt / honest status
 
-- **The two entry points have diverged.** `stream.py` uses 4 briefs (+ fundamentals,
-  freshness), the Exposure Desk, and the Chief; `workflow.py` uses 3 briefs (+ the
-  Neo4j graph) and still calls the graph that's otherwise gated off. Converge them
-  into one shared committee core if the CLI/replay path ever needs to match the button.
+- **Committee core is converged** (`desk/debate.py`): both entry points run the same
+  `deliberate()` async generator for the analyst→skeptic→arbiter→ledger-write sequence,
+  so the core debate can't drift. What still differs per entry point *by design*:
+  brief-gathering (`stream.py` = fundamentals/freshness; `workflow.py` = the Neo4j graph
+  brief) and the solo-arm record (lightly duplicated). Unify those too if the CLI/replay
+  path ever needs to match the button exactly.
 - **Unproven.** The full deep-scan path has not been run end-to-end live, and there
   are **zero graded trades** — so the calibration prior, kill criteria, and the entire
   alpha thesis are dormant. The highest-value next step is a supervised live run to
