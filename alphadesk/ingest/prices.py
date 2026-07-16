@@ -62,6 +62,39 @@ def get_context(symbol: str) -> Optional[dict]:
         return None
 
 
+_fund_cache: dict[str, tuple[float, dict | None]] = {}
+_FUND_TTL_S = 3600
+
+
+def get_fundamentals(symbol: str) -> Optional[dict]:
+    """Basic valuation/quality facts (best-effort via yfinance; cached 1h)."""
+    sym = symbol.upper()
+    with _cache_lock:
+        hit = _fund_cache.get(sym)
+        if hit and time.time() - hit[0] < _FUND_TTL_S:
+            return hit[1]
+    out: dict | None = None
+    try:
+        import yfinance as yf
+        info = yf.Ticker(sym).info or {}
+        out = {
+            "market_cap": info.get("marketCap"),
+            "trailing_pe": info.get("trailingPE"),
+            "forward_pe": info.get("forwardPE"),
+            "profit_margin": info.get("profitMargins"),
+            "revenue_growth": info.get("revenueGrowth"),
+            "sector": info.get("sector"),
+            "industry": info.get("industry"),
+        }
+        if not any(v is not None for v in out.values()):
+            out = None
+    except Exception as exc:
+        log.debug("fundamentals failed %s: %s", sym, exc)
+    with _cache_lock:
+        _fund_cache[sym] = (time.time(), out)
+    return out
+
+
 def movers(limit: int = 10) -> list[dict[str, Any]]:
     """Top movers FYI ranking from Alpaca's screener — a fact, not a filter."""
     try:

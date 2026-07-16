@@ -115,14 +115,17 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6):
         yield _ev("debate_start", symbol=sym, edge=pick.get("edge_hint"))
 
         try:
-            # briefs (parallel, but emit as each returns)
-            tech = await loop.run_in_executor(
-                None, briefs_mod.technical_brief, sym, price_ctx, decision_id)
-            yield _ev("brief", symbol=sym, **tech)
-            nb = await loop.run_in_executor(
-                None, briefs_mod.news_brief, sym, arts, decision_id)
-            yield _ev("brief", symbol=sym, **nb)
-            briefs = [tech, nb]
+            # brief subagents fan out in PARALLEL (technical, news, fundamentals,
+            # freshness) — each a bounded Haiku research task feeding the analyst
+            fundamentals = await loop.run_in_executor(None, prices.get_fundamentals, sym)
+            briefs = list(await asyncio.gather(
+                loop.run_in_executor(None, briefs_mod.technical_brief, sym, price_ctx, decision_id),
+                loop.run_in_executor(None, briefs_mod.news_brief, sym, arts, decision_id),
+                loop.run_in_executor(None, briefs_mod.fundamentals_brief, sym, fundamentals, decision_id),
+                loop.run_in_executor(None, briefs_mod.freshness_brief, sym, price_ctx, arts, decision_id),
+            ))
+            for b in briefs:
+                yield _ev("brief", symbol=sym, **b)
 
             history = await loop.run_in_executor(None, store.symbol_history, sym)
             thesis = await loop.run_in_executor(

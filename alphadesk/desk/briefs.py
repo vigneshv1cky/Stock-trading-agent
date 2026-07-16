@@ -65,6 +65,46 @@ def news_brief(symbol: str, articles: list[dict], decision_id: str | None = None
     )
 
 
+def fundamentals_brief(symbol: str, fundamentals: dict | None,
+                       decision_id: str | None = None) -> dict:
+    if not fundamentals:
+        return {"kind": "fundamentals", "summary": "(no fundamentals data)", "key_facts": []}
+    return _brief(
+        "fundamentals",
+        f"Give the fundamental backdrop for {symbol}: is it richly or cheaply "
+        "valued, is it profitable and growing, and does the valuation leave room "
+        "for the catalyst to move it — or is it already priced for perfection? "
+        "Be factual about the numbers given; do not invent any.",
+        "Fundamentals:\n" + wrap_data("fundamentals", json.dumps(fundamentals, default=str)),
+        decision_id,
+    )
+
+
+def freshness_brief(symbol: str, price_ctx: dict | None, articles: list[dict],
+                    decision_id: str | None = None) -> dict:
+    """The 'already-priced?' check — the crux of every drift/ripple thesis."""
+    ages = [a.get("published_at", "")[:16] for a in articles[:6]]
+    payload = {
+        "catalyst_timestamps": ages,
+        "move_today_pct": (price_ctx or {}).get("change_today_pct"),
+        "move_5d_pct": (price_ctx or {}).get("change_5d_pct"),
+        "move_20d_pct": (price_ctx or {}).get("change_20d_pct"),
+        "vs_90d_high": (price_ctx or {}).get("high_90d"),
+        "vs_90d_low": (price_ctx or {}).get("low_90d"),
+        "last_price": (price_ctx or {}).get("last_price"),
+    }
+    return _brief(
+        "freshness",
+        f"Judge how much of the catalyst is ALREADY PRICED into {symbol}. Compare "
+        "the catalyst timing to the price move: if the stock already moved hard in "
+        "the catalyst's direction, the edge may be gone (a fade risk); if it has "
+        "barely moved, the repricing may still be ahead. State plainly whether "
+        "there's room left to run.",
+        "Timing & move data:\n" + wrap_data("freshness", json.dumps(payload, default=str)),
+        decision_id,
+    )
+
+
 def graph_brief(symbol: str, neighborhood: dict, neighbor_moves: dict[str, float],
                 decision_id: str | None = None) -> dict:
     payload = {
