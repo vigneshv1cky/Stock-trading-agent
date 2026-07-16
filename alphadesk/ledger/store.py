@@ -317,6 +317,20 @@ def save_relationship(from_sym: str, to_sym: str, direction: str, chain: str) ->
         )
 
 
+def get_relationships(from_sym: str, days: int = 7) -> list[dict]:
+    """Pre-search cache: ripple neighbors mapped for this shocked company within
+    the last `days`. Lets the Exposure Desk reuse a prior web-verified mapping
+    instead of re-running the web specialists for the same shock."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT to_sym, direction, chain, max(ts) AS ts FROM relationships"
+            " WHERE from_sym = ? AND ts >= datetime('now', ?)"
+            " GROUP BY to_sym, direction ORDER BY ts DESC",
+            (from_sym.upper(), f"-{int(days)} days"),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def add_run(kind: str, top_picks: list[dict]) -> None:
     with _lock, _connect() as conn:
         conn.execute("INSERT INTO runs (ts, kind, top_picks) VALUES (?,?,?)",

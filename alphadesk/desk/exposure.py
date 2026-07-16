@@ -99,6 +99,21 @@ def map_exposure(shock: str, event: str, decision_id: str | None = None) -> dict
     from concurrent.futures import ThreadPoolExecutor
 
     did = f"exposure-{shock}"  # per-shock id → clean token attribution
+
+    # Pre-search cache: if we web-mapped this shock recently, reuse the verified
+    # relationships and skip the 3 web specialists + synth entirely. Supply-chain
+    # links are durable; the committee re-checks current pricing downstream.
+    cached = [c for c in store.get_relationships(shock) if in_universe(c["to_sym"])]
+    if cached:
+        log.info("Exposure cache hit for %s — reusing %d mapped ripple(s), skipping web search",
+                 shock, len(cached))
+        candidates = [
+            {"symbol": c["to_sym"], "direction": c["direction"],
+             "chain": c["chain"], "strength": "MODERATE"}
+            for c in cached
+        ]
+        return {"shock": shock, "candidates": candidates, "neighborhood": {}, "from_cache": True}
+
     with ThreadPoolExecutor(max_workers=3) as pool:
         futures = {
             key: pool.submit(_specialist, angle, instr, shock, event, did)
