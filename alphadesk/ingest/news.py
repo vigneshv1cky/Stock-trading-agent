@@ -21,6 +21,7 @@ log = logging.getLogger("alphadesk.news")
 
 _POLYGON_KEY = os.environ.get("POLYGON_API_KEY", "")
 _BATCH = 15               # articles per enrichment call
+_MAX_SCAN = 400           # cap raw articles paged through (free-tier rate-limit guard)
 _seen_ids: set[str] = set()
 
 _ENRICH_SYSTEM = (
@@ -80,14 +81,25 @@ _ENRICH_SCHEMA = {
 
 
 def fetch_articles(since: datetime, limit: int = 200) -> list[dict]:
-    """Raw Polygon articles (ticker-tagged) since `since`, oldest first."""
+    """Raw Polygon articles (ticker-tagged) since `since`, oldest first.
+
+    Bounded: stops after `limit` usable articles OR `_MAX_SCAN` raw items paged
+    through — whichever comes first. `list_ticker_news` paginates with no ticker
+    filter, and the free tier rate-limits deep paging hard (429 backoffs stack
+    into multi-minute stalls), so we cap how far we page rather than hang.
+    """
     import polygon
     client = polygon.RESTClient(api_key=_POLYGON_KEY)
     out: list[dict] = []
+    scanned = 0
     for art in client.list_ticker_news(
         published_utc_gte=since.strftime("%Y-%m-%dT%H:%M:%SZ"),
         limit=min(limit, 1000), sort="published_utc", order="asc",
     ):
+        scanned += 1
+        if scanned > _MAX_SCAN:
+            log.warning("Polygon scan cap (%d) hit — %d usable articles collected", _MAX_SCAN, len(out))
+            break
         art_id = str(getattr(art, "id", "") or getattr(art, "article_url", ""))
         if not art_id or art_id in _seen_ids:
             continue

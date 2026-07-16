@@ -19,6 +19,7 @@ import logging
 import re
 import threading
 import time
+from concurrent.futures import TimeoutError as FuturesTimeout
 from typing import Any, Callable, Optional
 
 from alphadesk.config import (
@@ -37,6 +38,25 @@ log = logging.getLogger("alphadesk.llm")
 # Caps concurrent Claude CLI subprocesses (~250MB each) across ALL parallel
 # calls — briefs, exposure specialists, etc. — so fan-outs don't spike memory.
 _spawn_gate = threading.Semaphore(LLM_MAX_CONCURRENCY)
+
+# ALL SDK calls run on ONE persistent event loop in a dedicated thread. Creating
+# a fresh loop per call (asyncio.run) churns the SDK's subprocess async
+# generators and corrupts them across calls (triage crashed mid-run this way); a
+# single long-lived loop keeps the transport stable.
+_bg_loop: asyncio.AbstractEventLoop | None = None
+_bg_lock = threading.Lock()
+
+
+def _llm_loop() -> asyncio.AbstractEventLoop:
+    global _bg_loop
+    if _bg_loop is None:
+        with _bg_lock:
+            if _bg_loop is None:
+                loop = asyncio.new_event_loop()
+                threading.Thread(target=loop.run_forever, daemon=True,
+                                 name="alphadesk-llm-loop").start()
+                _bg_loop = loop
+    return _bg_loop
 
 _LADDER_WINDOW_S = 900   # downgraded tier persists this long before retrying base
 _BREAKER_WINDOW_S = 900  # full pause when even the bottom tier is rate-limited
@@ -235,30 +255,17 @@ def _one_shot(model: str, system: str, user: str,
                 tout = int(usage.get("output_tokens", 0) or 0)
         return text, tin, tout
 
+    # Run on the shared persistent loop — never a per-call asyncio.run(), which
+    # corrupts the SDK's subprocess async generators across calls. Works whether
+    # the caller is a plain worker thread or itself inside an event loop.
     coro = asyncio.wait_for(_run(), timeout=timeout)
     with _spawn_gate:  # cap concurrent CLI subprocesses (memory)
+        fut = asyncio.run_coroutine_threadsafe(coro, _llm_loop())
         try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.run(coro)
-        # called from inside an event loop (e.g. news.poll in an async context):
-        # run in a dedicated thread with its own loop rather than exploding.
-        box: dict[str, Any] = {}
-
-        def _in_thread() -> None:
-            try:
-                box["value"] = asyncio.run(coro)
-            except BaseException as exc:  # noqa: BLE001 — re-raised below
-                box["error"] = exc
-
-        t = threading.Thread(target=_in_thread, daemon=True)
-        t.start()
-        t.join(timeout + 10)
-        if "error" in box:
-            raise box["error"]
-        if "value" not in box:
-            raise TimeoutError("LLM call thread timed out")
-        return box["value"]
+            return fut.result(timeout + 10)
+        except FuturesTimeout:
+            fut.cancel()
+            raise TimeoutError(f"LLM call exceeded {timeout}s") from None
 
 
 def call_role(
