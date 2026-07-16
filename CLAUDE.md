@@ -2,222 +2,173 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## What this is
+
+**AlphaDesk** — a predictive multi-agent stock research engine. You trigger a run
+("Find Trades"); it reads a wide window of world + financial news, a committee of
+specialized LLM agents debates the best opportunities live, a Chief Strategist ranks
+them head-to-head, and every call is written to a self-grading ledger that scores
+itself forward against reality. **Research / paper only — no order execution.**
+
+All LLM calls run on the **Claude Max subscription** via `claude-agent-sdk` (the
+bundled Claude Code CLI). There is no Bedrock, no API key, no local model files.
+
+> The legacy `stock_sentiment/` bot (FinBERT + AWS Bedrock) was removed 2026-07-16.
+> AlphaDesk (`alphadesk/`) is the only system in this repo.
+
 ## Commands
 
-### Local Development
 ```bash
-# Install dependencies
 pip install -r requirements.txt
 
-# Run real-time multi-agent trading system (stocks + crypto simultaneously)
-python run_agents.py
+# Web dashboard + hourly grader (v2 primary mode — trades run on button click)
+python -m alphadesk.main dashboard        # then open http://localhost:8000
 
-# Dry-run (full pipeline, no order execution — safe for testing)
-python run_agents.py --dry-run
+# Convene the committee NOW on recent news (headless, writes to ledger)
+python -m alphadesk.main desk
 
-# Start web dashboard
-uvicorn web:app --reload --port 8000
+# One GDELT world-news tick
+python -m alphadesk.main world
+
+# Grade due picks / print the scorecard / one-month news backfill
+python -m alphadesk.main grade
+python -m alphadesk.main status
+python -m alphadesk.main backfill
+
+# Legacy autonomous 24/7 scheduler (kept, not the v2 path)
+python -m alphadesk.main run
+
+# Rebuild the web UI (React → alphadesk/app/static/)
+cd alphadesk/ui && pnpm build
 ```
 
-### Cloud Deployment (AWS)
-```bash
-aws sso login --profile vignesh-sso-profile
-./run_aws_bot.sh            # builds Docker, pushes to ECR, updates ECS
+## Design laws (every module obeys these)
 
-# Tail live logs
-aws logs tail /ecs/stock-screener --region us-east-1 --follow --profile vignesh-sso-profile
-```
+1. **Agents own judgment; code owns facts, physics, safety, and scoring.** No
+   hardcoded judgment thresholds — triage has no RVOL cutoff, the score has no
+   formula. Code owns arithmetic, hard facts (tradability), and rails (caps,
+   injection defense, schema validation).
+2. **Attention is information-driven, never price-driven.** Price *informs* a
+   decision; it never *triggers* one. Decisions come from causes (news), not
+   price-narration.
+3. **Forward-only evidence.** Every pick declares `direction · horizon_days(1–10)
+   · edge · confidence` and is graded at exactly that horizon vs SPY, net of
+   friction. The system earns trust from its ledger, not its prose.
+
+## Alpha thesis — three slow-digestion edges
+
+- **RIPPLE** — a shocked company reprices instantly; its suppliers/customers/
+  competitors drift for days (the Exposure Desk finds the connected, unmoved names).
+- **NARRATIVE** — investment themes build over days; mention-velocity leads the crowd.
+- **DRIFT** — big moves continue for days; bet the continuation.
 
 ## Architecture
 
-This is a real-time multi-agent algorithmic trading system. Agents communicate via an in-process `asyncio.Queue`-based `EventBus` — no Redis or external broker needed.
+Two **entry points** run the same committee (they have partially diverged — see
+Tech debt):
 
-### Agent Pipeline
+- `desk/stream.py` — the on-demand **"Find Trades"** SSE flow (dashboard button).
+  **v2's primary path.** Streams the agents' deliberation live to the browser.
+- `desk/workflow.py` — `research_run()`, the pure batch pipeline (the `desk` CLI,
+  the scheduler's autonomous mode, and future replay). Returns ledger IDs only.
+
+### Pipeline
 
 ```
-Alpaca WebSocket (1-min bars)
-         │
-    WatcherAgent          ← detects RVOL ≥ 1.2× AND |price change| ≥ 1.5% (stocks)
-    CryptoWatcherAgent    ← detects RVOL ≥ 1.0× AND |price change| ≥ 2.0% (crypto, 24/7)
-    ScannerAgent          ← batch scan every 15 min (proactive, all 487 stocks)
-         │ market.signal
-    ScreenerAgent         ← qualification + regime gates
-    ResearchAgent         ← RSI, BB, MACD, ATR (runs in parallel with Screener)
-         │ symbol.screened
-    NewsAgent             ← Polygon.io news + Haiku sentiment scoring
-         │ symbol.analysed
-    PredictorAgent  ←──── AgentMemory (learned lessons injected into prompt)
-    (Haiku)
-         │ symbol.predicted
-    CriticAgent     ←──── AgentMemory (adversarial — find reasons the trade FAILS)
-    (Haiku)
-         │ symbol.reviewed
-    RiskAgent             ← LLM decision: APPROVE/BLOCK; VIX, position caps, sector, cooldown
-         │ trade.approved
-    ExecutorAgent         ← Alpaca orders + trailing stops + EOD close at 3:30 PM ET
-         │ trade.closed
-    LearningAgent         ← reflects on outcomes every 10 trades or 4:05 PM ET daily
-         │ memory.updated
-    AgentMemory           ← ~/.stock_screener/agent_memory.json
-
-    MonitorAgent          ← polls positions every 30s → position.alert → RiskAgent
-    PortfolioAgent        ← tracks sector concentration
-    MacroAgent            ← VIX + SPY + QQQ + breadth every 5 min
-    PromptTunerAgent      ← loads optimized prompts from disk
+Polygon (financial) + GDELT (world, 11-cat) + Alpaca/yfinance (price context)
+        │  candidates (symbol → enriched articles)
+   [Exposure Desk]  (expose=true) shock → 3 web-grounded specialists → synth → ripple candidates
+        │
+   TRIAGE (sonnet)  ── picks ≤5, reasons for every pick AND skip
+        │  per pick, in parallel:
+   4 BRIEFS (haiku): technical · news · fundamentals · freshness   (workflow.py: technical · news · graph)
+   + calibration prior (the desk's own graded scorecard, sample-gated at 8 trades)
+        │
+   ANALYST (sonnet) → SKEPTIC (opus) → fact-check (code) → ANALYST rebuttal → ARBITER (opus)
+   every 3rd pick → SOLO (opus) control arm (kill-criterion: does the committee beat one agent?)
+        │
+   CHIEF STRATEGIST (opus) → head-to-head ranking, TAKE/pass
+        │
+   LEDGER (SQLite/WAL) → GRADER (hourly, alpha_net vs SPY at own horizon)
 ```
 
-All agents run as concurrent `asyncio` tasks sharing one `EventBus` and one `AgentMemory`. Each agent has a `safe_run()` crash-restart loop with 5s backoff.
+### Model tiering (`config.MODEL_MAP`, every role env-overridable `MODEL_<ROLE>`)
 
-### Key Agent Behaviours
+- **haiku**: enrichment, briefs (high-volume extraction)
+- **sonnet**: triage, analyst, exposure_specialist
+- **opus**: skeptic, arbiter, solo, chief, exposure_synth
 
-**WatcherAgent** (`agents/watcher.py`)
-- Pre-loads 20-day avg daily volumes and today's intraday open/cumulative volume via Alpaca at startup (yfinance fallback)
-- Streams Alpaca `StockDataStream` 1-min bars; computes RVOL = `cumulative_vol / (avg_daily × minutes_elapsed/390)`
-- Signal gate: RVOL ≥ 1.2 AND |intraday change| ≥ 1.5%; 5-min per-symbol debounce
-- Falls back to yfinance 90s polling when Alpaca WebSocket unavailable
+Analyst is sonnet, Skeptic is opus **on purpose** — different models between debate
+roles decorrelate errors. On rate-limit each role steps down opus→sonnet→haiku (tagged
+on the ledger row); if the bottom tier is limited too, the breaker opens.
 
-**CryptoWatcherAgent** (`agents/crypto_watcher.py`)
-- Streams Alpaca `CryptoDataStream` 1-min bars for 18 coins; runs 24/7
-- Signal gate: RVOL ≥ 1.0 AND |intraday change| ≥ 2.0%; 30-min cooldown
-- Session resets at UTC midnight
+## The LLM layer — `llm.py` (every model call passes through `call_role`)
 
-**ScreenerAgent** (`agents/screener.py`)
-- Fetches 3mo price history via yfinance (stocks) or Alpaca (crypto)
-- Stock checks: ≥20 days history, price ≥ $5, avg volume ≥ 100k
-- Time-of-day gate: drops signals in first 15 min and last 15 min before 4 PM (REEVAL signals skip this)
-- Regime-adjusted RVOL and price-move minimums (RISK_OFF ×1.3, PANIC ×1.6)
-- Computes relative strength vs sector ETF (from MacroAgent)
+Guardrails, in order: model resolution (+ downgrade ladder) · injection defense
+(`wrap_data` delimiters + `_INJECTION_GUARD`; web results tagged UNTRUSTED) · input-size
+cap (`LLM_MAX_INPUT_CHARS`) · schema validation + one retry, then safe default (a failed
+stage drops the candidate, never a phantom pick) · **universe whitelist** (invented
+tickers rejected — the key output-security limit) · concurrency semaphore
+(`LLM_MAX_CONCURRENCY`) + per-tool-call `max_budget_usd`/`max_turns` · token telemetry.
 
-**ResearchAgent** (`agents/research.py`)
-- Subscribes to `market.signal` directly — runs in parallel with ScreenerAgent
-- Fetches 60-day history via yfinance (stocks) or Alpaca (crypto)
-- Computes RSI-14, Bollinger %B, MACD histogram, ATR%, volume trend
-- Calls Haiku for 2-sentence technical synthesis
-- Results cached 120s; accessible via `ResearchAgent.get_cached(sym)`
+## File structure
 
-**PredictorAgent** (`agents/predictor.py`)
-- Single Haiku call with a 4-step structured prompt: technical thesis → catalyst quality → risk factors → final score
-- Returns score (−100 to 100), confidence (0–100), red_flag_severity (NONE/MINOR/MODERATE/FATAL)
-- Post-LLM mechanical adjustments: MODERATE cap → 0, FATAL cap → −44; confidence < 35 → skip signal; PANIC regime → suppress BULLISH
-- RSI comes from `ResearchAgent.get_cached(sym)` — no separate PriceFetcher call
-- Injects learned lessons from `AgentMemory` into every LLM call
+```
+alphadesk/
+  config.py            MODEL_MAP, caps, sessions, tradable universe (weekly Alpaca cache)
+  llm.py               the guarded call stack — every LLM call goes here
+  ingest/
+    news.py            Polygon poll → Haiku enrichment → candidates
+    world.py           GDELT world-news (11-category taxonomy, action-over-talk gradient)
+    prices.py          lazy per-symbol context — NO triggers, NO universe sweeps
+  knowledge/graph.py   Neo4j world model (gated off by default: ALPHADESK_GRAPH)
+  desk/
+    stream.py          on-demand "Find Trades" SSE flow (v2 primary path)
+    workflow.py        research_run() — batch pipeline (desk CLI, scheduler, replay)
+    triage.py          all attention judgment, in one prompt
+    briefs.py          4 parallel haiku brief subagents
+    exposure.py        the Exposure Desk (web-grounded ripple mapping; replaces Neo4j)
+    committee.py       Analyst ⇄ Skeptic → Arbiter, + calibration_block, + chief_synthesis
+    solo.py            single-agent control arm
+  ledger/
+    store.py           SQLite/WAL: picks, funnel, token_usage, relationships
+    grader.py          forward grading vs SPY, friction haircut — pure code
+  app/
+    dashboard.py       FastAPI + Basic Auth + SSE endpoint + static SPA
+    scheduler.py       hourly grader loop (v2); legacy 24/7 loop (run mode)
+  main.py              CLI entrypoint (dashboard/desk/world/grade/status/backfill/run)
+  ui/                  React 19 + TS + Vite + shadcn/ui → built into app/static/
+```
 
-**CriticAgent** (`agents/critic.py`)
-- Two-turn adversarial Haiku debate: Turn 1 raises top 3 concerns; Turn 2 returns `adjusted_score` (LLM owns magnitude)
-- One mechanical safety net: if predictor score is NEUTRAL (−19 to +19), critic cannot make it worse
-- CLOSE actions bypass the critic entirely — exit speed matters
-
-**RiskAgent** (`agents/risk.py`)
-- All trade decisions delegated to Haiku: time of day, duplicate prevention, position caps (soft target ≤8 total, ≤2 crypto), displacement choice, buying power, shortability, VIX/regime, sector concentration, drawdown
-- LLM receives full context: minutes since open/close, displacement candidates with scores, buying power vs slot, shortable fact, VIX, regime, day P&L, sector breakdown
-- LLM returns `{"decision": "APPROVE"|"BLOCK", "displace": "SYMBOL"|null, "reasoning": "..."}`
-- Two mechanical gates remain: BEARISH on existing long → immediate CLOSE; cooldown block after stop-out
-- LLM failure defaults to **BLOCK** (safe default)
-- Handles `EARNINGS_REPORTED` alerts: fetches Polygon news, calls Haiku to HOLD or CLOSE
-
-**ExecutorAgent** (`agents/executor.py`)
-- Three concurrent loops: trade processing, stop audit (every 5 min), EOD close (3:30 PM ET)
-- Startup audit: cancels prior-session open orders, backfills `held_cache` for live positions
-- Trailing stop widths: 0.5% (big winner) → 1.5% (moderate winner) → 3.0% (default)
-- Stocks: whole shares (`int(slot / price)`); Crypto: notional (`notional=slot`, GTC)
-- EOD close uses `abs(float(pos.qty))` — handles fractional crypto positions
-
-**LearningAgent** (`agents/learning.py`)
-- Rolling buffer of last 100 closed trade outcomes
-- Haiku reflection every 10 trades or daily at 4:05 PM ET; writes 3–5 lessons to `AgentMemory`
-
-**MonitorAgent** (`agents/monitor.py`)
-- Polls positions every 30s
-- `REEVAL` alert: position not re-evaluated in 30+ min → re-triggers screener pipeline
-- `EARNINGS_REPORTED` alert: actual EPS in last 48h → RiskAgent decides HOLD or CLOSE
-- Tracks `_analyzed_earnings` to avoid duplicate alert firing
-
-### Broker (`agents/broker.py`)
-- `PaperBroker` wraps Alpaca TradingClient — paper or live mode from env vars
-- `_place_market_buy()`: stocks = whole shares + DAY; crypto = notional + GTC
-- `_place_market_short()`: blocked for crypto (`"/" in symbol` check)
-- `_get_live_price()`: dispatches to stock or crypto latest trade API
-- Stop placement retries up to 3× with wash-trade error handling
-
-### Storage (Dual-Backend Pattern)
-
-`stock_sentiment/history.py` abstracts local vs. cloud persistence:
-- **Local dev**: SQLite at `~/.stock_screener/local_history.db`
-- **Production** (`ENV=PROD`): DynamoDB tables `PROD_StockScreenerRuns`, `PROD_StockScreenerPredictions`, `PROD_StockScreenerStatus`
-
-### Web Dashboard
-
-`web.py` (FastAPI) + `templates/index.html` + `static/app.js`. The agent system starts automatically as a daemon thread when `web.py` starts. Auth: `ADMIN_USERNAME` / `ADMIN_PASSWORD`.
-
-### Cloud Infrastructure
-
-ECS Fargate (1 vCPU, 4GB) behind an ALB. NLP runs entirely on AWS Bedrock Haiku — no large model files in the Docker image. Docker target is `linux/amd64`. Deployment scripted in `deploy/deploy.sh`.
-
-## Environment Variables
+## Environment variables
 
 ```ini
-# Required (paper trading)
-ALPACA_API_KEY=...
+ALPACA_API_KEY=...            # market data + universe (paper keys fine)
 ALPACA_SECRET_KEY=...
-
-# Live trading (set ALPACA_PAPER=false to activate)
-ALPACA_PAPER=false
-ALPACA_LIVE_API_KEY=...
-ALPACA_LIVE_SECRET_KEY=...
-
-# AWS (local dev — SSO profile)
-AWS_PROFILE=vignesh-sso-profile
-AWS_REGION=us-east-1
-
-# Optional — Polygon.io news
-POLYGON_API_KEY=...
-
-# Web dashboard auth
-ADMIN_USERNAME=admin
+POLYGON_API_KEY=...           # financial news (optional)
+ADMIN_USERNAME=admin          # dashboard Basic Auth (fail-closed if unset)
 ADMIN_PASSWORD=...
-
-# Production mode (switches SQLite → DynamoDB)
-ENV=PROD
+ALPHADESK_DATA=~/.alphadesk   # ledger.db, universe.json, relationship cache
+ALPHADESK_GRAPH=off           # set on/1/true to enable the Neo4j graph
 ```
 
-## Key Design Notes
+## Key design notes
 
-- **All NLP runs on AWS Bedrock Haiku**: sentiment scoring, Predictor conviction, Critic adversarial review, RiskAgent approval, LearningAgent reflection. No local model files.
-- **LLM owns all judgment, code owns hard facts**: score magnitude, risk approval, sector/regime decisions are LLM. Position caps arithmetic, shortability, and cooldowns are either LLM context or the two remaining mechanical gates.
-- **No archetypes**: ScreenerAgent does not classify signals — LLM assesses signal type (breakout, dip-buy, momentum, volume event) from raw quantitative data directly.
-- **No formula blending**: PredictorAgent is pure LLM — no weighted formula score. RSI from `ResearchAgent.get_cached()`, no separate PriceFetcher call.
-- **Crypto is LONG only**: blocked at 3 levels — risk prompt rule, `_place_market_short()` code guard, Alpaca asset shortable=false.
-- **Crypto uses notional orders**: fractional qty via `notional=slot` + `TimeInForce.GTC`. Stop audit allows fractional qty for crypto positions.
-- **AgentMemory lessons** injected into every Predictor and Critic LLM call — self-improving over time. Persisted at `~/.stock_screener/agent_memory.json`.
-- **RiskAgent LLM failure defaults to BLOCK**: if Bedrock is unavailable, trades are blocked.
-- **Runtime state files** in `~/.stock_screener/`: `cooldowns.json`, `held_cache.json`, `last_execution.json`, `agent_memory.json`.
-- **yfinance is used for**: VIX/macro data (`^VIX` not on Alpaca), earnings dates, stock screener/research history, WatcherAgent fallback. Alpaca is used for everything live/real-time.
+- **No order execution** — research/paper only until the ledger earns it.
+- **Self-improvement is grounded, not RL**: a numeric calibration scorecard is fed
+  into agent prompts (dormant until ~8 graded trades); the real self-correction is the
+  pre-committed **kill criteria** (drop the debate / an edge / the committee if the
+  ledger says they don't pay). No free-form "lessons" memory (persistent injection risk).
+- **Miss diagnosis is conversational** — ask Claude "why did we miss X?"; it traces
+  `store.symbol_traces` / `symbol_skips` and fixes data/prompt/bug. No UI tool for it.
 
-## File Structure
+## Tech debt / honest status
 
-```
-stock_sentiment/
-  agents/
-    base.py           ← BaseAgent: safe_run, get_bedrock, logging
-    event_bus.py      ← asyncio Queue-based pub/sub
-    memory.py         ← AgentMemory: lesson storage + retrieval
-    orchestrator.py   ← wires all agents, defines SCREEN_UNIVERSE + CRYPTO_UNIVERSE
-    broker.py         ← PaperBroker: Alpaca order placement
-    watcher.py        ← stock signal detection (Alpaca WebSocket)
-    crypto_watcher.py ← crypto signal detection (Alpaca Crypto WebSocket, 24/7)
-    scanner.py        ← proactive batch scanner (every 15 min)
-    screener.py       ← signal qualification + regime gates
-    research.py       ← technical indicators (RSI, BB, MACD, ATR)
-    news.py           ← Polygon.io news + Haiku sentiment (Article, ScoredArticle inline)
-    predictor.py      ← Haiku conviction scoring
-    critic.py         ← adversarial Haiku review
-    portfolio.py      ← sector tracking + get_sector()
-    risk.py           ← LLM trade approval + earnings handling
-    executor.py       ← order execution + stop management
-    learning.py       ← Haiku reflection → AgentMemory
-    monitor.py        ← position health polling (earnings + re-eval)
-    macro.py          ← VIX + regime + sector ETF performance
-    prompt_tuner.py   ← optimized prompt loading
-  history.py          ← SQLite / DynamoDB dual backend
-  config.py           ← settings
-```
+- **The two entry points have diverged.** `stream.py` uses 4 briefs (+ fundamentals,
+  freshness), the Exposure Desk, and the Chief; `workflow.py` uses 3 briefs (+ the
+  Neo4j graph) and still calls the graph that's otherwise gated off. Converge them
+  into one shared committee core if the CLI/replay path ever needs to match the button.
+- **Unproven.** The full deep-scan path has not been run end-to-end live, and there
+  are **zero graded trades** — so the calibration prior, kill criteria, and the entire
+  alpha thesis are dormant. The highest-value next step is a supervised live run to
+  start the forward-only ledger clock.

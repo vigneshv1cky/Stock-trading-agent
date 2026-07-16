@@ -3,44 +3,40 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "stock-sentiment-analyzer"
-version = "0.1.0"
-description = "Stock screener and predictor powered by FinBERT NLP and technical analysis"
+name = "alphadesk"
+version = "0.2.0"
+description = "AlphaDesk — predictive multi-agent stock research engine (Claude Agent SDK)"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 authors = [
     { name = "Vignesh Murugan" },
 ]
-keywords = ["stocks", "sentiment", "finbert", "nlp", "trading", "screener"]
+keywords = ["stocks", "research", "multi-agent", "llm", "claude", "trading", "prediction"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Financial and Insurance Industry",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
     "Topic :: Office/Business :: Financial :: Investment",
 ]
 dependencies = [
-    "transformers>=4.35.0",
-    "torch>=2.0.0",
-    "feedparser>=6.0.10",
-    "rich>=13.7.0",
-    "python-dateutil>=2.8.2",
+    "claude-agent-sdk>=0.2.0",
+    "alpaca-py>=0.14.0",
     "yfinance>=0.2.31",
     "pandas>=2.0.0",
+    "fastapi",
+    "uvicorn",
+    "python-dotenv",
+    "python-multipart",
+    "neo4j>=5.0",
 ]
 
-[project.scripts]
-stock-sentiment = "stock_sentiment.cli:main"
-
 [project.urls]
-Homepage = "https://github.com/vigneshmurugan/stock-sentiment-analyzer"
-Repository = "https://github.com/vigneshmurugan/stock-sentiment-analyzer"
-Issues = "https://github.com/vigneshmurugan/stock-sentiment-analyzer/issues"
+Homepage = "https://github.com/vigneshv1cky/alphadesk"
+Repository = "https://github.com/vigneshv1cky/alphadesk"
 
 [tool.setuptools.packages.find]
-include = ["stock_sentiment*"]
+include = ["alphadesk*"]

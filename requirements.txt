@@ -1,14 +1,11 @@
-scipy>=1.11.0
-feedparser>=6.0.10
-rich>=13.7.0
-python-dateutil>=2.8.2
-yfinance>=0.2.31
-pandas>=2.0.0
-fastapi
-uvicorn
-jinja2
-alpaca-py>=0.14.0
-boto3
-python-dotenv
-python-multipart
-mcp[cli]>=1.0.0
+# AlphaDesk — predictive multi-agent stock research engine
+claude-agent-sdk>=0.2.0     # all LLM calls, billed to the Claude Max subscription
+alpaca-py>=0.14.0           # market data + tradable universe
+yfinance>=0.2.31            # grading, fundamentals, VIX/macro context
+pandas>=2.0.0               # price frames
+fastapi                     # dashboard JSON API + SSE
+uvicorn                     # ASGI server
+python-dotenv               # .env config
+python-multipart            # form parsing
+neo4j>=5.0                  # knowledge graph (optional — gated behind ALPHADESK_GRAPH)
+mcp[cli]>=1.0.0             # MCP server integration
