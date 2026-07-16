@@ -9,7 +9,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -39,7 +39,6 @@ MODEL_MAP: dict[str, str] = {
     "skeptic": "opus",         # adversarial challenge
     "arbiter": "opus",         # final verdict
     "solo": "opus",            # single-agent control arm
-    "synthesizer": "opus",     # daily Top-N ranking (Phase 2)
     "chief": "opus",           # comparative head-to-head selection across debated ideas
     "exposure_specialist": "sonnet",  # supplier/customer/competitor mapping (web-grounded)
     "exposure_synth": "opus",         # assembles ripple candidates from the mapped neighborhood
@@ -97,21 +96,6 @@ def session(dt: datetime | None = None) -> str:
     if 16 * 60 <= minutes < 20 * 60:
         return "AFTER"
     return "CLOSED"
-
-
-def is_market_open(dt: datetime | None = None) -> bool:
-    return session(dt) == "OPEN"
-
-
-def next_open(dt: datetime | None = None) -> datetime:
-    """Next regular-session open (9:30 ET) strictly after `dt`."""
-    dt = (dt or now_et()).astimezone(ET)
-    candidate = dt.replace(hour=9, minute=30, second=0, microsecond=0)
-    if dt >= candidate:
-        candidate += timedelta(days=1)
-    while candidate.weekday() >= 5:
-        candidate += timedelta(days=1)
-    return candidate
 
 
 # ---------------------------------------------------------------------------

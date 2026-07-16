@@ -317,21 +317,6 @@ def save_relationship(from_sym: str, to_sym: str, direction: str, chain: str) ->
         )
 
 
-def get_relationships(from_sym: str) -> list[dict]:
-    """Previously-discovered ripple neighbors for a shocked company."""
-    with _connect() as conn:
-        rows = conn.execute(
-            "SELECT to_sym, direction, chain FROM relationships WHERE from_sym = ?"
-            " ORDER BY ts DESC", (from_sym.upper(),),
-        ).fetchall()
-    return [dict(r) for r in rows]
-
-
-def relationship_count() -> int:
-    with _connect() as conn:
-        return int(conn.execute("SELECT count(*) FROM relationships").fetchone()[0])
-
-
 def add_run(kind: str, top_picks: list[dict]) -> None:
     with _lock, _connect() as conn:
         conn.execute("INSERT INTO runs (ts, kind, top_picks) VALUES (?,?,?)",
