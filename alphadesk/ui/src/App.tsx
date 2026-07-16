@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react"
+import { Fragment, useCallback, useEffect, useState } from "react"
 import {
   api,
   fmtAlpha,
@@ -145,8 +145,11 @@ export default function App() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {picks.map((p) => (
-                <TableRow key={p.id} className="cursor-pointer" onClick={() => setSelected(p.id)}>
+              {picks.map((p) => {
+                const why = p.debate?.arbiter_summary ?? p.thesis
+                return (
+                <Fragment key={p.id}>
+                <TableRow className="cursor-pointer border-0" onClick={() => setSelected(p.id)}>
                   <TableCell className="text-muted-foreground">#{p.id}</TableCell>
                   <TableCell className="text-muted-foreground">
                     {p.ts.slice(5, 16).replace("T", " ")}
@@ -196,7 +199,29 @@ export default function App() {
                     {fmtAlpha(p.alpha_net)}
                   </TableCell>
                 </TableRow>
-              ))}
+                {(p.triage_reason || why) && (
+                  <TableRow
+                    className="cursor-pointer hover:bg-muted/30"
+                    onClick={() => setSelected(p.id)}
+                  >
+                    <TableCell />
+                    <TableCell colSpan={9} className="pt-0 align-top text-xs leading-snug text-muted-foreground">
+                      <span className="font-medium text-foreground">
+                        {p.direction === "LONG" ? "Long" : "Short"} for {p.horizon_days} trading day
+                        {p.horizon_days === 1 ? "" : "s"}.
+                      </span>{" "}
+                      {p.triage_reason && (
+                        <>
+                          <span className="text-foreground/70">Catalyst:</span> {p.triage_reason}{" "}
+                        </>
+                      )}
+                      {why && <span>— {why}</span>}
+                    </TableCell>
+                  </TableRow>
+                )}
+                </Fragment>
+                )
+              })}
               {picks.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={10} className="py-8 text-center text-muted-foreground">

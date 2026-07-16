@@ -278,8 +278,16 @@ export function FindTrades({ onDone }: { onDone: () => void }) {
                     </Badge>
                   )}
                 </div>
+                <p className="mt-1 pl-8 text-xs text-muted-foreground">
+                  <span className="text-foreground/70">
+                    {r.direction === "LONG" ? "Long" : "Short"} for {r.horizon_days}d.
+                  </span>{" "}
+                  {r.summary}
+                </p>
                 {r.chief_reason && (
-                  <p className="mt-1.5 pl-8 text-muted-foreground">{r.chief_reason}</p>
+                  <p className="mt-1 pl-8 text-amber-500/90">
+                    <span className="font-medium">Chief:</span> {r.chief_reason}
+                  </p>
                 )}
               </div>
             ))}
