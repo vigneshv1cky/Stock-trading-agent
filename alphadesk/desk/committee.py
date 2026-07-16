@@ -121,11 +121,51 @@ def _memory_block(history: list[dict]) -> str:
     return "Your desk's past graded calls on this symbol:\n" + "\n".join(lines)
 
 
+# Minimum graded picks in a bucket before its hit-rate is shown as a prior —
+# below this it's noise, not signal, so we withhold it rather than mislead.
+CALIB_MIN_SAMPLES = 8
+
+
+def calibration_block(stats: dict, min_samples: int = CALIB_MIN_SAMPLES) -> str:
+    """Grounded numeric priors: the desk's own GRADED hit-rate and net alpha by
+    edge, horizon, and confidence bucket. Facts about our track record, not
+    verbal 'lessons' — buckets under min_samples are withheld (too few to trust,
+    and superstition is the failure mode we're avoiding). Fixed-size and
+    falsifiable: it's a scorecard, so no unbounded growth and no injection
+    surface. Weigh it, don't obey it."""
+    total = stats.get("total") or {}
+    graded = total.get("graded") or 0
+    if graded < min_samples:
+        return (f"Desk calibration: only {graded} graded calls so far — too few "
+                "for reliable priors. Judge on the briefs alone.")
+    by = stats.get("by") or {}
+    lines: list[str] = []
+    for dim in ("edge", "horizon", "confidence"):
+        rows = [r for r in by.get(dim, []) if (r.get("graded") or 0) >= min_samples]
+        parts = []
+        for r in rows:
+            n = r["graded"]
+            hit = round(100 * (r.get("wins") or 0) / n)
+            parts.append(f"{r['bucket']}: {hit}% hit, {r.get('avg_alpha_net')}% net α (n={n})")
+        if parts:
+            lines.append(f"  by {dim} — " + " · ".join(parts))
+    if not lines:
+        return (f"Desk calibration: {graded} graded overall, but no single bucket "
+                f"has ≥{min_samples} yet — priors not reliable. Judge on the briefs.")
+    return (
+        "Your desk's GRADED calibration to date (net of friction, vs SPY) — "
+        "facts about your own track record, weigh them but don't obey them:\n"
+        + "\n".join(lines)
+    )
+
+
 def analyst_thesis(symbol: str, triage_reason: str, briefs: list[dict],
-                   history: list[dict], decision_id: str | None) -> dict:
+                   history: list[dict], decision_id: str | None,
+                   calibration: str = "") -> dict:
+    calib = f"{calibration}\n\n" if calibration else ""
     user = (
         f"Symbol: {symbol}\nTriage rationale: {triage_reason}\n\n"
-        f"{_memory_block(history)}\n\nSpecialist briefs:\n{_briefs_block(briefs)}"
+        f"{calib}{_memory_block(history)}\n\nSpecialist briefs:\n{_briefs_block(briefs)}"
     )
     return call_role("analyst", _ANALYST_SYSTEM, user, schema=_THESIS_SCHEMA,
                      decision_id=decision_id)

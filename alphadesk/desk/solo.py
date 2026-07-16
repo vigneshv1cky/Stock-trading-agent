@@ -39,16 +39,18 @@ _SCHEMA = {
 
 
 def solo_analysis(symbol: str, triage_reason: str, briefs: list[dict],
-                  history: list[dict], decision_id: str | None) -> dict:
+                  history: list[dict], decision_id: str | None,
+                  calibration: str = "") -> dict:
     memory = (
         "\n".join(
             f"- {h['ts'][:10]}: {h['direction']} {h['horizon_days']}d → alpha_net={h['alpha_net']}%"
             for h in history
         ) or "none"
     )
+    calib = f"{calibration}\n\n" if calibration else ""
     user = (
         f"Symbol: {symbol}\nWhy it surfaced: {triage_reason}\n"
         f"Past graded calls on this symbol: {memory}\n\n"
-        f"Specialist briefs:\n" + wrap_data("briefs", json.dumps(briefs, default=str))
+        f"{calib}Specialist briefs:\n" + wrap_data("briefs", json.dumps(briefs, default=str))
     )
     return call_role("solo", _SYSTEM, user, schema=_SCHEMA, decision_id=decision_id)

@@ -165,6 +165,11 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
 
     yield _ev("status", msg=f"Committee debating {len(picks)} opportunities…")
 
+    # Grounded calibration prior — the desk's own graded scorecard, computed
+    # once per run and handed to every analyst/solo call as facts (not lessons).
+    calibration = committee.calibration_block(
+        await loop.run_in_executor(None, store.stats))
+
     board: list[dict] = []
     for pick_idx, pick in enumerate(picks):
         if await _gone():   # client closed the tab — stop burning quota
@@ -191,7 +196,7 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
 
             history = await loop.run_in_executor(None, store.symbol_history, sym)
             thesis = await loop.run_in_executor(
-                None, lambda: committee.analyst_thesis(sym, pick["reason"], briefs, history, decision_id))
+                None, lambda: committee.analyst_thesis(sym, pick["reason"], briefs, history, decision_id, calibration))
             model_tags = {"analyst": thesis.pop("_downgraded_model", MODEL_MAP["analyst"])}
             yield _ev("thesis", symbol=sym, **thesis)
 
@@ -254,7 +259,7 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
             try:
                 s = await loop.run_in_executor(
                     None, lambda: solo.solo_analysis(
-                        sym, pick["reason"], briefs, history, decision_id + "-solo"))
+                        sym, pick["reason"], briefs, history, decision_id + "-solo", calibration))
                 s_model = s.pop("_downgraded_model", MODEL_MAP["solo"])
                 store.record_pick({
                     "symbol": sym, "arm": "SOLO", "edge": pick.get("edge_hint"),

@@ -113,9 +113,11 @@ async def _run_committee(loop, sym: str, pick: dict, articles: list[dict],
     try:
         briefs = await _gather_briefs(loop, sym, articles, price_ctx, decision_id)
         history = await loop.run_in_executor(None, store.symbol_history, sym)
+        calibration = committee.calibration_block(
+            await loop.run_in_executor(None, store.stats))
 
         thesis = _tag("analyst", await loop.run_in_executor(
-            None, lambda: committee.analyst_thesis(sym, pick["reason"], briefs, history, decision_id)))
+            None, lambda: committee.analyst_thesis(sym, pick["reason"], briefs, history, decision_id, calibration)))
         concerns_out = _tag("skeptic", await loop.run_in_executor(
             None, lambda: committee.skeptic_challenge(sym, thesis, briefs, decision_id)))
         concerns = concerns_out.get("concerns", [])
@@ -164,7 +166,7 @@ async def _run_committee(loop, sym: str, pick: dict, articles: list[dict],
         try:
             s = await loop.run_in_executor(
                 None, lambda: solo.solo_analysis(sym, pick["reason"], briefs, history,
-                                                 decision_id + "-solo"))
+                                                 decision_id + "-solo", calibration))
             solo_model = s.pop("_downgraded_model", MODEL_MAP["solo"])
             store.record_pick({
                 "symbol": sym, "arm": "SOLO", "edge": pick.get("edge_hint"),
