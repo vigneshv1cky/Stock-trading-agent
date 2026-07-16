@@ -35,8 +35,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/vigneshv1cky/alphadesk"
-Repository = "https://github.com/vigneshv1cky/alphadesk"
+Homepage = "https://github.com/vigneshv1cky/Stock-trading-agent"
+Repository = "https://github.com/vigneshv1cky/Stock-trading-agent"
 
 [tool.setuptools.packages.find]
 include = ["alphadesk*"]
