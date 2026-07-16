@@ -21,7 +21,7 @@ import threading
 import time
 from typing import Any, Callable, Optional
 
-from alphadesk.config import LLM_TIMEOUT_S, MODEL_MAP, TIERS, in_universe
+from alphadesk.config import LLM_TIMEOUT_S, LLM_TOOL_TIMEOUT_S, MODEL_MAP, TIERS, in_universe
 
 log = logging.getLogger("alphadesk.llm")
 
@@ -181,10 +181,13 @@ def _extract_json(text: str) -> Any:
 # ---------------------------------------------------------------------------
 
 def _one_shot(model: str, system: str, user: str,
-              tools: list[str] | None = None, max_turns: int = 1) -> tuple[str, int, int]:
+              tools: list[str] | None = None, max_turns: int = 1,
+              timeout: float | None = None) -> tuple[str, int, int]:
     """Single Agent SDK completion. Returns (text, input_tokens, output_tokens).
     tools/max_turns enable grounded (e.g. web-search) agents."""
     from claude_agent_sdk import ClaudeAgentOptions, query
+
+    timeout = timeout or (LLM_TOOL_TIMEOUT_S if tools else LLM_TIMEOUT_S)
 
     async def _run() -> tuple[str, int, int]:
         options = ClaudeAgentOptions(
@@ -210,7 +213,7 @@ def _one_shot(model: str, system: str, user: str,
                 tout = int(usage.get("output_tokens", 0) or 0)
         return text, tin, tout
 
-    coro = asyncio.wait_for(_run(), timeout=LLM_TIMEOUT_S)
+    coro = asyncio.wait_for(_run(), timeout=timeout)
     try:
         asyncio.get_running_loop()
     except RuntimeError:
@@ -227,7 +230,7 @@ def _one_shot(model: str, system: str, user: str,
 
     t = threading.Thread(target=_in_thread, daemon=True)
     t.start()
-    t.join(LLM_TIMEOUT_S + 10)
+    t.join(timeout + 10)
     if "error" in box:
         raise box["error"]
     if "value" not in box:

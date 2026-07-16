@@ -65,6 +65,7 @@ SOLO_ARM_EVERY_N = 3            # every Nth pick also goes to the solo agent
 TRIAGE_WINDOW_S = 120
 NEWS_POLL_INTERVAL_S = 300
 LLM_TIMEOUT_S = 120
+LLM_TOOL_TIMEOUT_S = 300  # longer cap for tool-using calls (web-search round-trips)
 FRICTION_BPS_PER_SIDE = 15      # grading haircut; doubled for LOW_LIQUIDITY
 LOW_LIQUIDITY_DOLLAR_VOL = 10_000_000  # avg daily dollar volume below this → tag
 

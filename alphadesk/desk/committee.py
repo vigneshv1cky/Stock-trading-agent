@@ -100,7 +100,7 @@ _ARBITER_SCHEMA = {
     "approved": {"type": bool},
     "adjusted_score": {"type": (int, float), "min": 0, "max": 100},
     "adjusted_confidence": {"type": (int, float), "min": 0, "max": 100},
-    "adjusted_horizon_days": {"type": int, "min": 1, "max": 10},
+    "adjusted_horizon_days": {"type": int, "min": 1, "max": 10, "optional": True},
     "verdict": {"type": str, "enum": ["CONFIRM", "WEAKEN", "REJECT"]},
     "summary": {"type": str, "maxlen": 800},
 }
@@ -223,11 +223,21 @@ def arbiter_verdict(symbol: str, thesis: dict, concerns: list[dict], rebuttal: d
 # Fact-check helper — numeric % claims vs actual price context (pure code)
 # ---------------------------------------------------------------------------
 
-_PCT_RE = re.compile(r"(?:^|[\s(])([+-]?\d{1,3}(?:\.\d+)?)\s?%")
+# Only flag %s the skeptic explicitly frames as a PRICE MOVE — a move-verb must
+# sit next to the number. Avoids false positives on valuation/guidance/support %s
+# (e.g. "revenue +1%", "1.1% above the 90-day low") that aren't price-move claims.
+_MOVE_PCT_RE = re.compile(
+    r"(?:ran|rose|fell|dropped|gained|lost|surged|plunged|jumped|rallied|slid|"
+    r"soared|sank|climbed|declined|crashed|tumbled|spiked|up|down)\s+(?:by\s+)?"
+    r"([+-]?\d{1,3}(?:\.\d+)?)\s?%"
+    r"|([+-]?\d{1,3}(?:\.\d+)?)\s?%\s+(?:move|rally|selloff|sell-off|drop|gain|"
+    r"decline|surge|plunge|pop|run|slide|jump)",
+    re.IGNORECASE,
+)
 
 
 def fact_check_concerns(concerns: list[dict], price_ctx: dict | None) -> list[str]:
-    """Flag skeptic percentage claims wildly inconsistent with real price data."""
+    """Flag skeptic PRICE-MOVE claims wildly inconsistent with real price data."""
     if not price_ctx:
         return []
     known = {
@@ -238,11 +248,12 @@ def fact_check_concerns(concerns: list[dict], price_ctx: dict | None) -> list[st
     flags = []
     for c in concerns:
         text = f"{c.get('claim','')} {c.get('evidence','')}"
-        for m in _PCT_RE.finditer(text):
-            val = abs(float(m.group(1)))
+        for m in _MOVE_PCT_RE.finditer(text):
+            raw = m.group(1) or m.group(2)
+            val = abs(float(raw))
             if val > 0.5 and known and min(abs(val - k) for k in known) > max(5.0, val):
                 flags.append(
-                    f"Skeptic cited {m.group(1)}% — no matching move in price data "
+                    f"Skeptic cited a {raw}% price move — no matching move in data "
                     f"(today={price_ctx.get('change_today_pct')}%, "
                     f"5d={price_ctx.get('change_5d_pct')}%, "
                     f"20d={price_ctx.get('change_20d_pct')}%)"

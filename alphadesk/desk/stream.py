@@ -24,9 +24,9 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from alphadesk.config import EXPOSURE_MAX_SHOCKS, MODEL_MAP, session
+from alphadesk.config import EXPOSURE_MAX_SHOCKS, MODEL_MAP, SOLO_ARM_EVERY_N, session
 from alphadesk.desk import briefs as briefs_mod
-from alphadesk.desk import committee, exposure, triage
+from alphadesk.desk import committee, exposure, solo, triage
 from alphadesk.ingest import news, prices
 from alphadesk.ledger import store
 from alphadesk.llm import LLMError
@@ -79,6 +79,8 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6, expose: 
 
     yield _ev("status", msg=f"{n} articles → {len(candidates)} companies with catalysts.")
 
+    ripple_syms: set[str] = set()   # names the Exposure Desk surfaced (prioritized into triage)
+
     # Exposure Desk — expand the most material shocks into ripple candidates
     # (the connected, tradable names that haven't moved). Gated to the top-N
     # most intense shocks for cost. Set expose=False for a light run.
@@ -113,6 +115,7 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6, expose: 
                                       "label": c["direction"].lower(), "category": "RIPPLE"}],
                         "relations": [],
                     })
+                    ripple_syms.add(csym)
                     yield _ev("exposure_candidate", shock=res["shock"], symbol=csym,
                               direction=c["direction"], chain=c["chain"], strength=c["strength"])
                     added += 1
@@ -120,9 +123,14 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6, expose: 
 
     yield _ev("status", msg="Triaging…")
 
-    # Build the triage window (price context per symbol)
+    # Build the triage window (price context per symbol). Ripple candidates are
+    # prioritized so the Exposure Desk's web-grounded work is never truncated out.
+    ordered = (
+        [kv for kv in candidates.items() if kv[0] in ripple_syms]
+        + [kv for kv in candidates.items() if kv[0] not in ripple_syms]
+    )
     window: dict[str, dict] = {}
-    for sym, arts in list(candidates.items())[:60]:
+    for sym, arts in ordered[:80]:
         ctx = await loop.run_in_executor(None, prices.get_context, sym)
         window[sym] = {
             "headlines": _headlines(arts),
@@ -153,7 +161,7 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6, expose: 
     yield _ev("status", msg=f"Committee debating {len(picks)} opportunities…")
 
     board: list[dict] = []
-    for pick in picks:
+    for pick_idx, pick in enumerate(picks):
         sym = pick["symbol"]
         decision_id = f"{sym}-{uuid.uuid4().hex[:8]}"
         price_ctx = window.get(sym, {}).get("price")
@@ -230,6 +238,31 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6, expose: 
         }
         board.append(row)
         yield _ev("decision", **row)
+
+        # Solo control arm — every Nth pick, one strong agent works the SAME
+        # briefs blind to the committee. The ledger later answers: does the
+        # committee actually beat one agent? (kill-criterion #2)
+        if (pick_idx + 1) % SOLO_ARM_EVERY_N == 0:
+            try:
+                s = await loop.run_in_executor(
+                    None, lambda: solo.solo_analysis(
+                        sym, pick["reason"], briefs, history, decision_id + "-solo"))
+                s_model = s.pop("_downgraded_model", MODEL_MAP["solo"])
+                store.record_pick({
+                    "symbol": sym, "arm": "SOLO", "edge": pick.get("edge_hint"),
+                    "trigger_src": "FIND_TRADES", "session": sess,
+                    "direction": s["direction"], "horizon_days": s["horizon_days"],
+                    "score": s["score"], "confidence": s["confidence"],
+                    "approved": int(bool(s["approved"])), "triage_reason": pick["reason"],
+                    "thesis": s["thesis"], "briefs": briefs, "model_tags": {"solo": s_model},
+                    "low_liquidity": int(bool(price_ctx and price_ctx.get("low_liquidity"))),
+                    "entry_price": (price_ctx or {}).get("last_price") if sess == "OPEN" else None,
+                    "spy_price": (prices.get_context("SPY") or {}).get("last_price"),
+                })
+                yield _ev("solo", symbol=sym, direction=s["direction"],
+                          horizon_days=s["horizon_days"], score=s["score"])
+            except LLMError as exc:
+                log.warning("Solo arm dropped %s: %s", sym, exc)
 
     # Chief — genuine head-to-head comparison across every debated idea
     # (not just sorting isolated conviction numbers). One Opus call.
