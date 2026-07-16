@@ -164,23 +164,6 @@ async def api_find_trades(request: Request, hours: float = 48.0,
     )
 
 
-@app.get("/api/miss")
-async def api_miss(symbol: str, note: str = "", days: int = 21):
-    """Post-mortem on a name the user thinks the desk missed — traces our own
-    logs to find where it fell out of the funnel, then diagnoses why. One LLM
-    call; returns the stage, evidence trail, and analyst verdict."""
-    import asyncio
-
-    from alphadesk.desk import postmortem
-
-    sym = (symbol or "").strip().upper()
-    if not sym:
-        raise HTTPException(400, "symbol required")
-    days = max(1, min(int(days), 90))
-    return await asyncio.get_running_loop().run_in_executor(
-        None, lambda: postmortem.diagnose_miss(sym, note, days))
-
-
 # ---------------------------------------------------------------------------
 # SPA — static bundle with index fallback (client handles the rest)
 # ---------------------------------------------------------------------------

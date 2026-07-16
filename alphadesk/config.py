@@ -43,7 +43,6 @@ MODEL_MAP: dict[str, str] = {
     "chief": "opus",           # comparative head-to-head selection across debated ideas
     "exposure_specialist": "sonnet",  # supplier/customer/competitor mapping (web-grounded)
     "exposure_synth": "opus",         # assembles ripple candidates from the mapped neighborhood
-    "miss": "opus",                   # miss post-mortem — low-volume, quality-critical diagnosis
 }
 
 # Exposure Desk fires only on the top-N most material shocks per run (cost gate)

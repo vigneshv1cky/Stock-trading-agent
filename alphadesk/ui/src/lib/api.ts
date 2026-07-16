@@ -93,23 +93,6 @@ export interface GraphSummary {
   relations: number
 }
 
-export interface MissResult {
-  symbol: string
-  stage: string
-  stage_label: string
-  what_happened: string
-  diagnosis: string
-  fix_type: "DATA" | "PROMPT" | "BUG" | "NONE"
-  suggested_fix: string
-  hindsight_risk: string
-  evidence: {
-    in_universe: boolean
-    rejections: unknown[]
-    approved: unknown[]
-    triage_skips: { window_ts: string; reason: string }[]
-  }
-}
-
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(path)
   if (!res.ok) throw new Error(`${path}: ${res.status}`)
@@ -124,10 +107,6 @@ export const api = {
     get<{ paused: string | null; windows: FunnelWindow[] }>(`/api/funnel?limit=${limit}`),
   tokens: (days = 1) => get<{ usage: TokenRow[] }>(`/api/tokens?days=${days}`),
   graph: () => get<GraphSummary>("/api/graph"),
-  miss: (symbol: string, note = "", days = 21) =>
-    get<MissResult>(
-      `/api/miss?symbol=${encodeURIComponent(symbol)}&note=${encodeURIComponent(note)}&days=${days}`,
-    ),
 }
 
 export function fmtAlpha(a: number | null): string {
