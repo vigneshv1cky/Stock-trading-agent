@@ -24,9 +24,9 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from alphadesk.config import MODEL_MAP, session
+from alphadesk.config import EXPOSURE_MAX_SHOCKS, MODEL_MAP, session
 from alphadesk.desk import briefs as briefs_mod
-from alphadesk.desk import committee, triage
+from alphadesk.desk import committee, exposure, triage
 from alphadesk.ingest import news, prices
 from alphadesk.ledger import store
 from alphadesk.llm import LLMError
@@ -51,7 +51,12 @@ def _avg_sentiment(articles: list[dict]) -> float:
     return round(sum(vals) / len(vals), 3) if vals else 0.0
 
 
-async def stream_find_trades(hours: float = 48.0, max_debates: int = 6):
+def _intensity(articles: list[dict]) -> float:
+    """Shock materiality proxy: |avg sentiment| × coverage."""
+    return abs(_avg_sentiment(articles)) * len(articles)
+
+
+async def stream_find_trades(hours: float = 48.0, max_debates: int = 6, expose: bool = True):
     """Async generator of deliberation events. Broad news window (default 48h —
     a batch run can afford to look far wider than the old live-tick engine)."""
     loop = asyncio.get_running_loop()
@@ -72,7 +77,48 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6):
         yield _ev("done", board=[])
         return
 
-    yield _ev("status", msg=f"{n} articles → {len(candidates)} companies with catalysts. Triaging…")
+    yield _ev("status", msg=f"{n} articles → {len(candidates)} companies with catalysts.")
+
+    # Exposure Desk — expand the most material shocks into ripple candidates
+    # (the connected, tradable names that haven't moved). Gated to the top-N
+    # most intense shocks for cost. Set expose=False for a light run.
+    if expose and candidates:
+        shocks = sorted(candidates.items(), key=lambda kv: -_intensity(kv[1]))
+        shock_inputs = [
+            (sym, " | ".join(a.get("title", "")[:120] for a in arts[:3]))
+            for sym, arts in shocks[:EXPOSURE_MAX_SHOCKS] if _intensity(arts) > 0.1
+        ]
+        if shock_inputs:
+            yield _ev("status",
+                      msg=f"Exposure Desk mapping supply-chain ripples from "
+                          f"{len(shock_inputs)} material shocks (web-verified)…")
+            for sym, _ in shock_inputs:
+                yield _ev("exposure_shock", symbol=sym)
+            exp_results = await exposure.run_exposure_desks(shock_inputs, "exposure")
+            added = 0
+            for res in exp_results:
+                for c in res["candidates"]:
+                    csym = c["symbol"]
+                    if csym in candidates:
+                        continue  # already surfaced directly by the news
+                    sentiment = 0.5 if c["direction"] == "LONG" else -0.5
+                    candidates.setdefault(csym, []).append({
+                        "id": f"ripple-{res['shock']}-{csym}",
+                        "title": f"[RIPPLE from {res['shock']}] {c['chain'][:110]}",
+                        "summary": f"HYPOTHESIS ({c['strength']}): {c['chain']}",
+                        "source": "ExposureDesk", "url": "",
+                        "published_at": since_dt.isoformat(), "category": "RIPPLE",
+                        "tickers": [csym],
+                        "mentions": [{"symbol": csym, "sentiment": sentiment,
+                                      "label": c["direction"].lower(), "category": "RIPPLE"}],
+                        "relations": [],
+                    })
+                    yield _ev("exposure_candidate", shock=res["shock"], symbol=csym,
+                              direction=c["direction"], chain=c["chain"], strength=c["strength"])
+                    added += 1
+            yield _ev("status", msg=f"Exposure Desk surfaced {added} ripple candidates.")
+
+    yield _ev("status", msg="Triaging…")
 
     # Build the triage window (price context per symbol)
     window: dict[str, dict] = {}

@@ -28,6 +28,9 @@ interface Ev {
   approved?: boolean
   board?: BoardRow[]
   skips?: { symbol: string; reason: string }[]
+  shock?: string
+  strength?: string
+  chain?: string
 }
 
 interface BoardRow {
@@ -46,6 +49,8 @@ interface BoardRow {
 }
 
 const BUBBLE: Record<string, string> = {
+  exposure_shock: "border-l-cyan-500 bg-muted/40",
+  exposure_candidate: "border-l-cyan-500",
   triage_pick: "border-l-yellow-500",
   brief: "border-l-zinc-500 bg-muted/40",
   thesis: "border-l-blue-500",
@@ -58,6 +63,27 @@ const BUBBLE: Record<string, string> = {
 function Line({ ev }: { ev: Ev }) {
   const cls = `rounded-md border border-l-4 ${BUBBLE[ev.type] ?? "border-l-border"} p-2.5 text-sm`
   switch (ev.type) {
+    case "exposure_shock":
+      return (
+        <div className={cls}>
+          <span className="text-xs font-semibold uppercase tracking-wider text-cyan-500">
+            Exposure Desk · mapping ripples from {ev.symbol}
+          </span>
+        </div>
+      )
+    case "exposure_candidate":
+      return (
+        <div className={cls}>
+          <span className="text-xs font-semibold uppercase tracking-wider text-cyan-500">
+            Ripple: {ev.shock} → {ev.symbol}
+          </span>{" "}
+          <span className={ev.direction === "LONG" ? "text-green-500" : "text-red-500"}>
+            {ev.direction}
+          </span>{" "}
+          <Badge variant="secondary">{ev.strength}</Badge>
+          <p className="mt-1 text-muted-foreground">{ev.chain}</p>
+        </div>
+      )
     case "triage_pick":
       return (
         <div className={cls}>

@@ -41,7 +41,11 @@ MODEL_MAP: dict[str, str] = {
     "solo": "opus",            # single-agent control arm
     "synthesizer": "opus",     # daily Top-N ranking (Phase 2)
     "chief": "opus",           # comparative head-to-head selection across debated ideas
+    "exposure_specialist": "sonnet",  # supplier/customer/competitor mapping (web-grounded)
 }
+
+# Exposure Desk fires only on the top-N most material shocks per run (cost gate)
+EXPOSURE_MAX_SHOCKS = int(os.environ.get("EXPOSURE_MAX_SHOCKS", "3"))
 
 for _role in list(MODEL_MAP):
     _override = os.environ.get(f"MODEL_{_role.upper()}")

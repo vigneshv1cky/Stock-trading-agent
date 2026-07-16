@@ -95,11 +95,15 @@ def freshness_brief(symbol: str, price_ctx: dict | None, articles: list[dict],
     }
     return _brief(
         "freshness",
-        f"Judge how much of the catalyst is ALREADY PRICED into {symbol}. Compare "
-        "the catalyst timing to the price move: if the stock already moved hard in "
-        "the catalyst's direction, the edge may be gone (a fade risk); if it has "
-        "barely moved, the repricing may still be ahead. State plainly whether "
-        "there's room left to run.",
+        f"Judge two things about {symbol}'s catalyst. (1) PRICED-IN: compare the "
+        "catalyst timing to the price move — if the stock already moved hard in the "
+        "catalyst's direction the edge may be gone (fade risk); if it barely moved, "
+        "the repricing may still be ahead. (2) LEGS: is this a POINT event that's "
+        "essentially over, or a STILL-DEVELOPING story likely to keep generating "
+        "moves over the coming days/weeks (earnings→estimate revisions, policy→"
+        "phased rollout, M&A→regulatory steps)? A developing story can carry a "
+        "multi-day drift even if the first move is priced. State plainly whether "
+        "there's room left to run and whether the story still has legs.",
         "Timing & move data:\n" + wrap_data("freshness", json.dumps(payload, default=str)),
         decision_id,
     )

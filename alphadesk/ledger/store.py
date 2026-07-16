@@ -73,6 +73,17 @@ CREATE TABLE IF NOT EXISTS funnel (
     skip_reasons TEXT                              -- JSON [{symbol, reason}]
 );
 
+CREATE TABLE IF NOT EXISTS relationships (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts          TEXT NOT NULL,
+    from_sym    TEXT NOT NULL,      -- the shocked company
+    to_sym      TEXT NOT NULL,      -- the exposed, tradable company
+    direction   TEXT,              -- LONG | SHORT (the ripple's implied trade)
+    chain       TEXT,              -- the causal chain, web-verified
+    UNIQUE(from_sym, to_sym, direction) ON CONFLICT REPLACE
+);
+CREATE INDEX IF NOT EXISTS idx_rel_from ON relationships (from_sym);
+
 CREATE TABLE IF NOT EXISTS token_usage (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     ts          TEXT NOT NULL,
@@ -259,6 +270,31 @@ def token_summary(days: int = 1) -> list[dict]:
 def install_token_sink() -> None:
     from alphadesk import llm
     llm.set_token_sink(token_sink)
+
+
+def save_relationship(from_sym: str, to_sym: str, direction: str, chain: str) -> None:
+    """Cache a web-verified ripple relationship (the graph-lite grows on use)."""
+    with _lock, _connect() as conn:
+        conn.execute(
+            "INSERT INTO relationships (ts, from_sym, to_sym, direction, chain)"
+            " VALUES (?,?,?,?,?)",
+            (_now(), from_sym.upper(), to_sym.upper(), direction, chain),
+        )
+
+
+def get_relationships(from_sym: str) -> list[dict]:
+    """Previously-discovered ripple neighbors for a shocked company."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT to_sym, direction, chain FROM relationships WHERE from_sym = ?"
+            " ORDER BY ts DESC", (from_sym.upper(),),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def relationship_count() -> int:
+    with _connect() as conn:
+        return int(conn.execute("SELECT count(*) FROM relationships").fetchone()[0])
 
 
 def add_run(kind: str, top_picks: list[dict]) -> None:

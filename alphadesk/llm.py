@@ -180,16 +180,18 @@ def _extract_json(text: str) -> Any:
 # The call
 # ---------------------------------------------------------------------------
 
-def _one_shot(model: str, system: str, user: str) -> tuple[str, int, int]:
-    """Single Agent SDK completion. Returns (text, input_tokens, output_tokens)."""
+def _one_shot(model: str, system: str, user: str,
+              tools: list[str] | None = None, max_turns: int = 1) -> tuple[str, int, int]:
+    """Single Agent SDK completion. Returns (text, input_tokens, output_tokens).
+    tools/max_turns enable grounded (e.g. web-search) agents."""
     from claude_agent_sdk import ClaudeAgentOptions, query
 
     async def _run() -> tuple[str, int, int]:
         options = ClaudeAgentOptions(
             system_prompt=system + _INJECTION_GUARD,
             model=model,
-            max_turns=1,
-            allowed_tools=[],
+            max_turns=max_turns,
+            allowed_tools=tools or [],
         )
         text, tin, tout = "", 0, 0
         async for msg in query(prompt=user, options=options):
@@ -240,6 +242,8 @@ def call_role(
     *,
     schema: dict,
     decision_id: str | None = None,
+    tools: list[str] | None = None,
+    max_turns: int = 1,
 ) -> dict:
     """Blocking, validated, guarded LLM call. Call from an executor thread.
 
@@ -255,7 +259,7 @@ def call_role(
     transient_retried = False
     for attempt in (1, 2):  # one validation re-ask, then fail
         try:
-            text, tin, tout = _one_shot(model, system, attempts_user)
+            text, tin, tout = _one_shot(model, system, attempts_user, tools=tools, max_turns=max_turns)
         except Exception as exc:
             err = str(exc).lower()
             if any(marker in err for marker in _RATE_LIMIT_MARKERS):
@@ -266,7 +270,7 @@ def call_role(
                 log.info("Transient LLM error for %s/%s (%s) — one retry", role, model, exc)
                 time.sleep(2)
                 try:
-                    text, tin, tout = _one_shot(model, system, attempts_user)
+                    text, tin, tout = _one_shot(model, system, attempts_user, tools=tools, max_turns=max_turns)
                 except Exception as exc2:
                     raise LLMError(f"{role}/{model} call failed after retry: {exc2}") from exc2
             else:
