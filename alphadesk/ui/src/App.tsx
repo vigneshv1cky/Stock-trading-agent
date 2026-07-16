@@ -207,15 +207,20 @@ export default function App() {
                     <TableCell />
                     <TableCell colSpan={9} className="pt-0 align-top text-xs leading-snug text-muted-foreground">
                       <span className="font-medium text-foreground">
-                        {p.direction === "LONG" ? "Long" : "Short"} for {p.horizon_days} trading day
-                        {p.horizon_days === 1 ? "" : "s"}.
-                      </span>{" "}
+                        {p.direction === "LONG" ? "Long" : "Short"} · {p.horizon_days}d
+                      </span>
                       {p.triage_reason && (
                         <>
-                          <span className="text-foreground/70">Catalyst:</span> {p.triage_reason}{" "}
+                          {" · "}
+                          <span className="text-foreground/70">Catalyst:</span> {p.triage_reason}
                         </>
                       )}
-                      {why && <span>— {why}</span>}
+                      {why && (
+                        <>
+                          {" · "}
+                          <span className="text-foreground/70">Verdict:</span> {why}
+                        </>
+                      )}
                     </TableCell>
                   </TableRow>
                 )}
