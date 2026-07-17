@@ -13,7 +13,6 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 
-from alphadesk.knowledge.graph import Graph
 from alphadesk.ledger import store
 
 _STATIC = Path(__file__).parent / "static"
@@ -102,14 +101,6 @@ def api_funnel(limit: int = 30):
 @app.get("/api/tokens")
 def api_tokens(days: int = 1):
     return {"days": days, "usage": store.token_summary(days)}
-
-
-@app.get("/api/graph")
-def api_graph():
-    from alphadesk.config import USE_GRAPH
-    if not USE_GRAPH:  # graph off in v2 — don't probe Neo4j (silences the connect warning)
-        return {"articles": 0, "companies": 0, "mentions": 0, "relations": 0}
-    return Graph.default().summary()
 
 
 _run_day = ""

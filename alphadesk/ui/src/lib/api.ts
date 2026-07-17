@@ -86,13 +86,6 @@ export interface TokenRow {
   output_tok: number
 }
 
-export interface GraphSummary {
-  articles: number
-  companies: number
-  mentions: number
-  relations: number
-}
-
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(path)
   if (!res.ok) throw new Error(`${path}: ${res.status}`)
@@ -106,7 +99,6 @@ export const api = {
   funnel: (limit = 20) =>
     get<{ paused: string | null; windows: FunnelWindow[] }>(`/api/funnel?limit=${limit}`),
   tokens: (days = 1) => get<{ usage: TokenRow[] }>(`/api/tokens?days=${days}`),
-  graph: () => get<GraphSummary>("/api/graph"),
 }
 
 export function fmtAlpha(a: number | null): string {

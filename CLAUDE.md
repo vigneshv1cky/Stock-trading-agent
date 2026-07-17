@@ -81,7 +81,7 @@ Polygon (financial) + GDELT (world, 11-cat) + Alpaca/yfinance (price context)
         │
    TRIAGE (sonnet)  ── picks ≤5, reasons for every pick AND skip
         │  per pick, in parallel:
-   4 BRIEFS (haiku): technical · news · fundamentals · freshness   (workflow.py: technical · news · graph)
+   2 BRIEFS (haiku): market (price+valuation+priced-in) · news
    + calibration prior (the desk's own graded scorecard, sample-gated at 8 trades)
         │
    ANALYST (sonnet) → SKEPTIC (opus) → fact-check (code) → ANALYST rebuttal → ARBITER (opus)
@@ -121,13 +121,12 @@ alphadesk/
     news.py            Polygon poll → Haiku enrichment → candidates
     world.py           GDELT world-news (11-category taxonomy, action-over-talk gradient)
     prices.py          lazy per-symbol context — NO triggers, NO universe sweeps
-  knowledge/graph.py   Neo4j world model (gated off by default: ALPHADESK_GRAPH)
   desk/
     stream.py          on-demand "Find Trades" SSE flow (v2 primary path)
     workflow.py        research_run() — batch pipeline (desk CLI, scheduler, replay)
     triage.py          all attention judgment, in one prompt
-    briefs.py          4 parallel haiku brief subagents
-    exposure.py        the Exposure Desk (web-grounded ripple mapping; replaces Neo4j)
+    briefs.py          2 parallel haiku brief subagents (market, news)
+    exposure.py        the Exposure Desk (web-grounded ripple mapping; replaced the old Neo4j graph)
     committee.py       Analyst ⇄ Skeptic → Arbiter, + calibration_block, + chief_synthesis
     solo.py            single-agent control arm
   ledger/
@@ -149,7 +148,6 @@ POLYGON_API_KEY=...           # financial news (optional)
 ADMIN_USERNAME=admin          # dashboard Basic Auth (fail-closed if unset)
 ADMIN_PASSWORD=...
 ALPHADESK_DATA=~/.alphadesk   # ledger.db, universe.json, relationship cache
-ALPHADESK_GRAPH=off           # set on/1/true to enable the Neo4j graph
 SOLO_ARM_EVERY_N=0            # 0=off (lean default); set e.g. 6 to measure committee-vs-solo
 ```
 
@@ -179,10 +177,8 @@ SOLO_ARM_EVERY_N=0            # 0=off (lean default); set e.g. 6 to measure comm
 
 - **Committee core is converged** (`desk/debate.py`): both entry points run the same
   `deliberate()` async generator for the analyst→skeptic→arbiter→ledger-write sequence,
-  so the core debate can't drift. What still differs per entry point *by design*:
-  brief-gathering (`stream.py` = fundamentals/freshness; `workflow.py` = the Neo4j graph
-  brief) and the solo-arm record (lightly duplicated). Unify those too if the CLI/replay
-  path ever needs to match the button exactly.
+  and now the same briefs (market + news), so they no longer drift. Only the solo-arm
+  record is still lightly duplicated between them.
 - **Unproven.** The full deep-scan path has not been run end-to-end live, and there
   are **zero graded trades** — so the calibration prior, kill criteria, and the entire
   alpha thesis are dormant. The highest-value next step is a supervised live run to

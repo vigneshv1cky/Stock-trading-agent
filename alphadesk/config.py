@@ -74,7 +74,6 @@ LLM_MAX_CONCURRENCY = int(os.environ.get("LLM_MAX_CONCURRENCY", "4"))  # caps co
 LLM_MAX_INPUT_CHARS = int(os.environ.get("LLM_MAX_INPUT_CHARS", "48000"))  # ~12k tok; DoS/cost cap
 LLM_TOOL_BUDGET_USD = float(os.environ.get("LLM_TOOL_BUDGET_USD", "0.50"))  # hard cap per web-agent call
 MAX_RUNS_PER_DAY = int(os.environ.get("MAX_RUNS_PER_DAY", "50"))  # Find Trades runaway guard
-USE_GRAPH = os.environ.get("ALPHADESK_GRAPH", "off").lower() in ("on", "1", "true")  # v2 drops Neo4j
 FRICTION_BPS_PER_SIDE = 15      # grading haircut; doubled for LOW_LIQUIDITY
 LOW_LIQUIDITY_DOLLAR_VOL = 10_000_000  # avg daily dollar volume below this → tag
 # Anti-survivorship: grade triage SKIPS too. A skip has no direction, so a "miss"

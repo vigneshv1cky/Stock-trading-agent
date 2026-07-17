@@ -7,5 +7,4 @@ fastapi                     # dashboard JSON API + SSE
 uvicorn                     # ASGI server
 python-dotenv               # .env config
 python-multipart            # form parsing
-neo4j>=5.0                  # knowledge graph (optional — gated behind ALPHADESK_GRAPH)
 mcp[cli]>=1.0.0             # MCP server integration

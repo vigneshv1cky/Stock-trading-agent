@@ -1,7 +1,7 @@
 """Specialist brief subagents — ephemeral, parallel, haiku.
 
-Three one-shot workers per candidate: technical (price structure), news
-(what was actually said), graph (neighborhood + priced-check evidence).
+Two one-shot workers per candidate: market (price structure + valuation +
+priced-in/legs, from code-computed numbers) and news (what was actually said).
 Each returns a compact evidence block the committee argues from.
 """
 
@@ -34,18 +34,6 @@ def _brief(kind: str, instructions: str, payload: str, decision_id: str | None) 
     except LLMError as exc:
         log.warning("%s brief failed: %s", kind, exc)
         return {"kind": kind, "summary": f"({kind} brief unavailable)", "key_facts": []}
-
-
-def technical_brief(symbol: str, price_ctx: dict | None, decision_id: str | None = None) -> dict:
-    if not price_ctx:
-        return {"kind": "technical", "summary": "(no price data)", "key_facts": []}
-    return _brief(
-        "technical",
-        "Describe the price structure: trend, where price sits vs its range, "
-        "whether recent action looks extended or quiet, and liquidity.",
-        "Price data:\n" + wrap_data("prices", json.dumps(price_ctx)),
-        decision_id,
-    )
 
 
 def news_brief(symbol: str, articles: list[dict], decision_id: str | None = None) -> dict:
@@ -89,20 +77,3 @@ def market_brief(symbol: str, price_ctx: dict | None, fundamentals: dict | None,
     )
 
 
-def graph_brief(symbol: str, neighborhood: dict, neighbor_moves: dict[str, float],
-                decision_id: str | None = None) -> dict:
-    payload = {
-        "typed_relations": neighborhood.get("typed_relations", []),
-        "co_mentioned_30d": neighborhood.get("co_mentioned", []),
-        "recent_articles": neighborhood.get("recent_articles", [])[:6],
-        "neighbor_5d_moves_pct": neighbor_moves,
-    }
-    return _brief(
-        "graph",
-        f"Describe {symbol}'s relationship neighborhood: which connected companies "
-        "had significant news, the evidence for each connection, and — critically — "
-        "whether connected-company moves suggest any spillover is ALREADY PRICED "
-        "(compare event direction vs the neighbor 5-day moves provided).",
-        "Neighborhood data:\n" + wrap_data("graph", json.dumps(payload, default=str)),
-        decision_id,
-    )

@@ -30,7 +30,6 @@ import json as _json
 from datetime import datetime, timezone
 
 from alphadesk.config import in_universe
-from alphadesk.knowledge.graph import Graph
 from alphadesk.llm import LLMError, call_role, wrap_data
 
 log = logging.getLogger("alphadesk.world")
@@ -229,7 +228,6 @@ def poll(categories_per_tick: int = 3) -> tuple[int, dict[str, list[dict]]]:
         return 0, {}
 
     events = assess(headlines)
-    Graph.default().ingest_world_events(events)
 
     candidates: dict[str, list[dict]] = {}
     for ev in events:

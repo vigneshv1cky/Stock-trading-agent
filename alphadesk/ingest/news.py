@@ -15,7 +15,7 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 
-from alphadesk.config import USE_GRAPH, in_universe
+from alphadesk.config import in_universe
 from alphadesk.ledger import store
 from alphadesk.llm import LLMError, call_role, wrap_data
 
@@ -205,9 +205,6 @@ def poll(since: datetime) -> tuple[int, dict[str, list[dict]]]:
         return 0, {}
 
     enriched = enrich(raw)
-    if USE_GRAPH:  # v2 drops Neo4j; the SQLite relationship cache replaces it
-        from alphadesk.knowledge.graph import Graph
-        Graph.default().ingest(enriched)
 
     candidates: dict[str, list[dict]] = {}
     dropped = 0

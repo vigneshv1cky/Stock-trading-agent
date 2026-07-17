@@ -3,7 +3,7 @@
   python -m alphadesk.main run        # scheduler + dashboard (the live system)
   python -m alphadesk.main backfill --hours 168
   python -m alphadesk.main grade      # one grading pass
-  python -m alphadesk.main status     # ledger + graph summary
+  python -m alphadesk.main status     # ledger summary
 """
 
 import argparse
@@ -18,7 +18,7 @@ def _setup_logging() -> None:
         format="%(asctime)s %(levelname).1s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
-    for noisy in ("httpx", "neo4j.notifications", "claude_agent_sdk"):
+    for noisy in ("httpx", "claude_agent_sdk"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
@@ -140,10 +140,8 @@ def main() -> None:
         from alphadesk.ledger.grader import grade_due
         print(f"graded {grade_due()} picks")
     elif args.cmd == "status":
-        from alphadesk.knowledge.graph import Graph
         from alphadesk.ledger import store
         print("ledger:", store.stats()["total"])
-        print("graph: ", Graph.default().summary())
         print("tokens:", store.token_summary(days=1))
     sys.exit(0)
 

@@ -3,7 +3,6 @@ import {
   api,
   fmtAlpha,
   type FunnelWindow,
-  type GraphSummary,
   type Pick,
   type Stats,
   type TokenRow,
@@ -26,7 +25,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { ArrowDown, ArrowUp, Brain, Database, Landmark, Zap } from "lucide-react"
+import { ArrowDown, ArrowUp, Brain, Landmark, Zap } from "lucide-react"
 
 function StatCard({
   icon,
@@ -60,7 +59,6 @@ export default function App() {
   const [stats, setStats] = useState<Stats | null>(null)
   const [funnel, setFunnel] = useState<{ paused: string | null; windows: FunnelWindow[] }>()
   const [tokens, setTokens] = useState<TokenRow[]>([])
-  const [graph, setGraph] = useState<GraphSummary | null>(null)
   const [selected, setSelected] = useState<number | null>(null)
 
   const refresh = useCallback(() => {
@@ -68,7 +66,6 @@ export default function App() {
     api.stats().then(setStats).catch(console.error)
     api.funnel().then(setFunnel).catch(console.error)
     api.tokens().then((d) => setTokens(d.usage)).catch(console.error)
-    api.graph().then(setGraph).catch(console.error)
   }, [])
 
   useEffect(() => {
@@ -94,7 +91,7 @@ export default function App() {
 
       <FindTrades onDone={refresh} />
 
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <StatCard
           icon={<Landmark className="h-4 w-4 text-muted-foreground" />}
           label="Decisions"
@@ -106,12 +103,6 @@ export default function App() {
           label="Avg net alpha"
           value={stats?.total.avg_alpha_net != null ? fmtAlpha(stats.total.avg_alpha_net) : "—"}
           sub={stats?.total.wins != null ? `${stats.total.wins} wins` : "awaiting grades"}
-        />
-        <StatCard
-          icon={<Database className="h-4 w-4 text-muted-foreground" />}
-          label="World model"
-          value={String(graph?.articles ?? "…")}
-          sub={`${graph?.relations ?? 0} relations · ${graph?.companies ?? 0} companies`}
         />
         <StatCard
           icon={<Brain className="h-4 w-4 text-muted-foreground" />}

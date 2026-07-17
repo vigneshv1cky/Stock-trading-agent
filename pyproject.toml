@@ -31,7 +31,6 @@ dependencies = [
     "uvicorn",
     "python-dotenv",
     "python-multipart",
-    "neo4j>=5.0",
 ]
 
 [project.urls]

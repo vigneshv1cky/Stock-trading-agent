@@ -26,7 +26,6 @@ from alphadesk.config import (
 from alphadesk.desk import briefs as briefs_mod
 from alphadesk.desk import committee, debate, solo, triage
 from alphadesk.ingest import prices
-from alphadesk.knowledge.graph import Graph
 from alphadesk.ledger import store
 from alphadesk.llm import LLMError
 
@@ -79,24 +78,10 @@ def _avg_sentiment(articles: list[dict]) -> float:
 
 async def _gather_briefs(loop, sym: str, articles: list[dict], price_ctx: dict | None,
                          decision_id: str) -> list[dict]:
-    graph = Graph.default()
-    neighborhood = await loop.run_in_executor(None, graph.neighborhood, sym)
-    # priced-check inputs: 5d moves of typed + top co-mentioned neighbors
-    neighbor_syms = {r["symbol"] for r in neighborhood.get("typed_relations", [])} | {
-        r["symbol"] for r in neighborhood.get("co_mentioned", [])[:4]
-    }
-    neighbor_moves: dict[str, float] = {}
-    for n_sym in list(neighbor_syms)[:6]:
-        ctx = await loop.run_in_executor(None, prices.get_context, n_sym)
-        if ctx:
-            neighbor_moves[n_sym] = ctx["change_5d_pct"]
-
+    fundamentals = await loop.run_in_executor(None, prices.get_fundamentals, sym)
     return list(await asyncio.gather(
-        loop.run_in_executor(None, briefs_mod.technical_brief, sym, price_ctx, decision_id),
+        loop.run_in_executor(None, briefs_mod.market_brief, sym, price_ctx, fundamentals, articles, decision_id),
         loop.run_in_executor(None, briefs_mod.news_brief, sym, articles, decision_id),
-        loop.run_in_executor(
-            None, briefs_mod.graph_brief, sym, neighborhood, neighbor_moves, decision_id
-        ),
     ))
 
 
