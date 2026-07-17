@@ -203,6 +203,7 @@ async def research_run(candidates: dict[str, list[dict]], trigger_src: str = "ST
     skips = result.get("skips", []) or []
     store.funnel_add(len(candidates), len(window), len(picks), len(skips),
                      [{"symbol": s.get("symbol", "?"), "reason": s.get("reason", "")} for s in skips])
+    store.record_skips(skips)  # grade forward: did we skip a mover? (anti-survivorship)
     for p in picks:
         log.info("TRIAGE PICK %s [%s]: %s", p["symbol"], p["edge_hint"], p["reason"])
 

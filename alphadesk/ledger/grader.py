@@ -139,4 +139,59 @@ def grade_due() -> int:
                 )
         except Exception as exc:
             log.warning("Grading failed for #%d %s: %s", row["id"], row["symbol"], exc)
+    return graded + grade_skips()
+
+
+def grade_skips() -> int:
+    """Grade triage skips whose window has elapsed: a directionless |move vs SPY|
+    over SKIP_GRADE_DAYS. missed=1 if it crossed the threshold — a dislocation we
+    never looked at. Reuses the warm _history_cache from grade_due()."""
+    import pandas as pd
+
+    from alphadesk.config import SKIP_GRADE_DAYS, SKIP_MISS_ABS_ALPHA
+    due = store.due_skips()
+    if not due:
+        return 0
+    spy = _daily_history("SPY")
+    sdays = spy.index.normalize().unique() if spy is not None else None
+    now_iso = datetime.now(timezone.utc).isoformat()
+    graded = 0
+
+    def _window_ret(df, sdates, entry_day) -> float | None:
+        after = sdates[sdates > entry_day]
+        if len(after) < SKIP_GRADE_DAYS:
+            return None
+        c0 = float(df.loc[df.index.normalize() == entry_day, "Close"].iloc[0])
+        c1 = float(df.loc[df.index.normalize() == after[SKIP_GRADE_DAYS - 1], "Close"].iloc[0])
+        return (c1 - c0) / c0 * 100 if c0 else None
+
+    for row in due:
+        try:
+            df = _daily_history(row["symbol"])
+            if df is None:  # unpriceable (delisted/odd suffix) — close it so we stop retrying
+                store.update_skip(row["id"], abs_alpha=None, missed=0, graded_at=now_iso)
+                graded += 1
+                continue
+            decided = datetime.fromisoformat(row["ts"])
+            if decided.tzinfo is None:
+                decided = decided.replace(tzinfo=timezone.utc)
+            decided_day = pd.Timestamp(decided.astimezone(ET)).normalize()
+            days = df.index.normalize().unique()
+            entry_c = days[days >= decided_day]
+            if len(entry_c) == 0:
+                continue
+            sym_ret = _window_ret(df, days, entry_c[0])
+            if sym_ret is None:
+                continue  # window not elapsed yet
+            spy_ret = 0.0
+            if sdays is not None:
+                s_entry_c = sdays[sdays >= entry_c[0]]
+                if len(s_entry_c) > 0:
+                    spy_ret = _window_ret(spy, sdays, s_entry_c[0]) or 0.0
+            abs_alpha = abs(sym_ret - spy_ret)
+            store.update_skip(row["id"], abs_alpha=round(abs_alpha, 3),
+                              missed=int(abs_alpha >= SKIP_MISS_ABS_ALPHA), graded_at=now_iso)
+            graded += 1
+        except Exception as exc:
+            log.warning("Skip grading failed for #%d %s: %s", row["id"], row["symbol"], exc)
     return graded

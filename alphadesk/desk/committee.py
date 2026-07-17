@@ -9,7 +9,33 @@ import json
 import logging
 import re
 
+from alphadesk.ledger import store
 from alphadesk.llm import call_role, wrap_data
+
+FN_MIN_SAMPLES = 8   # graded no's needed before the false-negative record is shown
+
+
+def false_negative_block(min_samples: int = FN_MIN_SAMPLES) -> str:
+    """The desk's false-negative record — how often saying NO was wrong. Facts to
+    weigh ("is the desk too cautious?"), not obey; sample-gated, empty until enough
+    graded no's to be signal. EXPERIMENT: whether feeding this back actually changes
+    behavior is itself unproven — the decisions it touches should be measured, not
+    assumed to improve. It builds the evidence regardless (see store.grade_skips)."""
+    stats = store.false_negative_stats()
+    rej, skp = stats.get("reject") or {}, stats.get("skip") or {}
+    lines = []
+    rg, rm = rej.get("graded") or 0, rej.get("missed") or 0
+    if rg >= min_samples:
+        lines.append(f"- rejections: {rm}/{rg} ({round(100 * rm / rg)}%) of your REJECTED "
+                     "calls would have beaten SPY — winners you passed on")
+    sg, sm = skp.get("graded") or 0, skp.get("missed") or 0
+    if sg >= min_samples:
+        lines.append(f"- skips: {sm}/{sg} ({round(100 * sm / sg)}%) of names you SKIPPED then "
+                     "made a big move vs SPY you never looked at")
+    if not lines:
+        return ""
+    return ("The desk's false-negative record so far (weigh it — is the desk too cautious "
+            "in saying no?):\n" + "\n".join(lines))
 
 log = logging.getLogger("alphadesk.committee")
 
@@ -248,8 +274,10 @@ def chief_synthesis(opportunities: list[dict], decision_id: str | None) -> dict:
 
 def arbiter_verdict(symbol: str, thesis: dict, concerns: list[dict], rebuttal: dict,
                     fact_flags: list[str], decision_id: str | None) -> dict:
+    fn = false_negative_block()
     user = (
-        f"Symbol: {symbol}\n"
+        (f"{fn}\n\n" if fn else "")
+        + f"Symbol: {symbol}\n"
         f"THESIS: {json.dumps(thesis)}\n"
         f"SKEPTIC CONCERNS: {json.dumps(concerns)}\n"
         f"ANALYST REBUTTAL: {json.dumps(rebuttal)}\n"

@@ -189,6 +189,7 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
 
     picks = (result.get("picks") or [])[:max_debates]
     skips = result.get("skips") or []
+    await loop.run_in_executor(None, store.record_skips, skips)  # grade forward: did we skip a mover?
     yield _ev("skips", skips=skips)
     for p in picks:
         yield _ev("triage_pick", symbol=p["symbol"], edge=p.get("edge_hint"),

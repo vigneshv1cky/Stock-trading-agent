@@ -97,6 +97,19 @@ CREATE TABLE IF NOT EXISTS token_usage (
     output_tok  INTEGER NOT NULL,
     decision_id TEXT
 );
+
+-- Triage skips, graded forward for missed moves (anti-survivorship). A skip has
+-- no direction, so 'missed' = a large |move vs SPY| we chose not to even look at.
+CREATE TABLE IF NOT EXISTS skips (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts         TEXT NOT NULL,
+    symbol     TEXT NOT NULL,
+    reason     TEXT,
+    abs_alpha  REAL,        -- |symbol return − SPY| over the grade window, %
+    missed     INTEGER,     -- 1 if abs_alpha crossed the miss threshold
+    graded_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_skips_ts ON skips (ts);
 """
 
 
@@ -369,6 +382,53 @@ def record_exit(pick_id: int, reason: str) -> None:
     with _lock, _connect() as conn:
         conn.execute("UPDATE picks SET exit_ts=?, exit_reason=? WHERE id=?",
                      (_now(), reason, int(pick_id)))
+
+
+def record_skips(skips: list[dict], cap: int = 30) -> None:
+    """Persist triage skips individually so their forward moves can be graded
+    (anti-survivorship: did we skip a name that then moved big?). Capped per
+    window to bound later grading cost."""
+    rows = [(_now(), (s.get("symbol") or "").upper(), (s.get("reason") or "")[:200])
+            for s in (skips or [])[:cap] if s.get("symbol")]
+    if not rows:
+        return
+    with _lock, _connect() as conn:
+        conn.executemany("INSERT INTO skips (ts, symbol, reason) VALUES (?,?,?)", rows)
+
+
+def due_skips(limit: int = 300) -> list[dict]:
+    """Ungraded skips (the grader filters by whether the window has elapsed)."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM skips WHERE graded_at IS NULL ORDER BY id LIMIT ?", (limit,)
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def update_skip(skip_id: int, **fields: Any) -> None:
+    if not fields:
+        return
+    cols = ", ".join(f"{k}=?" for k in fields)
+    with _lock, _connect() as conn:
+        conn.execute(f"UPDATE skips SET {cols} WHERE id=?", (*fields.values(), int(skip_id)))
+
+
+def false_negative_stats() -> dict:
+    """The survivorship scorecard: how often the desk was wrong to say NO.
+    - reject: graded COMMITTEE picks it REJECTED that would have beaten SPY
+      (alpha_net > 0 in the proposed direction — a passed-over winner).
+    - skip:   graded triage skips that made a big move we never looked at."""
+    with _connect() as conn:
+        rej = dict(conn.execute(
+            "SELECT count(*) AS graded,"
+            " sum(CASE WHEN alpha_net > 0 THEN 1 ELSE 0 END) AS missed"
+            " FROM picks WHERE arm='COMMITTEE' AND approved=0 AND graded_at IS NOT NULL"
+        ).fetchone())
+        skp = dict(conn.execute(
+            "SELECT count(*) AS graded, sum(CASE WHEN missed=1 THEN 1 ELSE 0 END) AS missed"
+            " FROM skips WHERE graded_at IS NOT NULL"
+        ).fetchone())
+    return {"reject": rej, "skip": skp}
 
 
 def add_run(kind: str, top_picks: list[dict]) -> None:

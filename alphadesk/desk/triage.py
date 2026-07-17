@@ -74,8 +74,11 @@ def run_triage(window: dict[str, dict], movers: list[dict]) -> dict:
             "dollar_vol": price.get("avg_dollar_vol"),
             "low_liquidity": price.get("low_liquidity"),
         }))
+    from alphadesk.desk.committee import false_negative_block
+    fn = false_negative_block()
     user = (
-        "Candidate window:\n" + wrap_data("candidates", "\n".join(lines))
+        (f"{fn}\n\n" if fn else "")
+        + "Candidate window:\n" + wrap_data("candidates", "\n".join(lines))
         + "\n\nToday's top movers (FYI ranking — investigate only if you judge it worthwhile):\n"
         + wrap_data("movers", json.dumps(movers) if movers else "unavailable")
     )

@@ -74,6 +74,10 @@ MAX_RUNS_PER_DAY = int(os.environ.get("MAX_RUNS_PER_DAY", "50"))  # Find Trades 
 USE_GRAPH = os.environ.get("ALPHADESK_GRAPH", "off").lower() in ("on", "1", "true")  # v2 drops Neo4j
 FRICTION_BPS_PER_SIDE = 15      # grading haircut; doubled for LOW_LIQUIDITY
 LOW_LIQUIDITY_DOLLAR_VOL = 10_000_000  # avg daily dollar volume below this → tag
+# Anti-survivorship: grade triage SKIPS too. A skip has no direction, so a "miss"
+# is a large move in EITHER direction vs SPY within a short window we ignored.
+SKIP_GRADE_DAYS = 3             # trading days to judge a skipped name's forward move
+SKIP_MISS_ABS_ALPHA = 6.0       # |symbol return − SPY| above this % = a missed dislocation
 
 # ---------------------------------------------------------------------------
 # Market sessions (ET clock math)

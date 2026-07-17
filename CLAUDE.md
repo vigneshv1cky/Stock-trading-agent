@@ -159,6 +159,13 @@ ALPHADESK_GRAPH=off           # set on/1/true to enable the Neo4j graph
   into agent prompts (dormant until ~8 graded trades); the real self-correction is the
   pre-committed **kill criteria** (drop the debate / an edge / the committee if the
   ledger says they don't pay). No free-form "lessons" memory (persistent injection risk).
+  NB: this is NOT the agent learning — the model is frozen; the loop builds evidence so
+  *humans* retune. In-context feedback changing behavior is itself an unproven experiment.
+- **Anti-survivorship** — the ledger grades REJECTED picks (counterfactuals), and
+  `grader.grade_skips()` grades triage SKIPS too (directionless: a move vs SPY over
+  `SKIP_GRADE_DAYS` above `SKIP_MISS_ABS_ALPHA`% = a dislocation we ignored). `committee.
+  false_negative_block()` feeds the reject/skip miss-rate into triage + arbiter — sample-
+  gated, removable, tagged as an experiment.
 - **Miss diagnosis is conversational** — ask Claude "why did we miss X?"; it traces
   `store.symbol_traces` / `symbol_skips` and fixes data/prompt/bug. No UI tool for it.
 - **Position review (exits)** — each run, BEFORE hunting new trades, re-checks every
