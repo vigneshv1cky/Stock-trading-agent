@@ -81,6 +81,7 @@ def main() -> None:
                          help="send exposure candidates to the committee")
     sub.add_parser("grade")
     sub.add_parser("status")
+    sub.add_parser("earnings", help="refresh the earnings calendar and show upcoming / recent")
     args = parser.parse_args()
 
     if args.cmd == "run":
@@ -143,6 +144,18 @@ def main() -> None:
         from alphadesk.ledger import store
         print("ledger:", store.stats()["total"])
         print("tokens:", store.token_summary(days=1))
+    elif args.cmd == "earnings":
+        from alphadesk.ingest import earnings
+        from alphadesk.ledger import store
+        print(f"calendar refreshed: {earnings.refresh_calendar()} rows")
+        up = store.upcoming_earnings(days=7)
+        print(f"\n=== reporting in the next 7 days ({len(up)}) ===")
+        for e in up[:30]:
+            print(f"  {e['report_date'][:16]}  {e['session'] or '?':3}  {e['symbol']:6}  est={e['eps_estimate']}")
+        rec = store.recently_reported(days=3)
+        print(f"\n=== reported in the last 3 days ({len(rec)}) ===")
+        for e in rec:
+            print(f"  {e['report_date'][:16]}  {e['symbol']:6}  est={e['eps_estimate']} act={e['eps_actual']} surprise={e['surprise_pct']}%")
     sys.exit(0)
 
 

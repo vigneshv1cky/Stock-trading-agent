@@ -111,6 +111,20 @@ CREATE TABLE IF NOT EXISTS skips (
 );
 CREATE INDEX IF NOT EXISTS idx_skips_ts ON skips (ts);
 
+-- Earnings calendar: who reported (with the EPS surprise) and who's about to.
+-- Drives "be ready" (upcoming) + post-earnings-drift candidates (recently reported).
+CREATE TABLE IF NOT EXISTS earnings (
+    symbol       TEXT NOT NULL,
+    report_date  TEXT NOT NULL,     -- ISO datetime of the report
+    session      TEXT,              -- BMO (pre-open) | AMC (post-close) | DAY
+    eps_estimate REAL,
+    eps_actual   REAL,              -- NULL until reported
+    surprise_pct REAL,              -- NULL until reported
+    fetched_at   TEXT,
+    UNIQUE(symbol, report_date) ON CONFLICT REPLACE
+);
+CREATE INDEX IF NOT EXISTS idx_earnings_date ON earnings (report_date);
+
 -- Persistent enrichment cache: an article's sentiment/category never changes, so
 -- enrich it once and reuse forever. Kills the biggest recurring token cost —
 -- re-enriching the same overlapping news on every run/restart.
@@ -467,6 +481,44 @@ def save_enrichment(items: list[dict]) -> None:
         conn.executemany(
             "INSERT OR REPLACE INTO enrichment_cache"
             " (article_id, sentiment, label, category, relations, ts) VALUES (?,?,?,?,?,?)", rows)
+
+
+def upsert_earnings(rows: list[dict]) -> None:
+    """Insert/replace earnings-calendar rows. Each: {symbol, report_date, session,
+    eps_estimate, eps_actual, surprise_pct}."""
+    data = [(r["symbol"].upper(), r["report_date"], r.get("session"),
+             r.get("eps_estimate"), r.get("eps_actual"), r.get("surprise_pct"), _now())
+            for r in (rows or []) if r.get("symbol") and r.get("report_date")]
+    if not data:
+        return
+    with _lock, _connect() as conn:
+        conn.executemany(
+            "INSERT INTO earnings (symbol, report_date, session, eps_estimate,"
+            " eps_actual, surprise_pct, fetched_at) VALUES (?,?,?,?,?,?,?)", data)
+
+
+def recently_reported(days: int = 3) -> list[dict]:
+    """Companies that REPORTED in the last `days` (actual EPS known) — the
+    post-earnings-drift candidate pool."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT symbol, report_date, session, eps_estimate, eps_actual, surprise_pct"
+            " FROM earnings WHERE eps_actual IS NOT NULL"
+            "   AND report_date >= datetime('now', ?) AND report_date <= datetime('now')"
+            " ORDER BY report_date DESC", (f"-{int(days)} days",),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def upcoming_earnings(days: int = 7) -> list[dict]:
+    """Companies REPORTING in the next `days` — the 'be ready' watch."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT symbol, report_date, session, eps_estimate FROM earnings"
+            " WHERE eps_actual IS NULL AND report_date >= datetime('now')"
+            "   AND report_date <= datetime('now', ?) ORDER BY report_date", (f"+{int(days)} days",),
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def add_run(kind: str, top_picks: list[dict]) -> None:
