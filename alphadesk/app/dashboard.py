@@ -103,6 +103,13 @@ def api_tokens(days: int = 1):
     return {"days": days, "usage": store.token_summary(days)}
 
 
+@app.get("/api/earnings")
+def api_earnings():
+    """Be-ready view: who reports next (upcoming) and who just reported (drift)."""
+    return {"upcoming": store.upcoming_earnings(days=7),
+            "reported": store.recently_reported(days=3)}
+
+
 _run_day = ""
 _run_count = 0
 

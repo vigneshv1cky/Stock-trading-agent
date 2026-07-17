@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useState } from "react"
 import {
   api,
   fmtAlpha,
+  type EarningsRow,
   type FunnelWindow,
   type Pick,
   type Stats,
@@ -59,6 +60,8 @@ export default function App() {
   const [stats, setStats] = useState<Stats | null>(null)
   const [funnel, setFunnel] = useState<{ paused: string | null; windows: FunnelWindow[] }>()
   const [tokens, setTokens] = useState<TokenRow[]>([])
+  const [earnings, setEarnings] =
+    useState<{ upcoming: EarningsRow[]; reported: EarningsRow[] }>()
   const [selected, setSelected] = useState<number | null>(null)
 
   const refresh = useCallback(() => {
@@ -66,6 +69,7 @@ export default function App() {
     api.stats().then(setStats).catch(console.error)
     api.funnel().then(setFunnel).catch(console.error)
     api.tokens().then((d) => setTokens(d.usage)).catch(console.error)
+    api.earnings().then(setEarnings).catch(console.error)
   }, [])
 
   useEffect(() => {
@@ -114,6 +118,43 @@ export default function App() {
             .join(" · ")}
         />
       </div>
+
+      {earnings && (earnings.reported.length > 0 || earnings.upcoming.length > 0) && (
+        <Card className="py-3">
+          <CardContent className="space-y-2 py-2 text-sm">
+            {earnings.reported.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Just reported
+                </span>
+                {earnings.reported.map((e) => (
+                  <Badge
+                    key={e.symbol}
+                    variant="secondary"
+                    className={(e.surprise_pct ?? 0) >= 0 ? "text-green-500" : "text-red-500"}
+                  >
+                    {e.symbol} {(e.surprise_pct ?? 0) >= 0 ? "+" : ""}
+                    {e.surprise_pct}%
+                  </Badge>
+                ))}
+              </div>
+            )}
+            {earnings.upcoming.length > 0 && (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Reporting soon
+                </span>
+                {earnings.upcoming.slice(0, 12).map((e) => (
+                  <span key={e.symbol + e.report_date} className="text-muted-foreground">
+                    <span className="font-medium text-foreground">{e.symbol}</span>{" "}
+                    {e.report_date.slice(5, 10)} {e.session}
+                  </span>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <section>
         <h2 className="mb-2 text-lg font-semibold">

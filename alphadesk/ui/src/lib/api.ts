@@ -86,6 +86,15 @@ export interface TokenRow {
   output_tok: number
 }
 
+export interface EarningsRow {
+  symbol: string
+  report_date: string
+  session: string | null
+  eps_estimate: number | null
+  eps_actual?: number | null
+  surprise_pct?: number | null
+}
+
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(path)
   if (!res.ok) throw new Error(`${path}: ${res.status}`)
@@ -99,6 +108,8 @@ export const api = {
   funnel: (limit = 20) =>
     get<{ paused: string | null; windows: FunnelWindow[] }>(`/api/funnel?limit=${limit}`),
   tokens: (days = 1) => get<{ usage: TokenRow[] }>(`/api/tokens?days=${days}`),
+  earnings: () =>
+    get<{ upcoming: EarningsRow[]; reported: EarningsRow[] }>("/api/earnings"),
 }
 
 export function fmtAlpha(a: number | null): string {
