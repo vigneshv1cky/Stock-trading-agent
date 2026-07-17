@@ -254,7 +254,7 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
         # Solo control arm — every Nth pick, one strong agent works the SAME
         # briefs blind to the committee. The ledger later answers: does the
         # committee actually beat one agent? (kill-criterion #2)
-        if (pick_idx + 1) % SOLO_ARM_EVERY_N == 0:
+        if SOLO_ARM_EVERY_N and (pick_idx + 1) % SOLO_ARM_EVERY_N == 0:
             try:
                 s = await loop.run_in_executor(
                     None, lambda: solo.solo_analysis(

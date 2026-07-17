@@ -133,7 +133,7 @@ async def _run_committee(loop, sym: str, pick: dict, articles: list[dict],
     sess = session()
     global _pick_counter
     _pick_counter += 1
-    if _pick_counter % SOLO_ARM_EVERY_N == 0:
+    if SOLO_ARM_EVERY_N and _pick_counter % SOLO_ARM_EVERY_N == 0:
         try:
             s = await loop.run_in_executor(
                 None, lambda: solo.solo_analysis(sym, pick["reason"], briefs, history,

@@ -150,6 +150,7 @@ ADMIN_USERNAME=admin          # dashboard Basic Auth (fail-closed if unset)
 ADMIN_PASSWORD=...
 ALPHADESK_DATA=~/.alphadesk   # ledger.db, universe.json, relationship cache
 ALPHADESK_GRAPH=off           # set on/1/true to enable the Neo4j graph
+SOLO_ARM_EVERY_N=0            # 0=off (lean default); set e.g. 6 to measure committee-vs-solo
 ```
 
 ## Key design notes

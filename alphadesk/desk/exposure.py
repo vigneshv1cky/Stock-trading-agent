@@ -26,7 +26,7 @@ from alphadesk.llm import LLMError, call_role, wrap_data
 log = logging.getLogger("alphadesk.exposure")
 
 _WEB = ["WebSearch"]        # grounding tool; degrades to parametric if unavailable
-_WEB_TURNS = 5
+_WEB_TURNS = 3              # web round-trips per specialist; each turn piles on context (token cost)
 
 _SPECIALIST_SCHEMA = {
     "related": {

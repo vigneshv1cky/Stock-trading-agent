@@ -110,6 +110,18 @@ CREATE TABLE IF NOT EXISTS skips (
     graded_at  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_skips_ts ON skips (ts);
+
+-- Persistent enrichment cache: an article's sentiment/category never changes, so
+-- enrich it once and reuse forever. Kills the biggest recurring token cost —
+-- re-enriching the same overlapping news on every run/restart.
+CREATE TABLE IF NOT EXISTS enrichment_cache (
+    article_id TEXT PRIMARY KEY,
+    sentiment  REAL,
+    label      TEXT,
+    category   TEXT,
+    relations  TEXT,       -- JSON [{a, rel, b}]
+    ts         TEXT
+);
 """
 
 
@@ -429,6 +441,32 @@ def false_negative_stats() -> dict:
             " FROM skips WHERE graded_at IS NOT NULL"
         ).fetchone())
     return {"reject": rej, "skip": skp}
+
+
+def get_enrichment(article_ids: list[str]) -> dict[str, dict]:
+    """Cached enrichments for these article ids → {id: {sentiment,label,category,relations}}."""
+    if not article_ids:
+        return {}
+    ph = ",".join("?" * len(article_ids))
+    with _connect() as conn:
+        rows = conn.execute(
+            f"SELECT article_id, sentiment, label, category, relations"
+            f" FROM enrichment_cache WHERE article_id IN ({ph})", article_ids
+        ).fetchall()
+    return {r["article_id"]: dict(r) for r in rows}
+
+
+def save_enrichment(items: list[dict]) -> None:
+    """Persist genuine enrichment results (not failure fallbacks). Each item:
+    {article_id, sentiment, label, category, relations:list}."""
+    rows = [(i["article_id"], i["sentiment"], i["label"], i["category"],
+             json.dumps(i["relations"]), _now()) for i in (items or [])]
+    if not rows:
+        return
+    with _lock, _connect() as conn:
+        conn.executemany(
+            "INSERT OR REPLACE INTO enrichment_cache"
+            " (article_id, sentiment, label, category, relations, ts) VALUES (?,?,?,?,?,?)", rows)
 
 
 def add_run(kind: str, top_picks: list[dict]) -> None:

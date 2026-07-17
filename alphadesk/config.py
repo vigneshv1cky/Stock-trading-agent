@@ -46,7 +46,7 @@ MODEL_MAP: dict[str, str] = {
 }
 
 # Exposure Desk fires only on the top-N most material shocks per run (cost gate)
-EXPOSURE_MAX_SHOCKS = int(os.environ.get("EXPOSURE_MAX_SHOCKS", "3"))
+EXPOSURE_MAX_SHOCKS = int(os.environ.get("EXPOSURE_MAX_SHOCKS", "2"))
 
 for _role in list(MODEL_MAP):
     _override = os.environ.get(f"MODEL_{_role.upper()}")
@@ -62,7 +62,10 @@ MAX_DEBATES_PER_DAY = 40
 # env-overridable for small hosts (e.g. 1GB GCP e2-micro → set 1: debates queue)
 MAX_CONCURRENT_WORKFLOWS = int(os.environ.get("MAX_CONCURRENT_WORKFLOWS", "4"))
 SYMBOL_REPICK_COOLDOWN_MIN = 15
-SOLO_ARM_EVERY_N = 3            # every Nth pick also goes to the solo agent
+# Solo control arm: every Nth pick also goes to one solo agent (measures whether
+# the committee beats one agent). 0 = OFF (default — pure overhead, no trade output);
+# set e.g. SOLO_ARM_EVERY_N=6 to resume accumulating that comparison.
+SOLO_ARM_EVERY_N = int(os.environ.get("SOLO_ARM_EVERY_N", "0"))
 TRIAGE_WINDOW_S = 120
 NEWS_POLL_INTERVAL_S = 300
 LLM_TIMEOUT_S = 120

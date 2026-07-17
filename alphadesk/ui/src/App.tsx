@@ -77,7 +77,10 @@ export default function App() {
     return () => clearInterval(t)
   }, [refresh])
 
-  const burn = tokens.reduce((a, t) => a + t.output_tok, 0)
+  const burn = tokens.reduce((a, t) => a + t.input_tok + t.output_tok, 0)
+  const topRoles = [...tokens].sort(
+    (a, b) => b.input_tok + b.output_tok - (a.input_tok + a.output_tok),
+  )
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-6">
@@ -114,9 +117,9 @@ export default function App() {
           icon={<Brain className="h-4 w-4 text-muted-foreground" />}
           label="Tokens today"
           value={burn > 0 ? `${Math.round(burn / 1000)}k` : "0"}
-          sub={tokens
+          sub={topRoles
             .slice(0, 3)
-            .map((t) => `${t.role} ${Math.round(t.output_tok / 1000)}k`)
+            .map((t) => `${t.role} ${Math.round((t.input_tok + t.output_tok) / 1000)}k`)
             .join(" · ")}
         />
       </div>

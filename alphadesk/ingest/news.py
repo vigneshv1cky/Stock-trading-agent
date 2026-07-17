@@ -9,18 +9,20 @@ the graph, foreign/private names included. Only CANDIDATES (things that may
 become decisions) are filtered to the tradable pick universe.
 """
 
+import json
 import logging
 import os
 import time
 from datetime import datetime, timedelta, timezone
 
 from alphadesk.config import USE_GRAPH, in_universe
+from alphadesk.ledger import store
 from alphadesk.llm import LLMError, call_role, wrap_data
 
 log = logging.getLogger("alphadesk.news")
 
 _POLYGON_KEY = os.environ.get("POLYGON_API_KEY", "")
-_BATCH = 15               # articles per enrichment call
+_BATCH = 30               # articles per enrichment call (bigger batch = fewer calls = less overhead)
 _MAX_SCAN = 400           # cap raw articles paged through (free-tier rate-limit guard)
 _seen_ids: set[str] = set()
 
@@ -124,14 +126,21 @@ def fetch_articles(since: datetime, limit: int = 200) -> list[dict]:
 
 
 def enrich(articles: list[dict]) -> list[dict]:
-    """Attach sentiment/label/relations to each article via batched haiku calls.
+    """Attach sentiment/label/relations to each article, reusing the persistent
+    cache so overlapping news is never re-enriched across runs/restarts (the
+    biggest recurring token cost). Only uncached articles hit haiku.
 
-    On LLM failure a batch falls back to neutral sentiment with no relations —
-    the graph still gets the mention structure (facts survive; judgment waits).
+    On LLM failure a batch falls back to neutral/UNCLASSIFIED (stays candidate-
+    eligible so an outage never silently drops real news) — and is NOT cached, so
+    it gets a real enrichment on a later run.
     """
-    enriched: list[dict] = []
-    for start in range(0, len(articles), _BATCH):
-        batch = articles[start:start + _BATCH]
+    cached = store.get_enrichment([a["id"] for a in articles])
+    to_enrich = [a for a in articles if a["id"] not in cached]
+    fresh: dict[str, dict] = {}        # article_id → enrichment (all uncached)
+    cacheable: list[dict] = []         # only genuine results (not fallbacks)
+
+    for start in range(0, len(to_enrich), _BATCH):
+        batch = to_enrich[start:start + _BATCH]
         numbered = "\n".join(
             f"{i + 1}. [{', '.join(a['tickers'])}] {a['title']}"
             + (f" — {a['summary'][:200]}" if a["summary"] else "")
@@ -149,26 +158,37 @@ def enrich(articles: list[dict]) -> list[dict]:
             log.warning("Enrichment batch failed (%s) — neutral fallback ×%d", exc, len(batch))
 
         for i, art in enumerate(batch):
-            item = results.get(i + 1, {})
-            sentiment = float(item.get("sentiment", 0.0))
-            label = item.get("label", "neutral")
-            # UNCLASSIFIED only on enrichment failure — stays candidate-eligible
-            # so an LLM outage never silently drops real news (triage judges it).
-            category = item.get("category", "UNCLASSIFIED")
-            relations = [
-                {"a": r["a"], "rel": r["rel"], "b": r["b"], "evidence_url": art["url"]}
-                for r in (item.get("relations") or [])
-            ]
-            enriched.append({
-                **art,
-                "category": category,
-                "mentions": [
-                    {"symbol": t, "sentiment": sentiment, "label": label,
-                     "category": category}
-                    for t in art["tickers"]
-                ],
-                "relations": relations,
-            })
+            item = results.get(i + 1)
+            rec = {
+                "sentiment": float((item or {}).get("sentiment", 0.0)),
+                "label": (item or {}).get("label", "neutral"),
+                "category": (item or {}).get("category", "UNCLASSIFIED"),
+                "relations": [{"a": r["a"], "rel": r["rel"], "b": r["b"]}
+                              for r in ((item or {}).get("relations") or [])],
+            }
+            fresh[art["id"]] = rec
+            if item is not None:  # genuine result → safe to cache forever
+                cacheable.append({"article_id": art["id"], **rec})
+
+    store.save_enrichment(cacheable)
+
+    enriched: list[dict] = []
+    for art in articles:
+        e = cached.get(art["id"]) or fresh[art["id"]]
+        rels = e["relations"]
+        if isinstance(rels, str):        # from the DB it's a JSON string
+            rels = json.loads(rels or "[]")
+        enriched.append({
+            **art,
+            "category": e["category"],
+            "mentions": [
+                {"symbol": t, "sentiment": e["sentiment"], "label": e["label"],
+                 "category": e["category"]}
+                for t in art["tickers"]
+            ],
+            "relations": [{"a": r["a"], "rel": r["rel"], "b": r["b"],
+                           "evidence_url": art["url"]} for r in rels],
+        })
     return enriched
 
 
