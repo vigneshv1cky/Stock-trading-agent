@@ -93,7 +93,7 @@ _ANGLES = [
 ]
 
 
-def map_exposure(shock: str, event: str, decision_id: str | None = None) -> dict:
+def map_connections(shock: str, event: str, decision_id: str | None = None) -> dict:
     """One shock → ripple candidates. The 3 specialists run in PARALLEL (each a
     web-grounded task), then the synthesist. Returns {shock, candidates, neighborhood}."""
     from concurrent.futures import ThreadPoolExecutor
@@ -150,12 +150,12 @@ def map_exposure(shock: str, event: str, decision_id: str | None = None) -> dict
     return {"shock": shock, "candidates": candidates, "neighborhood": combined}
 
 
-async def run_exposure_desks(shocks: list[tuple[str, str]], decision_id: str | None = None):
+async def run_connections(shocks: list[tuple[str, str]], decision_id: str | None = None):
     """Fan out one Exposure Desk per material shock, in parallel.
     shocks: list of (shocked_symbol, event_text). Returns list of exposure results."""
     loop = asyncio.get_running_loop()
     results = await asyncio.gather(*[
-        loop.run_in_executor(None, map_exposure, sym, event, decision_id)
+        loop.run_in_executor(None, map_connections, sym, event, decision_id)
         for sym, event in shocks
     ])
     return list(results)

@@ -38,7 +38,7 @@ _SCHEMA = {
 }
 
 
-def solo_analysis(symbol: str, triage_reason: str, briefs: list[dict],
+def loner_analysis(symbol: str, triage_reason: str, briefs: list[dict],
                   history: list[dict], decision_id: str | None,
                   calibration: str = "") -> dict:
     memory = (

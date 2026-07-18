@@ -185,7 +185,7 @@ def calibration_block(stats: dict, min_samples: int = CALIB_MIN_SAMPLES) -> str:
     )
 
 
-def analyst_thesis(symbol: str, triage_reason: str, briefs: list[dict],
+def researcher_case(symbol: str, triage_reason: str, briefs: list[dict],
                    history: list[dict], decision_id: str | None,
                    calibration: str = "") -> dict:
     calib = f"{calibration}\n\n" if calibration else ""
@@ -197,7 +197,7 @@ def analyst_thesis(symbol: str, triage_reason: str, briefs: list[dict],
                      decision_id=decision_id)
 
 
-def skeptic_challenge(symbol: str, thesis: dict, briefs: list[dict],
+def critic_challenge(symbol: str, thesis: dict, briefs: list[dict],
                       decision_id: str | None) -> dict:
     user = (
         f"Symbol: {symbol}\nAnalyst thesis: {json.dumps(thesis)}\n\n"
@@ -207,7 +207,7 @@ def skeptic_challenge(symbol: str, thesis: dict, briefs: list[dict],
                      decision_id=decision_id)
 
 
-def analyst_rebuttal(symbol: str, thesis: dict, concerns: list[dict],
+def researcher_reply(symbol: str, thesis: dict, concerns: list[dict],
                      decision_id: str | None) -> dict:
     user = (
         f"Symbol: {symbol}\nYour thesis: {json.dumps(thesis)}\n"
@@ -252,7 +252,7 @@ _CHIEF_SCHEMA = {
 }
 
 
-def chief_synthesis(opportunities: list[dict], decision_id: str | None) -> dict:
+def head_ranking(opportunities: list[dict], decision_id: str | None) -> dict:
     """Head-to-head comparison across all debated ideas → ranked selection.
 
     `opportunities`: board rows with symbol, direction, horizon_days, edge,
@@ -272,7 +272,7 @@ def chief_synthesis(opportunities: list[dict], decision_id: str | None) -> dict:
                      decision_id=decision_id)
 
 
-def arbiter_verdict(symbol: str, thesis: dict, concerns: list[dict], rebuttal: dict,
+def judge_verdict(symbol: str, thesis: dict, concerns: list[dict], rebuttal: dict,
                     fact_flags: list[str], decision_id: str | None) -> dict:
     fn = false_negative_block()
     user = (

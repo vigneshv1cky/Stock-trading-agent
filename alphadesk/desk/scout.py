@@ -60,7 +60,7 @@ _SCHEMA = {
 }
 
 
-def run_triage(window: dict[str, dict], movers: list[dict]) -> dict:
+def run_scout(window: dict[str, dict], movers: list[dict]) -> dict:
     """window: symbol → {headlines: [...], avg_sentiment, price: {...}|None}."""
     if not window:
         return {"picks": [], "skips": []}

@@ -144,7 +144,7 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
             pctx = await loop.run_in_executor(None, prices.get_context, psym)
             fresh = candidates.get(psym, [])
             verdict = await loop.run_in_executor(
-                None, review.reevaluate, pos, pctx, fresh, f"reeval-{pos['id']}")
+                None, review.review_position, pos, pctx, fresh, f"reeval-{pos['id']}")
             if verdict["decision"] == "EXIT":
                 await loop.run_in_executor(None, store.record_exit, pos["id"], verdict["reason"])
                 yield _ev("position_exit", id=pos["id"], symbol=psym, direction=pos["direction"],
@@ -190,7 +190,7 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
                           f"{len(shock_inputs)} material shocks (web-verified)…")
             for sym, _ in shock_inputs:
                 yield _ev("exposure_shock", symbol=sym)
-            exp_results = await connections.run_exposure_desks(shock_inputs, "exposure")
+            exp_results = await connections.run_connections(shock_inputs, "exposure")
             added = 0
             for res in exp_results:
                 for c in res["candidates"]:
@@ -269,7 +269,7 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
     movers = await loop.run_in_executor(None, prices.movers)
 
     try:
-        result = await loop.run_in_executor(None, scout.run_triage, window, movers)
+        result = await loop.run_in_executor(None, scout.run_scout, window, movers)
     except LLMError as exc:
         yield _ev("status", msg=f"Triage failed: {exc}")
         yield _ev("done", board=[])
@@ -351,7 +351,7 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
         if SOLO_ARM_EVERY_N and (pick_idx + 1) % SOLO_ARM_EVERY_N == 0:
             try:
                 s = await loop.run_in_executor(
-                    None, lambda: loner.solo_analysis(
+                    None, lambda: loner.loner_analysis(
                         sym, pick["reason"], briefs, history, decision_id + "-solo", calibration))
                 s_model = s.pop("_downgraded_model", MODEL_MAP["loner"])
                 store.record_pick({
@@ -376,7 +376,7 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
         yield _ev("status", msg="Chief comparing all opportunities head-to-head…")
         try:
             chief = await loop.run_in_executor(
-                None, lambda: team.chief_synthesis(board, "chief"))
+                None, lambda: team.head_ranking(board, "chief"))
             ranking = {r["symbol"].upper(): r for r in chief.get("ranked", [])}
             order = {r["symbol"].upper(): i for i, r in enumerate(chief.get("ranked", []))}
             for row in board:

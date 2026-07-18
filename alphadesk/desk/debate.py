@@ -37,13 +37,13 @@ async def deliberate(sym: str, pick: dict, briefs: list[dict], price_ctx: dict |
     loop = asyncio.get_running_loop()
 
     thesis = await loop.run_in_executor(
-        None, lambda: team.analyst_thesis(
+        None, lambda: team.researcher_case(
             sym, pick["reason"], briefs, history, decision_id, calibration))
     model_tags = {"researcher": thesis.pop("_downgraded_model", MODEL_MAP["researcher"])}
     yield {"type": "thesis", "symbol": sym, **thesis}
 
     concerns_out = await loop.run_in_executor(
-        None, lambda: team.skeptic_challenge(sym, thesis, briefs, decision_id))
+        None, lambda: team.critic_challenge(sym, thesis, briefs, decision_id))
     model_tags["critic"] = concerns_out.pop("_downgraded_model", MODEL_MAP["critic"])
     concerns = concerns_out.get("concerns", [])
     for c in concerns:
@@ -54,12 +54,12 @@ async def deliberate(sym: str, pick: dict, briefs: list[dict], price_ctx: dict |
         yield {"type": "fact_flag", "symbol": sym, "text": f}
 
     rebuttal = await loop.run_in_executor(
-        None, lambda: team.analyst_rebuttal(sym, thesis, concerns, decision_id))
+        None, lambda: team.researcher_reply(sym, thesis, concerns, decision_id))
     rebuttal.pop("_downgraded_model", None)
     yield {"type": "rebuttal", "symbol": sym, **rebuttal}
 
     verdict = await loop.run_in_executor(
-        None, lambda: team.arbiter_verdict(sym, thesis, concerns, rebuttal, flags, decision_id))
+        None, lambda: team.judge_verdict(sym, thesis, concerns, rebuttal, flags, decision_id))
     model_tags["judge"] = verdict.pop("_downgraded_model", MODEL_MAP["judge"])
 
     sess = session()

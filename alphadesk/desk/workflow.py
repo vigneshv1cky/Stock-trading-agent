@@ -120,7 +120,7 @@ async def _run_committee(loop, sym: str, pick: dict, articles: list[dict],
     if SOLO_ARM_EVERY_N and _pick_counter % SOLO_ARM_EVERY_N == 0:
         try:
             s = await loop.run_in_executor(
-                None, lambda: loner.solo_analysis(sym, pick["reason"], briefs, history,
+                None, lambda: loner.loner_analysis(sym, pick["reason"], briefs, history,
                                                  decision_id + "-solo", calibration))
             solo_model = s.pop("_downgraded_model", MODEL_MAP["loner"])
             store.record_pick({
@@ -176,7 +176,7 @@ async def research_run(candidates: dict[str, list[dict]], trigger_src: str = "ST
     movers = await loop.run_in_executor(None, prices.movers)
 
     try:
-        result = await loop.run_in_executor(None, scout.run_triage, window, movers)
+        result = await loop.run_in_executor(None, scout.run_scout, window, movers)
     except LLMError as exc:
         log.warning("Triage failed — window dropped: %s", exc)
         store.funnel_add(len(candidates), len(window), 0, len(window),

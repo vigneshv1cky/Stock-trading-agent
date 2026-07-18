@@ -31,7 +31,7 @@ _SCHEMA = {
 }
 
 
-def reevaluate(pick: dict, price_ctx: dict | None, articles: list[dict],
+def review_position(pick: dict, price_ctx: dict | None, articles: list[dict],
                decision_id: str | None = None) -> dict:
     """Re-check one open position → {decision, reason}. HOLD is the safe default."""
     move = None
