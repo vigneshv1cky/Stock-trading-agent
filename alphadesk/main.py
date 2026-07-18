@@ -20,6 +20,9 @@ def _setup_logging() -> None:
     )
     for noisy in ("httpx", "claude_agent_sdk"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
+    # yfinance logs BRK.A/.B-style "possibly delisted" at ERROR for tickers it
+    # can't price; the app handles missing prices, so silence the spam.
+    logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 
 def _web_server():

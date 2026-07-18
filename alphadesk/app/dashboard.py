@@ -6,6 +6,7 @@ Frontend: built by `pnpm build` in alphadesk/ui → alphadesk/app/static/.
 """
 
 import base64
+import logging
 import os
 import secrets
 from pathlib import Path
@@ -133,6 +134,45 @@ def _within_daily_cap() -> bool:
     return True
 
 
+_run_log = logging.getLogger("alphadesk.run")
+
+
+def _log_run_event(ev: dict) -> None:
+    """Mirror the key beats of a live Find Trades run to the terminal, in real
+    time — the browser gets the full transcript, the terminal gets the headlines."""
+    t = ev.get("type")
+    sym = ev.get("symbol", "")
+    if t == "status":
+        _run_log.info("· %s", ev.get("msg", ""))
+    elif t == "exposure_candidate":
+        _run_log.info("  ripple  %s → %s (%s)", ev.get("shock", ""), sym, ev.get("direction", ""))
+    elif t == "triage_pick":
+        _run_log.info("SCOUT   %-6s [%s] %s", sym, ev.get("edge") or "?", (ev.get("reason") or "")[:80])
+    elif t == "thesis":
+        _run_log.info("  case  %-6s %s ~%sd score %s", sym, ev.get("direction", ""),
+                      ev.get("horizon_days", ""), ev.get("score", ""))
+    elif t == "counter":
+        if ev.get("stance") == "FLIP":
+            _run_log.info("  CRITIC reverses %-6s %s → %s", sym,
+                          ev.get("proposed_from", ""), ev.get("counter_direction", ""))
+        else:
+            _run_log.info("  CRITIC stand-aside %s", sym)
+    elif t == "decision":
+        _run_log.info("DECIDE  %-6s %s  %s  conf %s%s", sym, ev.get("direction", ""),
+                      ev.get("verdict", ""), ev.get("conviction", ""),
+                      "  ⟲ REVERSED" if ev.get("flipped") else "")
+    elif t == "position_exit":
+        _run_log.info("EXIT    %-6s %s", sym, (ev.get("reason") or "")[:80])
+    elif t == "chief":
+        board = ev.get("board") or []
+        _run_log.info("HEAD    ranked %d, %d worth acting on", len(board),
+                      sum(1 for r in board if r.get("take")))
+    elif t == "done":
+        board = ev.get("board") or []
+        _run_log.info("── run complete — %d ideas, %d worth acting on ──", len(board),
+                      sum(1 for r in board if r.get("take")))
+
+
 @app.get("/api/find-trades")
 async def api_find_trades(request: Request, hours: float = 24.0,
                           max_debates: int = 6, expose: bool = False):
@@ -152,13 +192,16 @@ async def api_find_trades(request: Request, hours: float = 24.0,
             yield f"data: {_json.dumps({'type': 'status', 'msg': f'daily run cap reached ({MAX_RUNS_PER_DAY}/day) — try again tomorrow'})}\n\n"
             yield f"data: {_json.dumps({'type': 'done', 'board': []})}\n\n"
             return
+        _run_log.info("── Find Trades: scanning %.0fh%s ──", hours, " (deep)" if expose else "")
         try:
             async for event in stream_find_trades(
                 hours=hours, max_debates=max_debates, expose=expose,
                 is_disconnected=request.is_disconnected,
             ):
+                _log_run_event(event)
                 yield f"data: {_json.dumps(event)}\n\n"
         except Exception as exc:  # never leave the client hanging
+            _run_log.error("run error: %s", exc)
             yield f"data: {_json.dumps({'type': 'status', 'msg': f'run error: {exc}'})}\n\n"
             yield f"data: {_json.dumps({'type': 'done', 'board': []})}\n\n"
 
