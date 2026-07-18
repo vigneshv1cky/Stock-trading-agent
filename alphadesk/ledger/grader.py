@@ -143,7 +143,7 @@ def grade_due() -> int:
 
 
 def grade_skips() -> int:
-    """Grade triage skips whose window has elapsed: a directionless |move vs SPY|
+    """Grade scout skips whose window has elapsed: a directionless |move vs SPY|
     over SKIP_GRADE_DAYS. missed=1 if it crossed the threshold — a dislocation we
     never looked at. Reuses the warm _history_cache from grade_due()."""
     import pandas as pd

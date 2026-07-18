@@ -1,7 +1,7 @@
 """The Solo control arm — one strong single agent (opus), no team.
 
-Runs on every ~Nth pick with the SAME briefs and memory the committee gets,
-producing the same output schema. Its graded track record vs the committee's
+Runs on every ~Nth pick with the SAME briefs and memory the team gets,
+producing the same output schema. Its graded track record vs the team's
 answers the field's central question on our own data: does multi-agent
 deliberation beat one good agent, net of tokens? (Kill criterion #2.)
 """
@@ -14,12 +14,12 @@ from alphadesk.llm import call_role, wrap_data
 log = logging.getLogger("alphadesk.loner")
 
 _SYSTEM = (
-    "You are a senior stock analyst working ALONE on a predictive research "
+    "You are a senior stock researcher working ALONE on a predictive research "
     "desk. The question: will this stock OUTPERFORM or UNDERPERFORM the market "
     "over the next 1-10 TRADING DAYS from now? If a move already happened, the "
     "only question is what happens next.\n"
     "Reason carefully from the briefs: form a thesis, then genuinely stress-test "
-    "it yourself (what would a skeptic say? is the story already priced?), then "
+    "it yourself (what would a critic say? is the story already priced?), then "
     "commit. Choose the horizon that matches the mechanism. score: 0-100 (>50 "
     "LONG conviction, <50 SHORT); confidence: 0-100. approved: YOUR final call — "
     "would you put this prediction on the book, true or false?\n"

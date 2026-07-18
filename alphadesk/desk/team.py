@@ -1,8 +1,8 @@
-"""The committee — Analyst (sonnet) ⇄ Skeptic (opus) → Arbiter (opus).
+"""The team — Researcher (sonnet) ⇄ Critic (opus) → Judge (opus).
 
 Sequential deliberation over the specialist briefs. Every numeric price claim
-the Skeptic makes is fact-checkable against the price context (a claim the
-data can't support gets flagged in the transcript before the Arbiter rules).
+the Critic makes is fact-checkable against the price context (a claim the
+data can't support gets flagged in the transcript before the Judge rules).
 """
 
 import json
@@ -48,7 +48,7 @@ _PREDICTIVE_FRAME = (
 )
 
 _ANALYST_SYSTEM = (
-    "You are the Analyst. " + _PREDICTIVE_FRAME + "\n"
+    "You are the Researcher. " + _PREDICTIVE_FRAME + "\n"
     "From the specialist briefs and your own track record on this symbol, form "
     "a directional thesis. Choose the horizon that matches the mechanism "
     "(drift: 1-3d; spillover repricing: 3-5d; theme: 5-10d). score: 0-100 where "
@@ -67,7 +67,7 @@ _THESIS_SCHEMA = {
 }
 
 _SKEPTIC_SYSTEM = (
-    "You are the Skeptic. " + _PREDICTIVE_FRAME + "\n"
+    "You are the Critic. " + _PREDICTIVE_FRAME + "\n"
     "Your job is to find the strongest reasons this thesis FAILS. Attack the "
     "mechanism, the timing, the already-priced risk, crowding, upcoming events "
     "inside the horizon, data quality, and liquidity. Every concern must cite "
@@ -87,10 +87,10 @@ _SKEPTIC_SCHEMA = {
 }
 
 _REBUTTAL_SYSTEM = (
-    "You are the Analyst defending your thesis against the Skeptic. "
+    "You are the Researcher defending your thesis against the Critic. "
     + _PREDICTIVE_FRAME + "\n"
     "Address each concern honestly: rebut with evidence where you can, CONCEDE "
-    "where the skeptic is right. Update your score accordingly — meaningful "
+    "where the critic is right. Update your score accordingly — meaningful "
     "concessions must move the number.\n"
     'Return ONLY JSON: {"rebuttal": "<4 sentences max>", '
     '"revised_score": <0-100>, "concede": <true|false>}'
@@ -103,10 +103,10 @@ _REBUTTAL_SCHEMA = {
 }
 
 _ARBITER_SYSTEM = (
-    "You are the Arbiter — the final judgment on the desk. " + _PREDICTIVE_FRAME + "\n"
+    "You are the Judge — the final judgment on the desk. " + _PREDICTIVE_FRAME + "\n"
     "Read the full transcript (thesis, concerns, rebuttal, any fact-check flags). "
     "Decide whether this prediction goes on the book. Weigh argument QUALITY: "
-    "did the skeptic land real hits? did the analyst answer them or dodge? "
+    "did the critic land real hits? did the researcher answer them or dodge? "
     "verdict: STRONG (thesis stands), SOFT (stands but softer), PASS (rejected).\n"
     "COHERENCE RULE: adjusted_score must agree with the direction — for a LONG "
     "it must be ABOVE 50, for a SHORT BELOW 50. If your honest view puts the "
@@ -114,7 +114,7 @@ _ARBITER_SYSTEM = (
     "approved=false and PASS. Weak-but-real conviction in a LONG is 52-58, "
     "not 43.\n"
     "adjusted_horizon_days: you own the horizon too — if the surviving edge is "
-    "shorter or longer than the analyst's proposal (e.g. 'only a 1-2 day "
+    "shorter or longer than the researcher's proposal (e.g. 'only a 1-2 day "
     "momentum edge survives'), SAY SO in this field; the book records YOUR "
     "horizon.\n"
     'Return ONLY JSON: {"approved": <true|false>, "adjusted_score": <0-100>, '
@@ -211,7 +211,7 @@ def researcher_reply(symbol: str, thesis: dict, concerns: list[dict],
                      decision_id: str | None) -> dict:
     user = (
         f"Symbol: {symbol}\nYour thesis: {json.dumps(thesis)}\n"
-        f"Skeptic's concerns: {json.dumps(concerns)}"
+        f"Critic's concerns: {json.dumps(concerns)}"
     )
     return call_role("researcher", _REBUTTAL_SYSTEM, user, schema=_REBUTTAL_SCHEMA,
                      decision_id=decision_id)
@@ -256,7 +256,7 @@ def head_ranking(opportunities: list[dict], decision_id: str | None) -> dict:
     """Head-to-head comparison across all debated ideas → ranked selection.
 
     `opportunities`: board rows with symbol, direction, horizon_days, edge,
-    conviction, confidence, verdict, summary (the arbiter's take).
+    conviction, confidence, verdict, summary (the judge's take).
     """
     lines = []
     for o in opportunities:
@@ -279,8 +279,8 @@ def judge_verdict(symbol: str, thesis: dict, concerns: list[dict], rebuttal: dic
         (f"{fn}\n\n" if fn else "")
         + f"Symbol: {symbol}\n"
         f"THESIS: {json.dumps(thesis)}\n"
-        f"SKEPTIC CONCERNS: {json.dumps(concerns)}\n"
-        f"ANALYST REBUTTAL: {json.dumps(rebuttal)}\n"
+        f"CRITIC CONCERNS: {json.dumps(concerns)}\n"
+        f"RESEARCHER REBUTTAL: {json.dumps(rebuttal)}\n"
         f"FACT-CHECK FLAGS: {json.dumps(fact_flags) if fact_flags else 'none'}"
     )
     return call_role("judge", _ARBITER_SYSTEM, user, schema=_ARBITER_SCHEMA,
@@ -291,7 +291,7 @@ def judge_verdict(symbol: str, thesis: dict, concerns: list[dict], rebuttal: dic
 # Fact-check helper — numeric % claims vs actual price context (pure code)
 # ---------------------------------------------------------------------------
 
-# Only flag %s the skeptic explicitly frames as a PRICE MOVE — a move-verb must
+# Only flag %s the critic explicitly frames as a PRICE MOVE — a move-verb must
 # sit next to the number. Avoids false positives on valuation/guidance/support %s
 # (e.g. "revenue +1%", "1.1% above the 90-day low") that aren't price-move claims.
 _MOVE_PCT_RE = re.compile(
@@ -305,7 +305,7 @@ _MOVE_PCT_RE = re.compile(
 
 
 def fact_check_concerns(concerns: list[dict], price_ctx: dict | None) -> list[str]:
-    """Flag skeptic PRICE-MOVE claims wildly inconsistent with real price data."""
+    """Flag critic PRICE-MOVE claims wildly inconsistent with real price data."""
     if not price_ctx:
         return []
     known = {
@@ -321,7 +321,7 @@ def fact_check_concerns(concerns: list[dict], price_ctx: dict | None) -> list[st
             val = abs(float(raw))
             if val > 0.5 and known and min(abs(val - k) for k in known) > max(5.0, val):
                 flags.append(
-                    f"Skeptic cited a {raw}% price move — no matching move in data "
+                    f"Critic cited a {raw}% price move — no matching move in data "
                     f"(today={price_ctx.get('change_today_pct')}%, "
                     f"5d={price_ctx.get('change_5d_pct')}%, "
                     f"20d={price_ctx.get('change_20d_pct')}%)"

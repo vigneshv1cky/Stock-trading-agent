@@ -83,13 +83,13 @@ def main() -> None:
     sub.add_parser("dashboard", help="v2 on-demand: dashboard only — trades run on button click")
     p_back = sub.add_parser("backfill")
     p_back.add_argument("--hours", type=float, default=72)
-    p_desk = sub.add_parser("desk", help="convene the committee NOW on recent news")
+    p_desk = sub.add_parser("desk", help="convene the team NOW on recent news")
     p_desk.add_argument("--hours", type=float, default=8,
                         help="news lookback for the candidate window")
     p_world = sub.add_parser("world", help="one GDELT world-news tick (optionally to the desk)")
     p_world.add_argument("--categories", type=int, default=3)
     p_world.add_argument("--to-desk", action="store_true",
-                         help="send exposure candidates to the committee")
+                         help="send exposure candidates to the team")
     sub.add_parser("grade")
     sub.add_parser("status")
     sub.add_parser("earnings", help="refresh the earnings calendar and show upcoming / recent")
@@ -129,7 +129,7 @@ def main() -> None:
             print(f"{n} fresh articles, {len(candidates)} candidate symbols")
             if candidates:
                 ids = await research_run(candidates, trigger_src="DEEP_RUN")
-                print(f"committee produced {len(ids)} decisions — see the dashboard")
+                print(f"team produced {len(ids)} decisions — see the dashboard")
             else:
                 print("no fresh candidates in that window")
 
@@ -147,7 +147,7 @@ def main() -> None:
         if args.to_desk and candidates:
             from alphadesk.desk.workflow import research_run
             ids = asyncio.run(research_run(candidates, trigger_src="STREAM"))
-            print(f"committee produced {len(ids)} decisions")
+            print(f"team produced {len(ids)} decisions")
     elif args.cmd == "grade":
         from alphadesk.ledger.grader import grade_due
         print(f"graded {grade_due()} picks")

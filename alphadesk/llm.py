@@ -41,7 +41,7 @@ _spawn_gate = threading.Semaphore(LLM_MAX_CONCURRENCY)
 
 # ALL SDK calls run on ONE persistent event loop in a dedicated thread. Creating
 # a fresh loop per call (asyncio.run) churns the SDK's subprocess async
-# generators and corrupts them across calls (triage crashed mid-run this way); a
+# generators and corrupts them across calls (scout crashed mid-run this way); a
 # single long-lived loop keeps the transport stable.
 _bg_loop: asyncio.AbstractEventLoop | None = None
 _bg_lock = threading.Lock()

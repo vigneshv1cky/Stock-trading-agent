@@ -1,19 +1,19 @@
-"""The Exposure Desk — agents doing what the Neo4j graph used to do: given a
+"""The Connections desk — agents doing what the Neo4j graph used to do: given a
 material shock to company X, map the supply-chain / competitive neighborhood
 and surface the connected, tradable names that HAVEN'T moved yet (ripple
 candidates).
 
 A subagent fan-out per shock:
-    Upstream Analyst    (web-grounded) → X's suppliers
-    Downstream Analyst  (web-grounded) → X's customers
-    Competitive Analyst (web-grounded) → X's rivals
+    Upstream Researcher    (web-grounded) → X's suppliers
+    Downstream Researcher  (web-grounded) → X's customers
+    Competitive Researcher (web-grounded) → X's rivals
     Chain Synthesist    (opus)         → tradable ripple candidates + chains
 
 Web-grounded so relationships are VERIFIED, not recalled (parametric supply-
 chain recall hallucinates). Fires only on material shocks (cost gate). Every
 discovered relationship is cached to SQLite — the graph-lite that grows on use.
-Downstream, each candidate is fully debated by the committee (Skeptic attacks
-the chain) — the Exposure Desk generates, the committee filters.
+Downstream, each candidate is fully debated by the team (Critic attacks
+the chain) — the Connections desk generates, the team filters.
 """
 
 import asyncio
@@ -54,7 +54,7 @@ _SYNTH_SCHEMA = {
 def _specialist(angle: str, instruction: str, shock: str, event: str,
                 decision_id: str | None) -> list[dict]:
     system = (
-        f"You are the {angle} analyst on a trading research desk. Given a shock to "
+        f"You are the {angle} researcher on a trading research desk. Given a shock to "
         f"a company, {instruction} USE WEB SEARCH to VERIFY real relationships — do "
         "not rely on memory, which is unreliable for supply chains. Name real, "
         "specific companies (US-listed where possible). Return only genuine, "
@@ -76,7 +76,7 @@ def _specialist(angle: str, instruction: str, shock: str, event: str,
                         decision_id=decision_id, tools=_WEB, max_turns=_WEB_TURNS)
         return out.get("related") or []
     except LLMError as exc:
-        log.warning("%s analyst failed for %s: %s", angle, shock, exc)
+        log.warning("%s researcher failed for %s: %s", angle, shock, exc)
         return []
 
 
@@ -102,7 +102,7 @@ def map_connections(shock: str, event: str, decision_id: str | None = None) -> d
 
     # Pre-search cache: if we web-mapped this shock recently, reuse the verified
     # relationships and skip the 3 web specialists + synth entirely. Supply-chain
-    # links are durable; the committee re-checks current pricing downstream.
+    # links are durable; the team re-checks current pricing downstream.
     cached = [c for c in store.get_relationships(shock) if in_universe(c["to_sym"])]
     if cached:
         log.info("Exposure cache hit for %s — reusing %d mapped ripple(s), skipping web search",
@@ -151,7 +151,7 @@ def map_connections(shock: str, event: str, decision_id: str | None = None) -> d
 
 
 async def run_connections(shocks: list[tuple[str, str]], decision_id: str | None = None):
-    """Fan out one Exposure Desk per material shock, in parallel.
+    """Fan out one Connections desk per material shock, in parallel.
     shocks: list of (shocked_symbol, event_text). Returns list of exposure results."""
     loop = asyncio.get_running_loop()
     results = await asyncio.gather(*[

@@ -19,7 +19,7 @@ _WEB = ["WebSearch"]
 _WEB_TURNS = 4
 
 _SYSTEM = (
-    "You are an earnings analyst. A company just reported. USE WEB SEARCH to read "
+    "You are an earnings researcher. A company just reported. USE WEB SEARCH to read "
     "the ACTUAL report and its coverage, then extract what matters for the next few "
     "days of trading:\n"
     "- summary: revenue vs consensus, EPS detail, the key segment/margin drivers.\n"

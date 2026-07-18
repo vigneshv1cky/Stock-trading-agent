@@ -2,7 +2,7 @@
 
 Two one-shot workers per candidate: market (price structure + valuation +
 priced-in/legs, from code-computed numbers) and news (what was actually said).
-Each returns a compact evidence block the committee argues from.
+Each returns a compact evidence block the team argues from.
 """
 
 import json

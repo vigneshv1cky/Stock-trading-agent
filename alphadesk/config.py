@@ -47,7 +47,7 @@ MODEL_MAP: dict[str, str] = {
     "connections_summary": "opus",         # assembles ripple candidates from the mapped neighborhood
 }
 
-# Exposure Desk fires only on the top-N most material shocks per run (cost gate)
+# Connections desk fires only on the top-N most material shocks per run (cost gate)
 EXPOSURE_MAX_SHOCKS = int(os.environ.get("EXPOSURE_MAX_SHOCKS", "2"))
 
 for _role in list(MODEL_MAP):
@@ -65,7 +65,7 @@ MAX_DEBATES_PER_DAY = 40
 MAX_CONCURRENT_WORKFLOWS = int(os.environ.get("MAX_CONCURRENT_WORKFLOWS", "4"))
 SYMBOL_REPICK_COOLDOWN_MIN = 15
 # Solo control arm: every Nth pick also goes to one solo agent (measures whether
-# the committee beats one agent). 0 = OFF (default — pure overhead, no trade output);
+# the team beats one agent). 0 = OFF (default — pure overhead, no trade output);
 # set e.g. SOLO_ARM_EVERY_N=6 to resume accumulating that comparison.
 SOLO_ARM_EVERY_N = int(os.environ.get("SOLO_ARM_EVERY_N", "0"))
 TRIAGE_WINDOW_S = 120
@@ -78,7 +78,7 @@ LLM_TOOL_BUDGET_USD = float(os.environ.get("LLM_TOOL_BUDGET_USD", "0.50"))  # ha
 MAX_RUNS_PER_DAY = int(os.environ.get("MAX_RUNS_PER_DAY", "50"))  # Find Trades runaway guard
 FRICTION_BPS_PER_SIDE = 15      # grading haircut; doubled for LOW_LIQUIDITY
 LOW_LIQUIDITY_DOLLAR_VOL = 10_000_000  # avg daily dollar volume below this → tag
-# Anti-survivorship: grade triage SKIPS too. A skip has no direction, so a "miss"
+# Anti-survivorship: grade scout SKIPS too. A skip has no direction, so a "miss"
 # is a large move in EITHER direction vs SPY within a short window we ignored.
 SKIP_GRADE_DAYS = 3             # trading days to judge a skipped name's forward move
 SKIP_MISS_ABS_ALPHA = 6.0       # |symbol return − SPY| above this % = a missed dislocation

@@ -1,6 +1,6 @@
 """The decision ledger — SQLite (WAL). Every evaluation, token, and funnel count.
 
-One row per evaluation (committee or solo). Closed-market picks carry
+One row per evaluation (team or solo). Closed-market picks carry
 entry_price=NULL and are stamped with entry-at-next-open semantics by the
 grader. All writes are single-process; the dashboard reads the same file.
 """
@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS picks (
     direction       TEXT NOT NULL,                 -- LONG | SHORT
     horizon_days    INTEGER NOT NULL,
     score           REAL NOT NULL,                 -- pre-debate
-    adjusted_score  REAL,                          -- post-debate (committee only)
+    adjusted_score  REAL,                          -- post-debate (team only)
     confidence      REAL NOT NULL,
     verdict         TEXT,                          -- STRONG | SOFT | PASS
     approved        INTEGER NOT NULL DEFAULT 0,
@@ -98,7 +98,7 @@ CREATE TABLE IF NOT EXISTS token_usage (
     decision_id TEXT
 );
 
--- Triage skips, graded forward for missed moves (anti-survivorship). A skip has
+-- Scout skips, graded forward for missed moves (anti-survivorship). A skip has
 -- no direction, so 'missed' = a large |move vs SPY| we chose not to even look at.
 CREATE TABLE IF NOT EXISTS skips (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -243,7 +243,7 @@ def picks_today(arm: str | None = None) -> int:
 
 
 def symbol_traces(symbol: str, days: int = 21) -> list[dict]:
-    """Miss post-mortem: every committee/solo evaluation of this symbol in the
+    """Miss post-mortem: every team/solo evaluation of this symbol in the
     last `days` — whether it was approved or rejected, with the full transcript.
     Tells us the desk DID look at it and what it concluded."""
     with _connect() as conn:
@@ -257,7 +257,7 @@ def symbol_traces(symbol: str, days: int = 21) -> list[dict]:
 
 
 def symbol_skips(symbol: str, days: int = 21, scan: int = 500) -> list[dict]:
-    """Miss post-mortem: triage skips that NAMED this symbol in the last `days`,
+    """Miss post-mortem: scout skips that NAMED this symbol in the last `days`,
     with the stated reason — the desk saw it as a candidate and passed."""
     sym = symbol.upper()
     out: list[dict] = []
@@ -380,7 +380,7 @@ def save_relationship(from_sym: str, to_sym: str, direction: str, chain: str) ->
 
 def get_relationships(from_sym: str, days: int = 7) -> list[dict]:
     """Pre-search cache: ripple neighbors mapped for this shocked company within
-    the last `days`. Lets the Exposure Desk reuse a prior web-verified mapping
+    the last `days`. Lets the Connections desk reuse a prior web-verified mapping
     instead of re-running the web specialists for the same shock."""
     with _connect() as conn:
         rows = conn.execute(
@@ -393,7 +393,7 @@ def get_relationships(from_sym: str, days: int = 7) -> list[dict]:
 
 
 def last_debate(symbol: str) -> dict | None:
-    """The most recent committee debate for `symbol` (ts + what it was about) — so a
+    """The most recent team debate for `symbol` (ts + what it was about) — so a
     later run can tell 'same story' from a genuinely new catalyst."""
     with _connect() as conn:
         row = conn.execute(
@@ -404,7 +404,7 @@ def last_debate(symbol: str) -> dict | None:
 
 
 def symbols_debated_since(hours: int = 12) -> set:
-    """Symbols with a committee debate in the last `hours` — skip re-debating them
+    """Symbols with a team debate in the last `hours` — skip re-debating them
     (anti-double-dip: an earnings/news name lingers as a candidate for days)."""
     with _connect() as conn:
         rows = conn.execute(
@@ -444,7 +444,7 @@ def record_exit(pick_id: int, reason: str) -> None:
 
 
 def record_skips(skips: list[dict], cap: int = 30) -> None:
-    """Persist triage skips individually so their forward moves can be graded
+    """Persist scout skips individually so their forward moves can be graded
     (anti-survivorship: did we skip a name that then moved big?). Capped per
     window to bound later grading cost."""
     rows = [(_now(), (s.get("symbol") or "").upper(), (s.get("reason") or "")[:200])
@@ -476,7 +476,7 @@ def false_negative_stats() -> dict:
     """The survivorship scorecard: how often the desk was wrong to say NO.
     - reject: graded TEAM picks it REJECTED that would have beaten SPY
       (alpha_net > 0 in the proposed direction — a passed-over winner).
-    - skip:   graded triage skips that made a big move we never looked at."""
+    - skip:   graded scout skips that made a big move we never looked at."""
     with _connect() as conn:
         rej = dict(conn.execute(
             "SELECT count(*) AS graded,"

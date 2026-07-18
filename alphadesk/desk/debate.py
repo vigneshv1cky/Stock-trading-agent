@@ -1,9 +1,9 @@
-"""The shared committee debate — the ONE place the analyst⇄skeptic→arbiter
+"""The shared team debate — the ONE place the researcher⇄critic→judge
 sequence and the ledger write live, so the streaming (Find Trades) and batch
 (research_run) pipelines can never drift on the core logic.
 
 `deliberate()` is an async generator: it yields the debate's intermediate events
-(thesis, concern, fact_flag, rebuttal) for live streaming, writes the committee
+(thesis, concern, fact_flag, rebuttal) for live streaming, writes the team
 ledger row, and yields a terminal private {"type": "_result", ...} event carrying
 the row + pick_id + raw thesis/verdict the callers need. It raises LLMError if a
 stage fails (the caller drops the candidate).
@@ -28,7 +28,7 @@ log = logging.getLogger("alphadesk.debate")
 async def deliberate(sym: str, pick: dict, briefs: list[dict], price_ctx: dict | None,
                      history: list[dict], calibration: str, trigger_src: str,
                      decision_id: str):
-    """Run the full committee debate on one pick and write its ledger row.
+    """Run the full team debate on one pick and write its ledger row.
 
     Yields event dicts (thesis, concern, fact_flag, rebuttal) for streaming, then
     a terminal {"type": "_result", "row": <board row>, "pick_id": int,

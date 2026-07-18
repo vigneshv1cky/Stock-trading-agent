@@ -113,7 +113,7 @@ export default function App() {
                   (expecting it to rise) or short it (betting it falls)
                 </li>
                 <li>
-                  <b className="text-foreground">The pushback</b> — a skeptic argues why that's wrong
+                  <b className="text-foreground">The pushback</b> — a critic argues why that's wrong
                 </li>
                 <li>
                   <b className="text-foreground">The decision</b> — a judge weighs both and rules

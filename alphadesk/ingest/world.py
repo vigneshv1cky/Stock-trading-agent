@@ -14,7 +14,7 @@ Flow (one poll tick):
      (:Company)-[:EXPOSED_TO {hypothesis: true}]->(:Theme)
   4. candidates: exposure hypotheses on tradable symbols → the SAME desk.
      The candidate text says loudly that the exposure is a HYPOTHESIS —
-     the Skeptic's first job is to attack the chain.
+     the Critic's first job is to attack the chain.
 
 Judgment doctrine: the query taxonomy is a user-set attention policy (like
 the universe rule); every per-article call is the agent's. Code only
@@ -83,7 +83,7 @@ _WORLD_SYSTEM = (
     "global), themes (affected industries/commodities/regions, short phrases), "
     "and exposures: up to 3 US-listed stocks plausibly affected, each with "
     "direction and a one-line causal chain. Exposures are HYPOTHESES for the "
-    "research committee to verify — propose only chains you can articulate, "
+    "research team to verify — propose only chains you can articulate, "
     "and prefer LESS-obvious second-order names over megacaps everyone "
     "watches. If you cannot name a defensible exposure, give none.\n\n"
     'Return ONLY JSON: {"items": [{"i": <n>, "relevant": <bool>, '
@@ -214,7 +214,7 @@ def poll(categories_per_tick: int = 3) -> tuple[int, dict[str, list[dict]]]:
     """Rotate through the taxonomy; returns (events_ingested, candidates).
 
     Candidates carry the exposure HYPOTHESIS in the article text so the
-    committee knows exactly what chain it must verify.
+    team knows exactly what chain it must verify.
     """
     global _rotation_idx
     headlines: list[dict] = []

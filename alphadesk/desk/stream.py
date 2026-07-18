@@ -1,21 +1,21 @@
 """On-demand 'Find Trades' — the v2 flow. Scans a broad news window, triages
-opportunities, and debates each committee-style, STREAMING every step so the
+opportunities, and debates each team-style, STREAMING every step so the
 dashboard can show the agents thinking in real time.
 
 Emits SSE-style event dicts via an async generator:
     status        — human-readable progress line
-    triage_pick   — a symbol triage chose, with reason + edge hint
-    skips         — the symbols triage passed on (with reasons)
+    triage_pick   — a symbol scout chose, with reason + edge hint
+    skips         — the symbols scout passed on (with reasons)
     debate_start  — beginning deliberation on one symbol
     brief         — a specialist subagent's output
-    thesis        — the analyst's opening call
-    concern       — one skeptic attack (streamed individually)
+    thesis        — the researcher's opening call
+    concern       — one critic attack (streamed individually)
     fact_flag     — a code-side fact-check flag
-    rebuttal      — the analyst's defense/concession
-    decision      — the arbiter's verdict + the final booked pick
+    rebuttal      — the researcher's defense/concession
+    decision      — the judge's verdict + the final booked pick
     done          — the ranked board of all opportunities found
 
-Reuses the exact committee the autonomous engine used; only the orchestration
+Reuses the exact team the autonomous engine used; only the orchestration
 (sequential + streamed, broad news window) is new. No graph, no daemon.
 """
 
@@ -95,8 +95,8 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
 
     # Earnings drift — names that reported in the last few days are first-class
     # candidates (the desk's cleanest MOMENTUM edge). Injected as synthetic EARNINGS
-    # "articles" so they flow through the same triage → committee pipeline; the
-    # committee judges whether the post-earnings move continues.
+    # "articles" so they flow through the same scout → team pipeline; the
+    # team judges whether the post-earnings move continues.
     reported = await loop.run_in_executor(None, store.recently_reported, EARNINGS_DRIFT_DAYS)
     for e in reported:
         if await _gone():
@@ -161,9 +161,9 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
 
     yield _ev("status", msg=f"{n} articles → {len(candidates)} companies with catalysts.")
 
-    ripple_syms: set[str] = set()   # names the Exposure Desk surfaced (prioritized into triage)
+    ripple_syms: set[str] = set()   # names the Connections desk surfaced (prioritized into scout)
 
-    # Exposure Desk — expand the most material shocks into ripple candidates
+    # Connections desk — expand the most material shocks into ripple candidates
     # (the connected, tradable names that haven't moved). Gated to the top-N
     # most intense shocks for cost. Set expose=False for a light run.
     if expose and candidates and not await _gone():
@@ -186,7 +186,7 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
                 break
         if shock_inputs:
             yield _ev("status",
-                      msg=f"Exposure Desk mapping supply-chain ripples from "
+                      msg=f"Connections desk mapping supply-chain ripples from "
                           f"{len(shock_inputs)} material shocks (web-verified)…")
             for sym, _ in shock_inputs:
                 yield _ev("exposure_shock", symbol=sym)
@@ -213,7 +213,7 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
                     yield _ev("exposure_candidate", shock=res["shock"], symbol=csym,
                               direction=c["direction"], chain=c["chain"], strength=c["strength"])
                     added += 1
-            yield _ev("status", msg=f"Exposure Desk surfaced {added} ripple candidates.")
+            yield _ev("status", msg=f"Connections desk surfaced {added} ripple candidates.")
 
     # Anti-double-dip across runs — but not blind to NEW catalysts:
     #  • names we already HOLD → skip (the position review re-evaluated them; new
@@ -252,8 +252,8 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
 
     yield _ev("status", msg="Triaging…")
 
-    # Build the triage window (price context per symbol). Ripple candidates are
-    # prioritized so the Exposure Desk's web-grounded work is never truncated out.
+    # Build the scout window (price context per symbol). Ripple candidates are
+    # prioritized so the Connections desk's web-grounded work is never truncated out.
     ordered = (
         [kv for kv in candidates.items() if kv[0] in ripple_syms]
         + [kv for kv in candidates.items() if kv[0] not in ripple_syms]
@@ -271,7 +271,7 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
     try:
         result = await loop.run_in_executor(None, scout.run_scout, window, movers)
     except LLMError as exc:
-        yield _ev("status", msg=f"Triage failed: {exc}")
+        yield _ev("status", msg=f"Scout failed: {exc}")
         yield _ev("done", board=[])
         return
 
@@ -284,14 +284,14 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
                   reason=p.get("reason", ""))
 
     if not picks:
-        yield _ev("status", msg="Triage found no opportunities worth full analysis right now.")
+        yield _ev("status", msg="Scout found no opportunities worth full analysis right now.")
         yield _ev("done", board=[])
         return
 
-    yield _ev("status", msg=f"Committee debating {len(picks)} opportunities…")
+    yield _ev("status", msg=f"Team debating {len(picks)} opportunities…")
 
     # Grounded calibration prior — the desk's own graded scorecard, computed
-    # once per run and handed to every analyst/solo call as facts (not lessons).
+    # once per run and handed to every researcher/solo call as facts (not lessons).
     calibration = team.calibration_block(
         await loop.run_in_executor(None, store.stats))
 
@@ -308,7 +308,7 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
 
         try:
             # brief subagents fan out in PARALLEL (technical, news, fundamentals,
-            # freshness) — each a bounded Haiku research task feeding the analyst
+            # freshness) — each a bounded Haiku research task feeding the researcher
             fundamentals = await loop.run_in_executor(None, prices.get_fundamentals, sym)
             briefs = list(await asyncio.gather(
                 loop.run_in_executor(None, notes.market_brief, sym, price_ctx, fundamentals, arts, decision_id),
@@ -316,7 +316,7 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
             ))
             # If this pick just reported, read the ACTUAL report (web-grounded,
             # cached per event) — guidance/tone drive the drift, so it gets its own
-            # evidence block. Only fires for names triage actually picked (lean).
+            # evidence block. Only fires for names scout actually picked (lean).
             erow = await loop.run_in_executor(None, store.earnings_row, sym, EARNINGS_DRIFT_DAYS)
             if erow:
                 read = await loop.run_in_executor(None, earnings_reader.get_or_read, erow, f"eread-{sym}")
@@ -326,7 +326,7 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
                 yield _ev("brief", symbol=sym, **b)
 
             history = await loop.run_in_executor(None, store.symbol_history, sym)
-            # shared committee core — yields thesis/concern/fact_flag/rebuttal to
+            # shared team core — yields thesis/concern/fact_flag/rebuttal to
             # stream live, writes the ledger row, and returns it via "_result"
             row = None
             async for ev in debate.deliberate(sym, pick, briefs, price_ctx, history,
@@ -347,7 +347,7 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
 
         # Solo control arm — every Nth pick, one strong agent works the SAME
         # briefs blind to the team. The ledger later answers: does the
-        # committee actually beat one agent? (kill-criterion #2)
+        # team actually beat one agent? (kill-criterion #2)
         if SOLO_ARM_EVERY_N and (pick_idx + 1) % SOLO_ARM_EVERY_N == 0:
             try:
                 s = await loop.run_in_executor(

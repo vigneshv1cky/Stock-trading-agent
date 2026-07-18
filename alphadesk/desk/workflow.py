@@ -1,9 +1,9 @@
 """research_run() — THE pipeline. Pure composition; identical path for live
 windows, deep runs, and (later) replay.
 
-    candidates → TRIAGE → per pick (parallel, capped):
-        3 brief subagents (parallel) → ANALYST → SKEPTIC → fact-check →
-        ANALYST rebuttal → ARBITER → ledger row
+    candidates → SCOUT → per pick (parallel, capped):
+        3 brief subagents (parallel) → RESEARCHER → CRITIC → fact-check →
+        RESEARCHER rebuttal → JUDGE → ledger row
         (+ every Nth pick: LONER arm, independent, same briefs)
 
 Fail-safe doctrine: any stage failure drops that candidate with a logged
@@ -92,14 +92,14 @@ async def _run_committee(loop, sym: str, pick: dict, articles: list[dict],
         history = await loop.run_in_executor(None, store.symbol_history, sym)
         calibration = team.calibration_block(
             await loop.run_in_executor(None, store.stats))
-        # shared committee core — same debate + ledger write as the streaming path
+        # shared team core — same debate + ledger write as the streaming path
         result = None
         async for ev in debate.deliberate(sym, pick, briefs, price_ctx, history,
                                           calibration, trigger_src, decision_id):
             if ev["type"] == "_result":
                 result = ev
     except LLMError as exc:
-        log.warning("Committee dropped %s: %s", sym, exc)
+        log.warning("Team dropped %s: %s", sym, exc)
         return None
     if result is None:
         return None
@@ -144,7 +144,7 @@ async def _run_committee(loop, sym: str, pick: dict, articles: list[dict],
 
 
 async def research_run(candidates: dict[str, list[dict]], trigger_src: str = "STREAM") -> list[int]:
-    """One full pass: triage the candidate window, deliberate the picks.
+    """One full pass: scout the candidate window, deliberate the picks.
 
     candidates: symbol → fresh enriched articles. Returns ledger pick ids.
     """
@@ -178,9 +178,9 @@ async def research_run(candidates: dict[str, list[dict]], trigger_src: str = "ST
     try:
         result = await loop.run_in_executor(None, scout.run_scout, window, movers)
     except LLMError as exc:
-        log.warning("Triage failed — window dropped: %s", exc)
+        log.warning("Scout failed — window dropped: %s", exc)
         store.funnel_add(len(candidates), len(window), 0, len(window),
-                         [{"symbol": "*", "reason": f"triage failed: {exc}"}])
+                         [{"symbol": "*", "reason": f"scout failed: {exc}"}])
         return []
 
     picks = result.get("picks", [])
@@ -189,7 +189,7 @@ async def research_run(candidates: dict[str, list[dict]], trigger_src: str = "ST
                      [{"symbol": s.get("symbol", "?"), "reason": s.get("reason", "")} for s in skips])
     store.record_skips(skips)  # grade forward: did we skip a mover? (anti-survivorship)
     for p in picks:
-        log.info("TRIAGE PICK %s [%s]: %s", p["symbol"], p["edge_hint"], p["reason"])
+        log.info("SCOUT PICK %s [%s]: %s", p["symbol"], p["edge_hint"], p["reason"])
 
     sem = asyncio.Semaphore(MAX_CONCURRENT_WORKFLOWS)
 

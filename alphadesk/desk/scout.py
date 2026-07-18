@@ -1,4 +1,4 @@
-"""The Triage desk — ALL attention judgment lives here, in a prompt.
+"""The Scout desk — ALL attention judgment lives here, in a prompt.
 
 Sees every news-active symbol in the window (with price fields as evidence)
 plus the movers FYI ranking. Picks ≤MAX_PICKS_PER_WINDOW with stated reasons;
@@ -14,13 +14,13 @@ from alphadesk.llm import call_role, wrap_data
 log = logging.getLogger("alphadesk.scout")
 
 _SYSTEM = (
-    "You are the triage desk of a predictive stock research firm. Your team "
+    "You are the scout desk of a predictive stock research firm. Your team "
     "predicts which stocks will OUTPERFORM over the next 1-10 trading days, "
-    "BEFORE the market fully digests information. You allocate the committee's "
+    "BEFORE the market fully digests information. You allocate the team's "
     "scarce attention.\n\n"
     "You receive a window of news-active symbols (headlines + sentiment + price "
     "context) and an FYI list of today's top movers.\n\n"
-    "PICK up to {max_picks} symbols that most merit full committee analysis. "
+    "PICK up to {max_picks} symbols that most merit full team analysis. "
     "STRONGLY favor post-earnings-drift setups — candidates tagged [EARNINGS] just "
     "reported a result; stocks tend to drift in the surprise direction for days "
     "(the cleanest MOMENTUM edge), so weigh the surprise size and how much has already "
@@ -33,7 +33,7 @@ _SYSTEM = (
     "edge_hint: SPILLOVER (spillover to a connected, unmoved name) | THEME "
     "(building theme) | MOMENTUM (big fresh catalyst, betting continuation) | "
     "WORLD (candidate sourced from the world-news desk — headlines "
-    "tagged [WORLD:...]; the stated exposure is a HYPOTHESIS the committee "
+    "tagged [WORLD:...]; the stated exposure is a HYPOTHESIS the team "
     "must verify, so weigh the plausibility of the causal chain).\n"
     "Give every pick AND every skip a one-sentence reason.\n\n"
     'Return ONLY JSON: {{"picks": [{{"symbol": "...", "edge_hint": '

@@ -2,11 +2,11 @@
 
 Price never decides what gets analyzed (that's information's job); it only
 answers factual questions for symbols already under attention:
-  • what's the recent price action? (briefs, triage fields)
+  • what's the recent price action? (briefs, scout fields)
   • has a neighbor already moved? (ripple priced-check)
   • how liquid is it? (LOW_LIQUIDITY evidence tag, friction scaling)
 
-Plus one movers() call per triage window — a fact ranking, not a filter.
+Plus one movers() call per scout window — a fact ranking, not a filter.
 """
 
 import logging

@@ -136,9 +136,9 @@ def _within_daily_cap() -> bool:
 @app.get("/api/find-trades")
 async def api_find_trades(request: Request, hours: float = 24.0,
                           max_debates: int = 6, expose: bool = False):
-    """Server-Sent Events stream of a live 'Find Trades' run — the committee
+    """Server-Sent Events stream of a live 'Find Trades' run — the team
     scanning news and debating opportunities in real time. expose=true runs the
-    (heavier, web-grounded) Exposure Desk to surface supply-chain ripples —
+    (heavier, web-grounded) Connections desk to surface supply-chain ripples —
     off by default to conserve quota."""
     import json as _json
 

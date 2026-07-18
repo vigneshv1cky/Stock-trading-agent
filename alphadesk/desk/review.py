@@ -1,6 +1,6 @@
 """Position re-evaluation — the exit half of the desk.
 
-The committee only ever OPENS positions. On each new run, before hunting for new
+The team only ever OPENS positions. On each new run, before hunting for new
 trades, this re-checks every still-open TAKE against the current price and fresh
 news and decides HOLD or EXIT — with a reason — because the user may have traded
 the original call. Fail-safe: on any error it HOLDs (never auto-exits a real

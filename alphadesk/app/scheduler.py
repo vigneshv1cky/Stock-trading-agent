@@ -1,7 +1,7 @@
 """The scheduler — AlphaDesk thinks 24/7; only entries follow the market clock.
 
   • ingestion loop: 24/7 news polling → graph + candidate accumulation
-  • window loop:    120s triage windows AROUND THE CLOCK — the world doesn't
+  • window loop:    120s scout windows AROUND THE CLOCK — the world doesn't
                     close; closed-market decisions enter at the next open
   • batch runs:     pre-market (~07:30 ET) and evening (~17:30 ET) synthesis
                     passes over the full accumulated picture
@@ -73,7 +73,7 @@ async def _ingest_loop() -> None:
 async def _world_loop() -> None:
     """GDELT world-news tick every 15 min — 3 taxonomy categories per tick,
     full 11-category coverage roughly hourly. Candidates join the same
-    pending pool the triage windows drain."""
+    pending pool the scout windows drain."""
     from alphadesk.ingest import world
     while True:
         try:

@@ -16,13 +16,13 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { ArrowDown, ArrowUp } from "lucide-react"
 
 const ROLE_STYLES: Record<string, string> = {
-  triage: "border-l-yellow-500",
+  scout: "border-l-yellow-500",
   brief: "border-l-zinc-500",
-  analyst: "border-l-blue-500",
-  skeptic: "border-l-red-500",
-  arbiter: "border-l-green-500",
+  researcher: "border-l-blue-500",
+  critic: "border-l-red-500",
+  judge: "border-l-green-500",
   flag: "border-l-orange-500",
-  solo: "border-l-purple-500",
+  loner: "border-l-purple-500",
 }
 
 function Bubble({
@@ -130,7 +130,7 @@ export function PickSheet({
                 <Separator />
 
                 {pick.triage_reason && (
-                  <Bubble role="triage" who="Shortlist — why we looked at it">
+                  <Bubble role="scout" who="Shortlist — why we looked at it">
                     {pick.triage_reason}
                   </Bubble>
                 )}
@@ -149,7 +149,7 @@ export function PickSheet({
                 ))}
 
                 {pick.thesis && (
-                  <Bubble role="analyst" who="The case — researcher">
+                  <Bubble role="researcher" who="The case — researcher">
                     <p>{pick.thesis}</p>
                     <p className="mt-1.5 text-muted-foreground">
                       confidence {Math.round(pick.score)}/100 · hold ~{pick.horizon_days} days
@@ -158,7 +158,7 @@ export function PickSheet({
                 )}
 
                 {(pick.debate?.concerns ?? []).map((c, i) => (
-                  <Bubble key={i} role="skeptic" who={`The pushback #${i + 1} — skeptic`}>
+                  <Bubble key={i} role="critic" who={`The pushback #${i + 1} — critic`}>
                     <p className="font-medium">{c.claim}</p>
                     <p className="mt-1 text-muted-foreground">{c.evidence}</p>
                   </Bubble>
@@ -171,7 +171,7 @@ export function PickSheet({
                 ))}
 
                 {pick.debate?.rebuttal && (
-                  <Bubble role="analyst" who="The researcher's reply">
+                  <Bubble role="researcher" who="The researcher's reply">
                     <p>{pick.debate.rebuttal.rebuttal}</p>
                     <p className="mt-1.5 text-muted-foreground">
                       updated confidence {pick.debate.rebuttal.revised_score}/100 · agreed with the
@@ -181,7 +181,7 @@ export function PickSheet({
                 )}
 
                 {pick.debate?.arbiter_summary && (
-                  <Bubble role="arbiter" who="The decision — judge">
+                  <Bubble role="judge" who="The decision — judge">
                     <p>{pick.debate.arbiter_summary}</p>
                     <p className="mt-1.5 text-muted-foreground">
                       final confidence {pick.adjusted_score}/100 · {plainVerdict(pick.verdict)} ·{" "}
@@ -191,7 +191,7 @@ export function PickSheet({
                 )}
 
                 {pick.arm === "LONER" && (
-                  <Bubble role="solo" who="Second opinion — works alone">
+                  <Bubble role="loner" who="Second opinion — works alone">
                     Reviewed the same evidence on its own, without the team's debate.
                   </Bubble>
                 )}
