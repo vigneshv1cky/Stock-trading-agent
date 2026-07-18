@@ -137,36 +137,71 @@ def _within_daily_cap() -> bool:
 _run_log = logging.getLogger("alphadesk.run")
 
 
+def _clip(s, n: int = 110) -> str:
+    s = " ".join(str(s or "").split())
+    return s if len(s) <= n else s[: n - 1] + "…"
+
+
 def _log_run_event(ev: dict) -> None:
-    """Mirror the key beats of a live Find Trades run to the terminal, in real
-    time — the browser gets the full transcript, the terminal gets the headlines."""
+    """Mirror a live Find Trades run to the terminal in real time — the FULL
+    transcript, streamed as each event is produced (the terminal can afford more
+    detail than the browser cards: the critic's actual pushback, the researcher's
+    thesis and reply, fact-check flags, briefs, skips, holds, head reasoning)."""
     t = ev.get("type")
     sym = ev.get("symbol", "")
     if t == "status":
-        _run_log.info("· %s", ev.get("msg", ""))
+        _run_log.info("· %s", _clip(ev.get("msg", ""), 140))
+    elif t == "skips":
+        skips = ev.get("skips") or []
+        if skips:
+            names = ", ".join(s.get("symbol", "?") for s in skips[:12])
+            _run_log.info("  passed on %d: %s%s", len(skips), names, " …" if len(skips) > 12 else "")
+    elif t == "exposure_shock":
+        _run_log.info("  shock   %-6s mapping supply-chain ripples", sym)
     elif t == "exposure_candidate":
-        _run_log.info("  ripple  %s → %s (%s)", ev.get("shock", ""), sym, ev.get("direction", ""))
+        _run_log.info("  ripple  %s → %-6s %s  %s", ev.get("shock", ""), sym,
+                      ev.get("direction", ""), _clip(ev.get("chain", ""), 90))
+    elif t == "position_hold":
+        _run_log.info("HOLD    %-6s %s", sym, _clip(ev.get("reason", ""), 100))
+    elif t == "position_exit":
+        _run_log.info("EXIT    %-6s %s", sym, _clip(ev.get("reason", ""), 100))
     elif t == "triage_pick":
-        _run_log.info("SCOUT   %-6s [%s] %s", sym, ev.get("edge") or "?", (ev.get("reason") or "")[:80])
+        _run_log.info("SCOUT ▸ %-6s [%s] %s", sym, ev.get("edge") or "?", _clip(ev.get("reason", ""), 90))
+    elif t == "brief":
+        _run_log.info("  note   %-6s [%s] %s", sym, ev.get("kind", ""), _clip(ev.get("summary", ""), 100))
     elif t == "thesis":
-        _run_log.info("  case  %-6s %s ~%sd score %s", sym, ev.get("direction", ""),
-                      ev.get("horizon_days", ""), ev.get("score", ""))
+        _run_log.info("  CASE   %-6s %s ~%sd · score %s — %s", sym, ev.get("direction", ""),
+                      ev.get("horizon_days", ""), ev.get("score", ""), _clip(ev.get("thesis", ""), 120))
+    elif t == "concern":
+        _run_log.info("  vs     %-6s %s — %s", sym, _clip(ev.get("claim", ""), 90),
+                      _clip(ev.get("evidence", ""), 80))
+    elif t == "fact_flag":
+        _run_log.info("  ⚑ flag %-6s %s", sym, _clip(ev.get("text", ""), 110))
     elif t == "counter":
         if ev.get("stance") == "FLIP":
-            _run_log.info("  CRITIC reverses %-6s %s → %s", sym,
-                          ev.get("proposed_from", ""), ev.get("counter_direction", ""))
+            _run_log.info("  ⟲ CRITIC reverses %-6s %s → %s — %s", sym, ev.get("proposed_from", ""),
+                          ev.get("counter_direction", ""), _clip(ev.get("counter", ""), 90))
         else:
-            _run_log.info("  CRITIC stand-aside %s", sym)
+            _run_log.info("  ⟲ CRITIC stand-aside %-6s %s", sym, _clip(ev.get("counter", ""), 90))
+    elif t == "rebuttal":
+        _run_log.info("  reply  %-6s revised %s · concede=%s", sym, ev.get("revised_score", ""),
+                      "yes" if ev.get("concede") else "no")
     elif t == "decision":
-        _run_log.info("DECIDE  %-6s %s  %s  conf %s%s", sym, ev.get("direction", ""),
+        _run_log.info("DECIDE ▸ %-6s %s  %s  conf %s%s", sym, ev.get("direction", ""),
                       ev.get("verdict", ""), ev.get("conviction", ""),
                       "  ⟲ REVERSED" if ev.get("flipped") else "")
-    elif t == "position_exit":
-        _run_log.info("EXIT    %-6s %s", sym, (ev.get("reason") or "")[:80])
+        if ev.get("summary"):
+            _run_log.info("         %s", _clip(ev.get("summary", ""), 160))
     elif t == "chief":
         board = ev.get("board") or []
-        _run_log.info("HEAD    ranked %d, %d worth acting on", len(board),
-                      sum(1 for r in board if r.get("take")))
+        takes = sum(1 for r in board if r.get("take"))
+        _run_log.info("HEAD ▸  ranked %d, %d worth acting on", len(board), takes)
+        if ev.get("summary"):
+            _run_log.info("         %s", _clip(ev.get("summary", ""), 200))
+        for r in board:
+            if r.get("take"):
+                _run_log.info("         ✓ %-6s %s — %s", r.get("symbol", ""), r.get("direction", ""),
+                              _clip(r.get("chief_reason", ""), 110))
     elif t == "done":
         board = ev.get("board") or []
         _run_log.info("── run complete — %d ideas, %d worth acting on ──", len(board),
