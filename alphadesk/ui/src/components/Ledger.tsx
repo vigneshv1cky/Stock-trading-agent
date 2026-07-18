@@ -91,6 +91,9 @@ function IdeaRow({ p, onSelect }: { p: Pick; onSelect: (id: number) => void }) {
         <span>· conf {Math.round(p.adjusted_score ?? p.score)}</span>
         <span>· {p.approved ? "acted ✓" : "skipped"}</span>
         <span>· {p.arm === "LONER" ? "Solo" : "Team"}</span>
+        <span className="tabular-nums text-muted-foreground/70">
+          · {p.ts.slice(5, 10)} {p.ts.slice(11, 16)} UTC
+        </span>
         <span className="text-muted-foreground/70">· #{p.id}</span>
       </div>
       {why && <p className="mt-1.5 line-clamp-2 text-xs leading-snug text-muted-foreground">{why}</p>}
