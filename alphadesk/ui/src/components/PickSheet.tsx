@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { api, exitDate, fmtAlpha, type Pick } from "@/lib/api"
+import { api, etDateTime, exitDate, fmtAlpha, type Pick } from "@/lib/api"
 import { dirWord, plainEdge, plainVerdict } from "@/lib/plain"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
@@ -128,7 +128,7 @@ export function PickSheet({
               <div className="mt-1.5 flex flex-wrap gap-1.5">
                 <Badge variant="secondary">{pick.arm === "LONER" ? "Solo" : "Team"}</Badge>
                 {pick.edge && <Badge variant="secondary">{plainEdge(pick.edge)}</Badge>}
-                <Badge variant="secondary">{pick.ts.slice(0, 16).replace("T", " ")} UTC</Badge>
+                <Badge variant="secondary">{etDateTime(pick.ts)} ET</Badge>
               </div>
             )}
           </div>

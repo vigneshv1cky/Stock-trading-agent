@@ -1,4 +1,4 @@
-import { fmtAlpha, type Pick, type Stats } from "@/lib/api"
+import { etDateKey, etDateTime, fmtAlpha, type Pick, type Stats } from "@/lib/api"
 import { dirWord, plainEdge, plainVerdict } from "@/lib/plain"
 import { ArrowDown, ArrowUp } from "lucide-react"
 
@@ -17,7 +17,7 @@ function Stat({
   return (
     <div className="rounded-lg border border-border bg-card p-3">
       <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
-      <div className={`mt-0.5 text-lg font-semibold tabular-nums ${color}`}>{value}</div>
+      <div className={`mt-0.5 font-mono text-lg font-semibold tabular-nums ${color}`}>{value}</div>
       {sub && <div className="text-[11px] text-muted-foreground">{sub}</div>}
     </div>
   )
@@ -71,7 +71,7 @@ function IdeaRow({ p, onSelect }: { p: Pick; onSelect: (id: number) => void }) {
         <span className="ml-auto text-right">
           {graded ? (
             <span
-              className={`text-sm font-semibold tabular-nums ${
+              className={`font-mono text-sm font-semibold tabular-nums ${
                 p.alpha_net! > 0 ? "text-emerald-500" : "text-red-500"
               }`}
             >
@@ -91,8 +91,8 @@ function IdeaRow({ p, onSelect }: { p: Pick; onSelect: (id: number) => void }) {
         <span>· conf {Math.round(p.adjusted_score ?? p.score)}</span>
         <span>· {p.approved ? "acted ✓" : "skipped"}</span>
         <span>· {p.arm === "LONER" ? "Solo" : "Team"}</span>
-        <span className="tabular-nums text-muted-foreground/70">
-          · {p.ts.slice(5, 10)} {p.ts.slice(11, 16)} UTC
+        <span className="font-mono tabular-nums text-muted-foreground/70">
+          · {etDateTime(p.ts)} ET
         </span>
         <span className="text-muted-foreground/70">· #{p.id}</span>
       </div>
@@ -101,12 +101,14 @@ function IdeaRow({ p, onSelect }: { p: Pick; onSelect: (id: number) => void }) {
   )
 }
 
-function dayLabel(dateStr: string): string {
-  const today = new Date().toISOString().slice(0, 10)
-  const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10)
-  if (dateStr === today) return "Today"
-  if (dateStr === yesterday) return "Yesterday"
-  return new Date(dateStr + "T12:00:00Z").toLocaleDateString("en-US", {
+function dayLabel(dateKey: string): string {
+  const today = etDateKey(new Date().toISOString())
+  const yesterday = etDateKey(new Date(Date.now() - 86_400_000).toISOString())
+  if (dateKey === today) return "Today"
+  if (dateKey === yesterday) return "Yesterday"
+  // dateKey is already the ET calendar date; format it without shifting tz again.
+  return new Date(dateKey + "T12:00:00Z").toLocaleDateString("en-US", {
+    timeZone: "UTC",
     weekday: "short",
     month: "short",
     day: "numeric",
@@ -117,7 +119,7 @@ function dayLabel(dateStr: string): string {
 function groupByDay(picks: Pick[]): [string, Pick[]][] {
   const map = new Map<string, Pick[]>()
   for (const p of picks) {
-    const d = p.ts.slice(0, 10)
+    const d = etDateKey(p.ts)
     const arr = map.get(d)
     if (arr) arr.push(p)
     else map.set(d, [p])

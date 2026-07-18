@@ -113,6 +113,31 @@ export const api = {
     get<{ upcoming: EarningsRow[]; reported: EarningsRow[] }>("/api/earnings"),
 }
 
+// The market runs on US Eastern; show all decision timestamps there.
+const ET = "America/New_York"
+
+// "YYYY-MM-DD" in ET — used as a stable grouping key.
+export function etDateKey(ts: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: ET,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(ts))
+}
+
+// "Jul 18, 14:23" in ET.
+export function etDateTime(ts: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: ET,
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(ts))
+}
+
 export function fmtAlpha(a: number | null): string {
   if (a === null || a === undefined) return "…"
   return `${a > 0 ? "+" : ""}${a.toFixed(2)}%`

@@ -20,7 +20,7 @@ function Kpi({ label, value, tone }: { label: string; value: string; tone?: numb
   return (
     <div className="hidden text-right sm:block">
       <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
-      <div className={`text-sm font-semibold tabular-nums ${color}`}>{value}</div>
+      <div className={`font-mono text-sm font-semibold tabular-nums ${color}`}>{value}</div>
     </div>
   )
 }
