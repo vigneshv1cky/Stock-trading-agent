@@ -1,8 +1,8 @@
 # AlphaDesk
 
 A predictive **multi-agent stock research engine**. You trigger a run; it reads a wide
-window of world + financial news, a committee of specialized LLM agents debates the best
-opportunities live, a Chief Strategist ranks them head-to-head, and every call is written
+window of world + financial news, a **team** of specialized LLM agents debates the best
+opportunities live, a **Head** ranks them head-to-head, and every call is written
 to a self-grading ledger that scores itself forward against reality.
 
 **Research / paper only — no order execution.** All LLM calls run on a **Claude Max
@@ -14,10 +14,10 @@ subscription** via `claude-agent-sdk` — no API keys, no Bedrock, no local mode
 
 Markets price headlines in seconds but digest three things slowly. Predictions live in that lag:
 
-- **RIPPLE** — a shocked company reprices instantly; its suppliers/customers/competitors
-  drift for days. A web-grounded Exposure Desk finds the connected, *unmoved* names.
-- **NARRATIVE** — investment themes build over days; mention-velocity leads the crowd.
-- **DRIFT** — big moves continue for days; bet the continuation.
+- **SPILLOVER** — a shocked company reprices instantly; its suppliers/customers/competitors
+  drift for days. A web-grounded Connections desk finds the connected, *unmoved* names.
+- **THEME** — investment themes build over days; mention-velocity leads the crowd.
+- **MOMENTUM** — big moves continue for days; bet the continuation.
 
 Every pick declares `direction · horizon_days (1–10) · edge · confidence` and is graded at
 exactly that horizon vs SPY, net of friction.
@@ -29,22 +29,22 @@ exactly that horizon vs SPY, net of friction.
 ```
 Polygon (financial) + GDELT (world news) + Alpaca/yfinance (price context)
         │  candidates (symbol → enriched articles)
-   [Exposure Desk]  shock → 3 web-grounded specialists → synth → ripple candidates
+   [Connections desk]  shock → 3 web-grounded specialists → synth → spillover candidates
         │
-   TRIAGE ── picks ≤5, with a reason for every pick AND skip
+   SCOUT ── picks ≤5, with a reason for every pick AND skip
         │  per pick, in parallel:
-   4 briefs (technical · news · fundamentals · freshness) + the desk's own calibration scorecard
+   2 notes (market · news) + the desk's own calibration scorecard
         │
-   ANALYST → SKEPTIC → fact-check → ANALYST rebuttal → ARBITER      (adversarial debate)
-   every 3rd pick → SOLO control arm  (does the committee actually beat one good agent?)
+   RESEARCHER → CRITIC → fact-check → RESEARCHER rebuttal → JUDGE      (adversarial debate)
+   every 3rd pick → LONER control arm  (does the team actually beat one good agent?)
         │
-   CHIEF STRATEGIST → head-to-head ranking, TAKE / pass
+   HEAD → head-to-head ranking, TAKE / pass
         │
    LEDGER (SQLite) → GRADER (hourly, alpha vs SPY at each pick's own horizon)
 ```
 
-Model tiering decorrelates errors: **haiku** for enrichment/briefs, **sonnet** for
-triage/analyst, **opus** for skeptic/arbiter/chief. Analyst and Skeptic run *different*
+Model tiering decorrelates errors: **haiku** for enrichment/notes, **sonnet** for
+scout/researcher, **opus** for critic/judge/head. Researcher and Critic run *different*
 models on purpose so the critic isn't just agreeing with itself.
 
 ---
@@ -57,7 +57,7 @@ pip install -r requirements.txt
 # Web dashboard + hourly grader (primary mode — trades run on a button click)
 python -m alphadesk.main dashboard        # http://localhost:8000
 
-# Or convene the committee now, headless
+# Or convene the team now, headless
 python -m alphadesk.main desk
 
 # Rebuild the web UI after editing it
@@ -72,7 +72,8 @@ ALPACA_SECRET_KEY=...
 POLYGON_API_KEY=...       # financial news (optional)
 ADMIN_USERNAME=admin      # dashboard Basic Auth (fail-closed if unset)
 ADMIN_PASSWORD=...
-ALPHADESK_GRAPH=off       # set on to enable the optional Neo4j knowledge graph
+ALPHADESK_DATA=~/.alphadesk   # ledger.db, universe cache, enrichment cache
+SOLO_ARM_EVERY_N=0            # 0=off; set e.g. 6 to measure team-vs-loner
 ```
 
 ---
@@ -88,7 +89,7 @@ ALPHADESK_GRAPH=off       # set on to enable the optional Neo4j knowledge graph
   with pre-committed kill criteria for every component — including the debate and itself.
 - **Grounded self-improvement, not RL.** A numeric calibration scorecard is fed back into
   agent prompts; the real self-correction is the kill criteria (drop the debate / an edge /
-  the committee if the ledger says they don't pay). No free-form "lessons" memory.
+  the team if the ledger says they don't pay). No free-form "lessons" memory.
 
 ---
 

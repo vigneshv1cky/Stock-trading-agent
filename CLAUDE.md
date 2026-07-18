@@ -5,10 +5,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 **AlphaDesk** — a predictive multi-agent stock research engine. You trigger a run
-("Find Trades"); it reads a wide window of world + financial news, a committee of
-specialized LLM agents debates the best opportunities live, a Chief Strategist ranks
+("Find Trades"); it reads a wide window of world + financial news, a **team** of
+specialized LLM agents debates the best opportunities live, a **Head** ranks
 them head-to-head, and every call is written to a self-grading ledger that scores
 itself forward against reality. **Research / paper only — no order execution.**
+
+> **Plain-word vocabulary (2026-07-18):** the agent roles were renamed from
+> trading jargon to plain words. Old→new: Triage→**Scout**, Analyst→**Researcher**,
+> Skeptic→**Critic**, Arbiter→**Judge**, Chief→**Head**, Solo→**Loner**,
+> Exposure→**Connections**. DB codes: arm COMMITTEE→**TEAM**/SOLO→**LONER**;
+> edge RIPPLE→**SPILLOVER**/NARRATIVE→**THEME**/DRIFT→**MOMENTUM**/WORLD_EVENT→**WORLD**;
+> verdict CONFIRM→**STRONG**/WEAKEN→**SOFT**/REJECT→**PASS**.
 
 All LLM calls run on the **Claude Max subscription** via `claude-agent-sdk` (the
 bundled Claude Code CLI). There is no Bedrock, no API key, no local model files.
@@ -24,7 +31,7 @@ pip install -r requirements.txt
 # Web dashboard + hourly grader (v2 primary mode — trades run on button click)
 python -m alphadesk.main dashboard        # then open http://localhost:8000
 
-# Convene the committee NOW on recent news (headless, writes to ledger)
+# Convene the team NOW on recent news (headless, writes to ledger)
 python -m alphadesk.main desk
 
 # One GDELT world-news tick
@@ -45,7 +52,7 @@ cd alphadesk/ui && pnpm build
 ## Design laws (every module obeys these)
 
 1. **Agents own judgment; code owns facts, physics, safety, and scoring.** No
-   hardcoded judgment thresholds — triage has no RVOL cutoff, the score has no
+   hardcoded judgment thresholds — the scout has no RVOL cutoff, the score has no
    formula. Code owns arithmetic, hard facts (tradability), and rails (caps,
    injection defense, schema validation).
 2. **Attention is information-driven, never price-driven.** Price *informs* a
@@ -57,14 +64,14 @@ cd alphadesk/ui && pnpm build
 
 ## Alpha thesis — three slow-digestion edges
 
-- **RIPPLE** — a shocked company reprices instantly; its suppliers/customers/
-  competitors drift for days (the Exposure Desk finds the connected, unmoved names).
-- **NARRATIVE** — investment themes build over days; mention-velocity leads the crowd.
-- **DRIFT** — big moves continue for days; bet the continuation.
+- **SPILLOVER** — a shocked company reprices instantly; its suppliers/customers/
+  competitors drift for days (the Connections desk finds the connected, unmoved names).
+- **THEME** — investment themes build over days; mention-velocity leads the crowd.
+- **MOMENTUM** — big moves continue for days; bet the continuation.
 
 ## Architecture
 
-Two **entry points** run the same committee (they have partially diverged — see
+Two **entry points** run the same team (they have partially diverged — see
 Tech debt):
 
 - `desk/stream.py` — the on-demand **"Find Trades"** SSE flow (dashboard button).
@@ -77,28 +84,28 @@ Tech debt):
 ```
 Polygon (financial) + GDELT (world, 11-cat) + Alpaca/yfinance (price context)
         │  candidates (symbol → enriched articles)
-   [Exposure Desk]  (expose=true) shock → 3 web-grounded specialists → synth → ripple candidates
+   [Connections desk]  (expose=true) shock → 3 web-grounded specialists → synth → spillover candidates
         │
-   TRIAGE (sonnet)  ── picks ≤5, reasons for every pick AND skip
+   SCOUT (sonnet)  ── picks ≤5, reasons for every pick AND skip
         │  per pick, in parallel:
-   2 BRIEFS (haiku): market (price+valuation+priced-in) · news
+   2 NOTES (haiku): market (price+valuation+priced-in) · news
    + calibration prior (the desk's own graded scorecard, sample-gated at 8 trades)
         │
-   ANALYST (sonnet) → SKEPTIC (opus) → fact-check (code) → ANALYST rebuttal → ARBITER (opus)
-   every 3rd pick → SOLO (opus) control arm (kill-criterion: does the committee beat one agent?)
+   RESEARCHER (sonnet) → CRITIC (opus) → fact-check (code) → RESEARCHER rebuttal → JUDGE (opus)
+   every 3rd pick → LONER (opus) control arm (kill-criterion: does the team beat one agent?)
         │
-   CHIEF STRATEGIST (opus) → head-to-head ranking, TAKE/pass
+   HEAD (opus) → head-to-head ranking, TAKE/pass
         │
    LEDGER (SQLite/WAL) → GRADER (hourly, alpha_net vs SPY at own horizon)
 ```
 
 ### Model tiering (`config.MODEL_MAP`, every role env-overridable `MODEL_<ROLE>`)
 
-- **haiku**: enrichment, briefs (high-volume extraction)
-- **sonnet**: triage, analyst, exposure_specialist
-- **opus**: skeptic, arbiter, solo, chief, exposure_synth
+- **haiku**: enrichment, notes/briefs, news_check (high-volume extraction)
+- **sonnet**: scout, researcher, connections, earnings_reader
+- **opus**: critic, judge, loner, head, review, connections_summary
 
-Analyst is sonnet, Skeptic is opus **on purpose** — different models between debate
+Researcher is sonnet, Critic is opus **on purpose** — different models between debate
 roles decorrelate errors. On rate-limit each role steps down opus→sonnet→haiku (tagged
 on the ledger row); if the bottom tier is limited too, the breaker opens.
 
@@ -124,11 +131,15 @@ alphadesk/
   desk/
     stream.py          on-demand "Find Trades" SSE flow (v2 primary path)
     workflow.py        research_run() — batch pipeline (desk CLI, scheduler, replay)
-    triage.py          all attention judgment, in one prompt
-    briefs.py          2 parallel haiku brief subagents (market, news)
-    exposure.py        the Exposure Desk (web-grounded ripple mapping; replaced the old Neo4j graph)
-    committee.py       Analyst ⇄ Skeptic → Arbiter, + calibration_block, + chief_synthesis
-    solo.py            single-agent control arm
+    debate.py          deliberate() — the shared Researcher→Critic→Judge core
+    scout.py           all attention judgment, in one prompt (was triage.py)
+    notes.py           2 parallel haiku note subagents: market, news (was briefs.py)
+    connections.py     the Connections desk (web-grounded spillover mapping; was exposure.py)
+    team.py            Researcher ⇄ Critic → Judge, + calibration_block, + head_ranking (was committee.py)
+    loner.py           single-agent control arm (was solo.py)
+    review.py          position review — HOLD/EXIT on open TAKEs (was reeval.py)
+    news_check.py      same-story vs new-catalyst check on a recently-debated name
+    earnings_reader.py web-grounded read of an actual earnings report
   ledger/
     store.py           SQLite/WAL: picks, funnel, token_usage, relationships
     grader.py          forward grading vs SPY, friction haircut — pure code
@@ -156,28 +167,28 @@ SOLO_ARM_EVERY_N=0            # 0=off (lean default); set e.g. 6 to measure comm
 - **No order execution** — research/paper only until the ledger earns it.
 - **Self-improvement is grounded, not RL**: a numeric calibration scorecard is fed
   into agent prompts (dormant until ~8 graded trades); the real self-correction is the
-  pre-committed **kill criteria** (drop the debate / an edge / the committee if the
+  pre-committed **kill criteria** (drop the debate / an edge / the team if the
   ledger says they don't pay). No free-form "lessons" memory (persistent injection risk).
   NB: this is NOT the agent learning — the model is frozen; the loop builds evidence so
   *humans* retune. In-context feedback changing behavior is itself an unproven experiment.
 - **Anti-survivorship** — the ledger grades REJECTED picks (counterfactuals), and
-  `grader.grade_skips()` grades triage SKIPS too (directionless: a move vs SPY over
-  `SKIP_GRADE_DAYS` above `SKIP_MISS_ABS_ALPHA`% = a dislocation we ignored). `committee.
-  false_negative_block()` feeds the reject/skip miss-rate into triage + arbiter — sample-
+  `grader.grade_skips()` grades scout SKIPS too (directionless: a move vs SPY over
+  `SKIP_GRADE_DAYS` above `SKIP_MISS_ABS_ALPHA`% = a dislocation we ignored). `team.
+  false_negative_block()` feeds the reject/skip miss-rate into scout + judge — sample-
   gated, removable, tagged as an experiment.
 - **Miss diagnosis is conversational** — ask Claude "why did we miss X?"; it traces
   `store.symbol_traces` / `symbol_skips` and fixes data/prompt/bug. No UI tool for it.
 - **Position review (exits)** — each run, BEFORE hunting new trades, re-checks every
   still-open TAKE (`store.open_taken_picks`) against current price + fresh news via the
-  opus `reeval` agent → HOLD or EXIT with a reason, surfaced first (you may have traded
+  opus `review` agent → HOLD or EXIT with a reason, surfaced first (you may have traded
   it). Exits are stamped (`exit_ts`/`exit_reason`); HOLD is the fail-safe default. The
-  committee opens positions; `desk/reeval.py` is the only thing that closes them early.
+  team opens positions; `desk/review.py` is the only thing that closes them early.
 
 ## Tech debt / honest status
 
-- **Committee core is converged** (`desk/debate.py`): both entry points run the same
-  `deliberate()` async generator for the analyst→skeptic→arbiter→ledger-write sequence,
-  and now the same briefs (market + news), so they no longer drift. Only the solo-arm
+- **Team core is converged** (`desk/debate.py`): both entry points run the same
+  `deliberate()` async generator for the researcher→critic→judge→ledger-write sequence,
+  and now the same notes (market + news), so they no longer drift. Only the loner-arm
   record is still lightly duplicated between them.
 - **Unproven.** The full deep-scan path has not been run end-to-end live, and there
   are **zero graded trades** — so the calibration prior, kill criteria, and the entire
