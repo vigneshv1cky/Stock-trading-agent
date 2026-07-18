@@ -33,7 +33,16 @@ from alphadesk.config import (
     session,
 )
 from alphadesk.desk import briefs as briefs_mod
-from alphadesk.desk import committee, debate, earnings_reader, exposure, reeval, solo, triage
+from alphadesk.desk import (
+    committee,
+    debate,
+    earnings_reader,
+    exposure,
+    materiality,
+    reeval,
+    solo,
+    triage,
+)
 from alphadesk.ingest import news, prices
 from alphadesk.ledger import store
 from alphadesk.llm import LLMError
@@ -206,18 +215,36 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
                     added += 1
             yield _ev("status", msg=f"Exposure Desk surfaced {added} ripple candidates.")
 
-    # Anti-double-dip across runs: drop names we already HOLD (the position review
-    # just re-evaluated them — don't also re-debate them as fresh) and names debated
-    # within the cooldown (an earnings/news catalyst lingers as a candidate for days).
+    # Anti-double-dip across runs — but not blind to NEW catalysts:
+    #  • names we already HOLD → skip (the position review re-evaluated them; new
+    #    adverse news there triggers an EXIT, so they're covered).
+    #  • names debated within the cooldown → skip UNLESS a materiality check says a
+    #    genuinely NEW catalyst arrived since that debate (same story != new event).
     held = {p["symbol"].upper() for p in open_positions}
     cooling = await loop.run_in_executor(None, store.symbols_debated_since, REPICK_COOLDOWN_HOURS)
-    skip = held | cooling
-    dropped = [s for s in list(candidates) if s.upper() in skip]
-    for s in dropped:
-        candidates.pop(s, None)
+    dropped: list[str] = []
+    for s in list(candidates):
+        su = s.upper()
+        if su in held:
+            candidates.pop(s, None)
+            dropped.append(s)
+            continue
+        if su in cooling:
+            last = await loop.run_in_executor(None, store.last_debate, su)
+            ts = (last or {}).get("ts") or ""
+            new_arts = [a for a in candidates[s] if str(a.get("published_at", "")) > ts]
+            if new_arts:
+                v = await loop.run_in_executor(
+                    None, materiality.fresh_catalyst, s, last, new_arts, f"mat-{su}")
+                if v.get("fresh_catalyst"):
+                    yield _ev("status", msg=f"{s}: new development since last look — re-examining "
+                                            f"({(v.get('reason') or '')[:90]}).")
+                    continue  # a genuinely new catalyst — keep it in the pool
+            candidates.pop(s, None)
+            dropped.append(s)
     if dropped:
-        yield _ev("status", msg=f"Skipping {len(dropped)} name(s) already held or debated "
-                                f"in the last {REPICK_COOLDOWN_HOURS}h (no re-dip).")
+        yield _ev("status", msg=f"Skipped {len(dropped)} name(s): already held, or same story as a "
+                                f"debate in the last {REPICK_COOLDOWN_HOURS}h (no re-dip).")
     if not candidates:
         yield _ev("status", msg="Nothing fresh to debate after de-duping held/recent names.")
         yield _ev("done", board=[])

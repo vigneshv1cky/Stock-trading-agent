@@ -392,6 +392,17 @@ def get_relationships(from_sym: str, days: int = 7) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def last_debate(symbol: str) -> dict | None:
+    """The most recent committee debate for `symbol` (ts + what it was about) — so a
+    later run can tell 'same story' from a genuinely new catalyst."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT ts, triage_reason, thesis FROM picks WHERE arm='COMMITTEE' AND symbol=?"
+            " ORDER BY id DESC LIMIT 1", (symbol.upper(),),
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def symbols_debated_since(hours: int = 12) -> set:
     """Symbols with a committee debate in the last `hours` — skip re-debating them
     (anti-double-dip: an earnings/news name lingers as a candidate for days)."""
