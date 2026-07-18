@@ -12,8 +12,9 @@ seeded with liquid large caps on first run.
 
 import json
 import logging
+from datetime import datetime, timedelta
 
-from alphadesk.config import DATA_DIR
+from alphadesk.config import DATA_DIR, ET
 from alphadesk.ledger import store
 
 log = logging.getLogger("alphadesk.earnings")
@@ -60,6 +61,20 @@ def _f(v):
         return f if f == f else None   # drop NaN
     except (TypeError, ValueError):
         return None
+
+
+def run_at(report_iso: str, session: str | None) -> str | None:
+    """When to run Find Trades to catch the drift: 9:30 ET on the first trading
+    session AFTER the result is public. BMO reports are out before that day's open
+    (trade the same day); AMC / intraday reports first trade the next session."""
+    try:
+        dt = datetime.fromisoformat(report_iso).astimezone(ET)
+    except (ValueError, TypeError):
+        return None
+    run_day = dt.date() if session == "BMO" else dt.date() + timedelta(days=1)
+    while run_day.weekday() >= 5:      # skip Sat/Sun to the next weekday open
+        run_day += timedelta(days=1)
+    return datetime(run_day.year, run_day.month, run_day.day, 9, 30, tzinfo=ET).isoformat()
 
 
 def refresh_calendar(symbols: list[str] | None = None, limit: int = 8) -> int:

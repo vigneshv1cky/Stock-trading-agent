@@ -93,6 +93,7 @@ export interface EarningsRow {
   eps_estimate: number | null
   eps_actual?: number | null
   surprise_pct?: number | null
+  run_at?: string | null // when to run the desk to catch the drift (9:30 ET, next session)
 }
 
 async function get<T>(path: string): Promise<T> {

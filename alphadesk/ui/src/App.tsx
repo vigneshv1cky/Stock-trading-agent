@@ -148,6 +148,9 @@ export default function App() {
                   <span key={e.symbol + e.report_date} className="text-muted-foreground">
                     <span className="font-medium text-foreground">{e.symbol}</span>{" "}
                     {e.report_date.slice(5, 10)} {e.session}
+                    {e.run_at && (
+                      <span className="text-emerald-500"> → run {e.run_at.slice(5, 10)} 9:30 ET</span>
+                    )}
                   </span>
                 ))}
               </div>

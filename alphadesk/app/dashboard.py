@@ -105,9 +105,13 @@ def api_tokens(days: int = 1):
 
 @app.get("/api/earnings")
 def api_earnings():
-    """Be-ready view: who reports next (upcoming) and who just reported (drift)."""
-    return {"upcoming": store.upcoming_earnings(days=7),
-            "reported": store.recently_reported(days=3)}
+    """Be-ready view: who reports next (with the time to RUN the desk to catch the
+    drift) and who just reported."""
+    from alphadesk.ingest.earnings import run_at
+    upcoming = store.upcoming_earnings(days=7)
+    for e in upcoming:
+        e["run_at"] = run_at(e["report_date"], e.get("session"))
+    return {"upcoming": upcoming, "reported": store.recently_reported(days=3)}
 
 
 _run_day = ""
