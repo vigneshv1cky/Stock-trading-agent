@@ -247,11 +247,11 @@ def poll(categories_per_tick: int = 3) -> tuple[int, dict[str, list[dict]]]:
                 "source": ev["domain"],
                 "url": ev["url"],
                 "published_at": ev["published_at"],
-                "category": "WORLD_EVENT",
+                "category": "WORLD",
                 "tickers": [sym],
                 "mentions": [{"symbol": sym, "sentiment": sentiment,
                               "label": "positive" if sentiment > 0 else "negative",
-                              "category": "WORLD_EVENT"}],
+                              "category": "WORLD"}],
                 "relations": [],
             })
 

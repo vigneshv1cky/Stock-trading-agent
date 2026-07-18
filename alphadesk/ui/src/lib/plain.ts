@@ -2,15 +2,15 @@
 
 export const plainEdge = (e?: string | null): string =>
   ({
-    RIPPLE: "Ripple effect",
-    DRIFT: "Momentum",
-    NARRATIVE: "Theme",
+    SPILLOVER: "Ripple effect",
+    MOMENTUM: "Momentum",
+    THEME: "Theme",
     EARNINGS: "Earnings",
-    WORLD_EVENT: "World event",
+    WORLD: "World event",
   })[e ?? ""] ?? e ?? ""
 
 export const plainVerdict = (v?: string | null): string =>
-  ({ CONFIRM: "Approved", WEAKEN: "Approved (cautious)", REJECT: "Rejected" })[v ?? ""] ??
+  ({ STRONG: "Approved", SOFT: "Approved (cautious)", PASS: "Rejected" })[v ?? ""] ??
   v ??
   ""
 

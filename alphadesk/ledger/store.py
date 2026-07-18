@@ -21,8 +21,8 @@ CREATE TABLE IF NOT EXISTS picks (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     ts              TEXT NOT NULL,                 -- decision time UTC ISO
     symbol          TEXT NOT NULL,
-    arm             TEXT NOT NULL,                 -- COMMITTEE | SOLO
-    edge            TEXT,                          -- RIPPLE | NARRATIVE | DRIFT
+    arm             TEXT NOT NULL,                 -- TEAM | LONER
+    edge            TEXT,                          -- SPILLOVER | THEME | MOMENTUM
     trigger_src     TEXT NOT NULL,                 -- STREAM | DEEP_RUN | REPLAY
     session         TEXT NOT NULL,                 -- PRE | OPEN | AFTER | CLOSED
     -- decision
@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS picks (
     score           REAL NOT NULL,                 -- pre-debate
     adjusted_score  REAL,                          -- post-debate (committee only)
     confidence      REAL NOT NULL,
-    verdict         TEXT,                          -- CONFIRM | WEAKEN | REJECT
+    verdict         TEXT,                          -- STRONG | SOFT | PASS
     approved        INTEGER NOT NULL DEFAULT 0,
     -- context
     triage_reason   TEXT,
@@ -319,7 +319,7 @@ def stats() -> dict:
             " ((adjusted_score > 50) = (alpha_net > 0)) THEN 1.0 ELSE 0.0 END), 3) AS post_debate_acc,"
             " round(avg(CASE WHEN alpha_net IS NOT NULL AND"
             " ((score > 50) = (alpha_net > 0)) THEN 1.0 ELSE 0.0 END), 3) AS pre_debate_acc"
-            " FROM picks WHERE arm = 'COMMITTEE' AND graded_at IS NOT NULL"
+            " FROM picks WHERE arm = 'TEAM' AND graded_at IS NOT NULL"
         ).fetchone())
     return {"total": total, "by": by, "debate_lift": debate}
 
@@ -397,7 +397,7 @@ def last_debate(symbol: str) -> dict | None:
     later run can tell 'same story' from a genuinely new catalyst."""
     with _connect() as conn:
         row = conn.execute(
-            "SELECT ts, triage_reason, thesis FROM picks WHERE arm='COMMITTEE' AND symbol=?"
+            "SELECT ts, triage_reason, thesis FROM picks WHERE arm='TEAM' AND symbol=?"
             " ORDER BY id DESC LIMIT 1", (symbol.upper(),),
         ).fetchone()
     return dict(row) if row else None
@@ -408,7 +408,7 @@ def symbols_debated_since(hours: int = 12) -> set:
     (anti-double-dip: an earnings/news name lingers as a candidate for days)."""
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT DISTINCT symbol FROM picks WHERE arm='COMMITTEE'"
+            "SELECT DISTINCT symbol FROM picks WHERE arm='TEAM'"
             " AND ts >= datetime('now', ?)", (f"-{int(hours)} hours",),
         ).fetchall()
     return {r["symbol"].upper() for r in rows}
@@ -474,14 +474,14 @@ def update_skip(skip_id: int, **fields: Any) -> None:
 
 def false_negative_stats() -> dict:
     """The survivorship scorecard: how often the desk was wrong to say NO.
-    - reject: graded COMMITTEE picks it REJECTED that would have beaten SPY
+    - reject: graded TEAM picks it REJECTED that would have beaten SPY
       (alpha_net > 0 in the proposed direction — a passed-over winner).
     - skip:   graded triage skips that made a big move we never looked at."""
     with _connect() as conn:
         rej = dict(conn.execute(
             "SELECT count(*) AS graded,"
             " sum(CASE WHEN alpha_net > 0 THEN 1 ELSE 0 END) AS missed"
-            " FROM picks WHERE arm='COMMITTEE' AND approved=0 AND graded_at IS NOT NULL"
+            " FROM picks WHERE arm='TEAM' AND approved=0 AND graded_at IS NOT NULL"
         ).fetchone())
         skp = dict(conn.execute(
             "SELECT count(*) AS graded, sum(CASE WHEN missed=1 THEN 1 ELSE 0 END) AS missed"

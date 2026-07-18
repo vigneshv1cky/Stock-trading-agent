@@ -149,16 +149,16 @@ async def _sentinel_loop() -> None:
         try:
             s = store.stats()
             total = s["total"]
-            today_committee = store.picks_today("COMMITTEE")
+            today_committee = store.picks_today("TEAM")
             if today_committee >= 10:
-                with_approval = [b for b in s["by"]["arm"] if b["bucket"] == "COMMITTEE"]
+                with_approval = [b for b in s["by"]["arm"] if b["bucket"] == "TEAM"]
                 if with_approval and total["picks"]:
                     # crude day-level approval-rate alarm
                     import sqlite3
                     from alphadesk.config import DATA_DIR
                     with sqlite3.connect(DATA_DIR / "ledger.db") as c:
                         row = c.execute(
-                            "SELECT avg(approved) FROM picks WHERE arm='COMMITTEE'"
+                            "SELECT avg(approved) FROM picks WHERE arm='TEAM'"
                             " AND ts >= date('now')"
                         ).fetchone()
                     if row and row[0] is not None and row[0] > 0.8:

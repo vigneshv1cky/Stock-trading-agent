@@ -23,21 +23,21 @@ _SYSTEM = (
     "PICK up to {max_picks} symbols that most merit full committee analysis. "
     "STRONGLY favor post-earnings-drift setups — candidates tagged [EARNINGS] just "
     "reported a result; stocks tend to drift in the surprise direction for days "
-    "(the cleanest DRIFT edge), so weigh the surprise size and how much has already "
+    "(the cleanest MOMENTUM edge), so weigh the surprise size and how much has already "
     "moved. Also favor: material company-specific catalysts; supplier/customer/"
     "competitor spillover where the affected NEIGHBOR hasn't moved yet; building "
     "multi-day themes; big catalysts whose initial move may CONTINUE for days. "
     "Disfavor: vague listicles, already-fully-priced stories, tiny illiquid names "
     "with promotional-sounding coverage (note the liquidity field), duplicate "
     "coverage of something already picked recently.\n"
-    "edge_hint: RIPPLE (spillover to a connected, unmoved name) | NARRATIVE "
-    "(building theme) | DRIFT (big fresh catalyst, betting continuation) | "
-    "WORLD_EVENT (candidate sourced from the world-news desk — headlines "
+    "edge_hint: SPILLOVER (spillover to a connected, unmoved name) | THEME "
+    "(building theme) | MOMENTUM (big fresh catalyst, betting continuation) | "
+    "WORLD (candidate sourced from the world-news desk — headlines "
     "tagged [WORLD:...]; the stated exposure is a HYPOTHESIS the committee "
     "must verify, so weigh the plausibility of the causal chain).\n"
     "Give every pick AND every skip a one-sentence reason.\n\n"
     'Return ONLY JSON: {{"picks": [{{"symbol": "...", "edge_hint": '
-    '"RIPPLE|NARRATIVE|DRIFT", "reason": "..."}}], '
+    '"SPILLOVER|THEME|MOMENTUM|WORLD", "reason": "..."}}], '
     '"skips": [{{"symbol": "...", "reason": "..."}}]}}'
 )
 
@@ -46,7 +46,7 @@ _SCHEMA = {
         "type": list, "maxitems": MAX_PICKS_PER_WINDOW,
         "items": {
             "symbol": {"type": str, "symbol": True},
-            "edge_hint": {"type": str, "enum": ["RIPPLE", "NARRATIVE", "DRIFT", "WORLD_EVENT"]},
+            "edge_hint": {"type": str, "enum": ["SPILLOVER", "THEME", "MOMENTUM", "WORLD"]},
             "reason": {"type": str, "maxlen": 300},
         },
     },

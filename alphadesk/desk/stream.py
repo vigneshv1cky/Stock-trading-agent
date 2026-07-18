@@ -94,7 +94,7 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
         return
 
     # Earnings drift — names that reported in the last few days are first-class
-    # candidates (the desk's cleanest DRIFT edge). Injected as synthetic EARNINGS
+    # candidates (the desk's cleanest MOMENTUM edge). Injected as synthetic EARNINGS
     # "articles" so they flow through the same triage → committee pipeline; the
     # committee judges whether the post-earnings move continues.
     reported = await loop.run_in_executor(None, store.recently_reported, EARNINGS_DRIFT_DAYS)
@@ -200,13 +200,13 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
                     sentiment = 0.5 if c["direction"] == "LONG" else -0.5
                     candidates.setdefault(csym, []).append({
                         "id": f"ripple-{res['shock']}-{csym}",
-                        "title": f"[RIPPLE from {res['shock']}] {c['chain'][:110]}",
+                        "title": f"[SPILLOVER from {res['shock']}] {c['chain'][:110]}",
                         "summary": f"HYPOTHESIS ({c['strength']}): {c['chain']}",
                         "source": "ExposureDesk", "url": "",
-                        "published_at": since_dt.isoformat(), "category": "RIPPLE",
+                        "published_at": since_dt.isoformat(), "category": "SPILLOVER",
                         "tickers": [csym],
                         "mentions": [{"symbol": csym, "sentiment": sentiment,
-                                      "label": c["direction"].lower(), "category": "RIPPLE"}],
+                                      "label": c["direction"].lower(), "category": "SPILLOVER"}],
                         "relations": [],
                     })
                     ripple_syms.add(csym)
@@ -355,7 +355,7 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
                         sym, pick["reason"], briefs, history, decision_id + "-solo", calibration))
                 s_model = s.pop("_downgraded_model", MODEL_MAP["loner"])
                 store.record_pick({
-                    "symbol": sym, "arm": "SOLO", "edge": pick.get("edge_hint"),
+                    "symbol": sym, "arm": "LONER", "edge": pick.get("edge_hint"),
                     "trigger_src": "FIND_TRADES", "session": sess,
                     "direction": s["direction"], "horizon_days": s["horizon_days"],
                     "score": s["score"], "confidence": s["confidence"],

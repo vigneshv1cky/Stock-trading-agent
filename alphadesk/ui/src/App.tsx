@@ -253,7 +253,7 @@ export default function App() {
                   <TableCell>
                     {p.verdict && (
                       <Badge
-                        variant={p.verdict === "REJECT" ? "destructive" : "secondary"}
+                        variant={p.verdict === "PASS" ? "destructive" : "secondary"}
                         className="font-normal"
                       >
                         {plainVerdict(p.verdict)}
@@ -261,7 +261,7 @@ export default function App() {
                     )}
                   </TableCell>
                   <TableCell className="text-muted-foreground">
-                    {p.arm === "SOLO" ? "Solo" : "Team"}
+                    {p.arm === "LONER" ? "Solo" : "Team"}
                   </TableCell>
                   <TableCell className="text-muted-foreground">{plainEdge(p.edge)}</TableCell>
                   <TableCell>{p.approved ? "✅" : "❌"}</TableCell>

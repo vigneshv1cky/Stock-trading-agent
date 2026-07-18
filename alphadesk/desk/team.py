@@ -107,11 +107,11 @@ _ARBITER_SYSTEM = (
     "Read the full transcript (thesis, concerns, rebuttal, any fact-check flags). "
     "Decide whether this prediction goes on the book. Weigh argument QUALITY: "
     "did the skeptic land real hits? did the analyst answer them or dodge? "
-    "verdict: CONFIRM (thesis stands), WEAKEN (stands but softer), REJECT.\n"
+    "verdict: STRONG (thesis stands), SOFT (stands but softer), PASS (rejected).\n"
     "COHERENCE RULE: adjusted_score must agree with the direction — for a LONG "
     "it must be ABOVE 50, for a SHORT BELOW 50. If your honest view puts the "
     "score on the wrong side of 50, the trade does not belong on the book: set "
-    "approved=false and REJECT. Weak-but-real conviction in a LONG is 52-58, "
+    "approved=false and PASS. Weak-but-real conviction in a LONG is 52-58, "
     "not 43.\n"
     "adjusted_horizon_days: you own the horizon too — if the surviving edge is "
     "shorter or longer than the analyst's proposal (e.g. 'only a 1-2 day "
@@ -119,7 +119,7 @@ _ARBITER_SYSTEM = (
     "horizon.\n"
     'Return ONLY JSON: {"approved": <true|false>, "adjusted_score": <0-100>, '
     '"adjusted_confidence": <0-100>, "adjusted_horizon_days": <1-10>, '
-    '"verdict": "CONFIRM|WEAKEN|REJECT", "summary": "<3 sentences max>"}'
+    '"verdict": "STRONG|SOFT|PASS", "summary": "<3 sentences max>"}'
 )
 
 _ARBITER_SCHEMA = {
@@ -127,7 +127,7 @@ _ARBITER_SCHEMA = {
     "adjusted_score": {"type": (int, float), "min": 0, "max": 100},
     "adjusted_confidence": {"type": (int, float), "min": 0, "max": 100},
     "adjusted_horizon_days": {"type": int, "min": 1, "max": 10, "optional": True},
-    "verdict": {"type": str, "enum": ["CONFIRM", "WEAKEN", "REJECT"]},
+    "verdict": {"type": str, "enum": ["STRONG", "SOFT", "PASS"]},
     "summary": {"type": str, "maxlen": 800},
 }
 

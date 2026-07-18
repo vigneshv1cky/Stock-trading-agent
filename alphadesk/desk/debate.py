@@ -65,7 +65,7 @@ async def deliberate(sym: str, pick: dict, briefs: list[dict], price_ctx: dict |
     sess = session()
     horizon = int(verdict.get("adjusted_horizon_days") or thesis["horizon_days"])
     pick_id = store.record_pick({
-        "symbol": sym, "arm": "COMMITTEE", "edge": pick.get("edge_hint"),
+        "symbol": sym, "arm": "TEAM", "edge": pick.get("edge_hint"),
         "trigger_src": trigger_src, "session": sess,
         "direction": thesis["direction"], "horizon_days": horizon,
         "score": thesis["score"], "adjusted_score": verdict["adjusted_score"],

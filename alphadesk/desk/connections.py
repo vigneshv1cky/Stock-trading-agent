@@ -122,7 +122,7 @@ def map_connections(shock: str, event: str, decision_id: str | None = None) -> d
         combined = {key: fut.result() for key, fut in futures.items()}
     synth_system = (
         "You are the Chain Synthesist. Your desk's analysts mapped a shocked "
-        "company's suppliers, customers, and competitors. Assemble the RIPPLE: "
+        "company's suppliers, customers, and competitors. Assemble the SPILLOVER: "
         "which US-listed, TRADABLE companies are exposed, in which direction, and "
         "the causal chain (shock → mechanism → this company). Prefer names that "
         "likely HAVEN'T fully repriced yet (second-order, less-obvious). Rate each "

@@ -115,7 +115,7 @@ export function PickSheet({
                 #{pick.id} · {pick.symbol}
               </SheetTitle>
               <SheetDescription className="flex flex-wrap gap-1.5">
-                <Badge variant="secondary">{pick.arm === "SOLO" ? "Solo" : "Team"}</Badge>
+                <Badge variant="secondary">{pick.arm === "LONER" ? "Solo" : "Team"}</Badge>
                 {pick.edge && <Badge variant="secondary">{plainEdge(pick.edge)}</Badge>}
                 <Badge variant="secondary">{pick.ts.slice(0, 16).replace("T", " ")} UTC</Badge>
               </SheetDescription>
@@ -190,7 +190,7 @@ export function PickSheet({
                   </Bubble>
                 )}
 
-                {pick.arm === "SOLO" && (
+                {pick.arm === "LONER" && (
                   <Bubble role="solo" who="Second opinion — works alone">
                     Reviewed the same evidence on its own, without the team's debate.
                   </Bubble>

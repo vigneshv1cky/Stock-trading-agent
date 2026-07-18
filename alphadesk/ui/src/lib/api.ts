@@ -28,7 +28,7 @@ export interface Pick {
   id: number
   ts: string
   symbol: string
-  arm: "COMMITTEE" | "SOLO"
+  arm: "TEAM" | "LONER"
   edge: string | null
   trigger_src: string
   session: string

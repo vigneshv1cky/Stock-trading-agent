@@ -4,7 +4,7 @@ windows, deep runs, and (later) replay.
     candidates → TRIAGE → per pick (parallel, capped):
         3 brief subagents (parallel) → ANALYST → SKEPTIC → fact-check →
         ANALYST rebuttal → ARBITER → ledger row
-        (+ every Nth pick: SOLO arm, independent, same briefs)
+        (+ every Nth pick: LONER arm, independent, same briefs)
 
 Fail-safe doctrine: any stage failure drops that candidate with a logged
 reason. Hard caps enforced in code. Every window writes funnel counters.
@@ -46,7 +46,7 @@ def _seed_cooldowns_from_ledger() -> None:
         from alphadesk.config import DATA_DIR
         with sqlite3.connect(DATA_DIR / "ledger.db") as conn:
             rows = conn.execute(
-                "SELECT symbol, max(ts) FROM picks WHERE arm='COMMITTEE'"
+                "SELECT symbol, max(ts) FROM picks WHERE arm='TEAM'"
                 f" AND ts >= datetime('now', '-{SYMBOL_REPICK_COOLDOWN_MIN} minutes')"
                 " GROUP BY symbol"
             ).fetchall()
@@ -124,7 +124,7 @@ async def _run_committee(loop, sym: str, pick: dict, articles: list[dict],
                                                  decision_id + "-solo", calibration))
             solo_model = s.pop("_downgraded_model", MODEL_MAP["loner"])
             store.record_pick({
-                "symbol": sym, "arm": "SOLO", "edge": pick.get("edge_hint"),
+                "symbol": sym, "arm": "LONER", "edge": pick.get("edge_hint"),
                 "trigger_src": trigger_src, "session": sess,
                 "direction": s["direction"], "horizon_days": s["horizon_days"],
                 "score": s["score"], "confidence": s["confidence"],
@@ -135,7 +135,7 @@ async def _run_committee(loop, sym: str, pick: dict, articles: list[dict],
                 "entry_price": (price_ctx or {}).get("last_price") if sess == "OPEN" else None,
                 "spy_price": ((prices.get_context("SPY") or {}).get("last_price")),
             })
-            log.info("SOLO arm: %s %s %dd score=%.0f", sym, s["direction"],
+            log.info("LONER arm: %s %s %dd score=%.0f", sym, s["direction"],
                      s["horizon_days"], s["score"])
         except LLMError as exc:
             log.warning("Solo arm dropped %s: %s", sym, exc)
@@ -160,7 +160,7 @@ async def research_run(candidates: dict[str, list[dict]], trigger_src: str = "ST
     if not eligible:
         return []
 
-    if store.picks_today("COMMITTEE") >= MAX_DEBATES_PER_DAY:
+    if store.picks_today("TEAM") >= MAX_DEBATES_PER_DAY:
         log.warning("Daily debate cap reached (%d) — window skipped", MAX_DEBATES_PER_DAY)
         return []
 
