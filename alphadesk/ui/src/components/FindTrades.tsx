@@ -3,6 +3,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ArrowDown, ArrowUp, Loader2, Search } from "lucide-react"
+import { dirUp, dirWord, plainEdge, plainVerdict } from "@/lib/plain"
 
 // Streamed events (loosely typed — they come as JSON off the SSE feed)
 interface Ev {
@@ -69,7 +70,7 @@ function Line({ ev }: { ev: Ev }) {
       return (
         <div className={cls}>
           <span className="text-xs font-semibold uppercase tracking-wider text-cyan-500">
-            Exposure Desk · mapping ripples from {ev.symbol}
+            Looking for companies affected by {ev.symbol}
           </span>
         </div>
       )
@@ -77,10 +78,10 @@ function Line({ ev }: { ev: Ev }) {
       return (
         <div className={cls}>
           <span className="text-xs font-semibold uppercase tracking-wider text-cyan-500">
-            Ripple: {ev.shock} → {ev.symbol}
+            Knock-on effect: {ev.shock} → {ev.symbol}
           </span>{" "}
-          <span className={ev.direction === "LONG" ? "text-green-500" : "text-red-500"}>
-            {ev.direction}
+          <span className={dirUp(ev.direction) ? "text-green-500" : "text-red-500"}>
+            {dirWord(ev.direction)}
           </span>{" "}
           <Badge variant="secondary">{ev.strength}</Badge>
           <p className="mt-1 text-muted-foreground">{ev.chain}</p>
@@ -90,10 +91,10 @@ function Line({ ev }: { ev: Ev }) {
       return (
         <div className={cls}>
           <span className="text-xs font-semibold uppercase tracking-wider text-yellow-500">
-            Triage picked {ev.symbol}
+            Shortlisted {ev.symbol}
           </span>{" "}
           <Badge variant="secondary" className="ml-1">
-            {ev.edge}
+            {plainEdge(ev.edge)}
           </Badge>
           <p className="mt-1 text-muted-foreground">{ev.reason}</p>
         </div>
@@ -102,7 +103,7 @@ function Line({ ev }: { ev: Ev }) {
       return (
         <div className={cls}>
           <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            {ev.kind} brief · {ev.symbol}
+            {ev.kind} note · {ev.symbol}
           </span>
           <p className="mt-1">{ev.summary}</p>
         </div>
@@ -111,13 +112,13 @@ function Line({ ev }: { ev: Ev }) {
       return (
         <div className={cls}>
           <span className="text-xs font-semibold uppercase tracking-wider text-blue-500">
-            Analyst · {ev.symbol}
+            The case for {ev.symbol}
           </span>
           <p className="mt-1">
-            <b className={ev.direction === "LONG" ? "text-green-500" : "text-red-500"}>
-              {ev.direction}
+            <b className={dirUp(ev.direction) ? "text-green-500" : "text-red-500"}>
+              {dirWord(ev.direction)}
             </b>{" "}
-            · {ev.horizon_days}d · score {ev.score}
+            · hold ~{ev.horizon_days} days · confidence {ev.score}/100
           </p>
         </div>
       )
@@ -125,7 +126,7 @@ function Line({ ev }: { ev: Ev }) {
       return (
         <div className={cls}>
           <span className="text-xs font-semibold uppercase tracking-wider text-red-500">
-            Skeptic · {ev.symbol}
+            The pushback · {ev.symbol}
           </span>
           <p className="mt-1 font-medium">{ev.claim}</p>
           <p className="text-muted-foreground">{ev.evidence}</p>
@@ -144,10 +145,11 @@ function Line({ ev }: { ev: Ev }) {
       return (
         <div className={cls}>
           <span className="text-xs font-semibold uppercase tracking-wider text-blue-500">
-            Analyst rebuttal · {ev.symbol}
+            Researcher's reply · {ev.symbol}
           </span>
           <p className="mt-1">
-            revised {ev.revised_score} · conceded {String(ev.concede)}
+            updated confidence {ev.revised_score}/100 · agreed with the pushback:{" "}
+            {ev.concede ? "yes" : "no"}
           </p>
         </div>
       )
@@ -155,11 +157,11 @@ function Line({ ev }: { ev: Ev }) {
       return (
         <div className={cls}>
           <span className="text-xs font-semibold uppercase tracking-wider text-green-500">
-            Verdict · {ev.symbol}
+            Decision · {ev.symbol}
           </span>
           <p className="mt-1">
-            {ev.approved ? "✅ ON THE BOOK" : "❌ rejected"} · {ev.verdict} · conviction{" "}
-            {ev.conviction}
+            {ev.approved ? "✅ Worth acting on" : "❌ Skipped"} · {plainVerdict(ev.verdict)} ·
+            confidence {ev.conviction}/100
           </p>
           <p className="text-muted-foreground">{ev.summary}</p>
         </div>
@@ -224,7 +226,7 @@ export function FindTrades({ onDone }: { onDone: () => void }) {
               disabled={running}
               onChange={(e) => setDeep(e.target.checked)}
             />
-            Deep scan (supply-chain ripples)
+            Deep scan (also check related companies)
           </label>
           <Button onClick={run} disabled={running}>
           {running ? (
@@ -245,10 +247,9 @@ export function FindTrades({ onDone }: { onDone: () => void }) {
         {positions.length > 0 && (
           <div className="mb-4 space-y-2">
             <div className="text-sm font-semibold">
-              Position review ({positions.filter((p) => p.type === "position_exit").length} exit
-              {positions.filter((p) => p.type === "position_exit").length === 1 ? "" : "s"})
+              Your open picks
               <span className="ml-1 font-normal text-muted-foreground">
-                — your open picks from earlier runs
+                — re-checked against today's news ({positions.filter((p) => p.type === "position_exit").length} to sell)
               </span>
             </div>
             {positions.map((p, i) => {
@@ -262,13 +263,13 @@ export function FindTrades({ onDone }: { onDone: () => void }) {
                 >
                   <div className="flex items-center gap-2">
                     <Badge className={exit ? "bg-red-600" : "bg-emerald-700"}>
-                      {exit ? "EXIT" : "HOLD"}
+                      {exit ? "Sell now" : "Keep"}
                     </Badge>
-                    <span className={p.direction === "LONG" ? "text-green-500" : "text-red-500"}>
-                      {p.direction}
+                    <span className={dirUp(p.direction) ? "text-green-500" : "text-red-500"}>
+                      {dirWord(p.direction)}
                     </span>
                     <span className="font-bold">{p.symbol}</span>
-                    <span className="text-muted-foreground">{p.horizon_days}d call</span>
+                    <span className="text-muted-foreground">~{p.horizon_days}-day pick</span>
                     {exit && p.entry != null && p.now != null && (
                       <span className="text-muted-foreground">
                         · {p.entry} → {p.now}
@@ -287,13 +288,13 @@ export function FindTrades({ onDone }: { onDone: () => void }) {
             {chief && (
               <div className="rounded-md border-l-4 border-l-amber-500 bg-muted/40 p-3">
                 <div className="text-xs font-semibold uppercase tracking-wider text-amber-500">
-                  Chief Strategist — head-to-head read
+                  Final call — comparing all the ideas
                 </div>
                 <p className="mt-1 text-sm">{chief}</p>
               </div>
             )}
             <div className="text-sm font-semibold">
-              Ranked opportunities ({board.filter((b) => b.take).length} to take)
+              Best ideas ({board.filter((b) => b.take).length} worth acting on)
             </div>
             {board.map((r, i) => (
               <div
@@ -308,38 +309,38 @@ export function FindTrades({ onDone }: { onDone: () => void }) {
                     <ArrowDown className="h-4 w-4 text-red-500" />
                   )}
                   <span
-                    className={`font-bold ${r.direction === "LONG" ? "text-green-500" : "text-red-500"}`}
+                    className={`font-bold ${dirUp(r.direction) ? "text-green-500" : "text-red-500"}`}
                   >
-                    {r.direction}
+                    {dirWord(r.direction)}
                   </span>
                   <span className="font-bold">{r.symbol}</span>
-                  <Badge variant="secondary">{r.edge}</Badge>
-                  <span className="text-muted-foreground">{r.horizon_days}d</span>
-                  <span className="text-muted-foreground">conv {r.conviction}</span>
+                  <Badge variant="secondary">{plainEdge(r.edge)}</Badge>
+                  <span className="text-muted-foreground">hold ~{r.horizon_days}d</span>
+                  <span className="text-muted-foreground">confidence {r.conviction}</span>
                   {r.take ? (
-                    <Badge className="ml-auto bg-green-600">TAKE</Badge>
+                    <Badge className="ml-auto bg-green-600">Suggested</Badge>
                   ) : (
                     <Badge variant="outline" className="ml-auto">
-                      pass
+                      Skip
                     </Badge>
                   )}
                 </div>
                 <p className="mt-1 pl-8 text-xs text-muted-foreground">
                   <span className="text-foreground/70">
-                    {r.direction === "LONG" ? "Long" : "Short"} for {r.horizon_days}d.
+                    {dirWord(r.direction)} · hold ~{r.horizon_days} days.
                   </span>{" "}
                   {r.summary}
                 </p>
                 {r.chief_reason && (
                   <p className="mt-1 pl-8 text-amber-500/90">
-                    <span className="font-medium">Chief:</span> {r.chief_reason}
+                    <span className="font-medium">Final call:</span> {r.chief_reason}
                   </p>
                 )}
               </div>
             ))}
             {board.length === 0 && (
               <p className="text-sm text-muted-foreground">
-                No opportunities cleared the committee this run.
+                Nothing worth acting on this time.
               </p>
             )}
           </div>

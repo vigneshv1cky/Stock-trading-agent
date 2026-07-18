@@ -27,6 +27,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { ArrowDown, ArrowUp, Brain, Landmark, Zap } from "lucide-react"
+import { dirWord, plainEdge, plainVerdict } from "@/lib/plain"
 
 function StatCard({
   icon,
@@ -88,29 +89,67 @@ export default function App() {
       <header className="flex items-baseline justify-between">
         <h1 className="text-2xl font-bold tracking-tight">
           AlphaDesk{" "}
-          <span className="text-sm font-normal text-muted-foreground">the desk, live</span>
+          <span className="text-sm font-normal text-muted-foreground">
+            your AI stock-research team
+          </span>
         </h1>
         {funnel?.paused && <Badge variant="destructive">PAUSED: {funnel.paused}</Badge>}
       </header>
+
+      <Card className="px-4 py-1">
+        <Accordion multiple={false}>
+          <AccordionItem value="how">
+            <AccordionTrigger className="text-sm text-muted-foreground">
+              How this works
+            </AccordionTrigger>
+            <AccordionContent className="space-y-2 text-sm text-muted-foreground">
+              <p>
+                Click <b>Find Trades</b>. The AI reads today's news and earnings, shortlists a few
+                stocks worth a closer look, then a small team debates each one:
+              </p>
+              <ul className="list-disc space-y-0.5 pl-5">
+                <li>
+                  <b className="text-foreground">The case</b> — a researcher argues why to buy it
+                  (expecting it to rise) or short it (betting it falls)
+                </li>
+                <li>
+                  <b className="text-foreground">The pushback</b> — a skeptic argues why that's wrong
+                </li>
+                <li>
+                  <b className="text-foreground">The decision</b> — a judge weighs both and rules
+                </li>
+                <li>
+                  <b className="text-foreground">Final call</b> — a head strategist compares the
+                  survivors and marks the best ones
+                </li>
+              </ul>
+              <p>
+                These are <b>research ideas, not trades</b> — the app never buys anything. Every pick
+                is later scored against the S&P 500 so you can see if it was right.
+              </p>
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
+      </Card>
 
       <FindTrades onDone={refresh} />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <StatCard
           icon={<Landmark className="h-4 w-4 text-muted-foreground" />}
-          label="Decisions"
+          label="Ideas checked"
           value={String(stats?.total.picks ?? "…")}
-          sub={`${stats?.total.graded ?? 0} graded`}
+          sub={`${stats?.total.graded ?? 0} scored so far`}
         />
         <StatCard
           icon={<Zap className="h-4 w-4 text-muted-foreground" />}
-          label="Avg net alpha"
+          label="Avg vs S&P 500"
           value={stats?.total.avg_alpha_net != null ? fmtAlpha(stats.total.avg_alpha_net) : "—"}
-          sub={stats?.total.wins != null ? `${stats.total.wins} wins` : "awaiting grades"}
+          sub={stats?.total.wins != null ? `${stats.total.wins} winners` : "waiting for results"}
         />
         <StatCard
           icon={<Brain className="h-4 w-4 text-muted-foreground" />}
-          label="Tokens today"
+          label="AI usage today"
           value={burn > 0 ? `${Math.round(burn / 1000)}k` : "0"}
           sub={topRoles
             .slice(0, 3)
@@ -161,25 +200,25 @@ export default function App() {
 
       <section>
         <h2 className="mb-2 text-lg font-semibold">
-          Decisions{" "}
+          Ideas{" "}
           <span className="text-sm font-normal text-muted-foreground">
-            click a row to read the agents' conversation
+            click any row to see the reasoning behind it
           </span>
         </h2>
         <Card className="py-0">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>id</TableHead>
-                <TableHead>time (UTC)</TableHead>
-                <TableHead>symbol</TableHead>
-                <TableHead>prediction</TableHead>
-                <TableHead>score</TableHead>
-                <TableHead>verdict</TableHead>
-                <TableHead>arm</TableHead>
-                <TableHead>edge</TableHead>
-                <TableHead>book</TableHead>
-                <TableHead className="text-right">alpha</TableHead>
+                <TableHead>#</TableHead>
+                <TableHead>when</TableHead>
+                <TableHead>stock</TableHead>
+                <TableHead>call</TableHead>
+                <TableHead>confidence</TableHead>
+                <TableHead>decision</TableHead>
+                <TableHead>by</TableHead>
+                <TableHead>why</TableHead>
+                <TableHead>acted?</TableHead>
+                <TableHead className="text-right">vs S&P</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -204,13 +243,12 @@ export default function App() {
                       ) : (
                         <ArrowDown className="h-3.5 w-3.5" />
                       )}
-                      {p.direction}
+                      {dirWord(p.direction)}
                     </span>{" "}
-                    <span className="text-muted-foreground">· {p.horizon_days}d</span>
+                    <span className="text-muted-foreground">· hold ~{p.horizon_days}d</span>
                   </TableCell>
                   <TableCell>
-                    {Math.round(p.score)}
-                    {p.adjusted_score != null && ` → ${Math.round(p.adjusted_score)}`}
+                    {Math.round(p.adjusted_score ?? p.score)}/100
                   </TableCell>
                   <TableCell>
                     {p.verdict && (
@@ -218,12 +256,14 @@ export default function App() {
                         variant={p.verdict === "REJECT" ? "destructive" : "secondary"}
                         className="font-normal"
                       >
-                        {p.verdict}
+                        {plainVerdict(p.verdict)}
                       </Badge>
                     )}
                   </TableCell>
-                  <TableCell className="text-muted-foreground">{p.arm}</TableCell>
-                  <TableCell className="text-muted-foreground">{p.edge ?? ""}</TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {p.arm === "SOLO" ? "Solo" : "Team"}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">{plainEdge(p.edge)}</TableCell>
                   <TableCell>{p.approved ? "✅" : "❌"}</TableCell>
                   <TableCell
                     className={`text-right font-medium ${
@@ -245,18 +285,18 @@ export default function App() {
                     <TableCell />
                     <TableCell colSpan={9} className="pt-0 align-top text-xs leading-snug text-muted-foreground">
                       <span className="font-medium text-foreground">
-                        {p.direction === "LONG" ? "Long" : "Short"} · {p.horizon_days}d
+                        {dirWord(p.direction)} · hold ~{p.horizon_days} days
                       </span>
                       {p.triage_reason && (
                         <>
                           {" · "}
-                          <span className="text-foreground/70">Catalyst:</span> {p.triage_reason}
+                          <span className="text-foreground/70">Why:</span> {p.triage_reason}
                         </>
                       )}
                       {why && (
                         <>
                           {" · "}
-                          <span className="text-foreground/70">Verdict:</span> {why}
+                          <span className="text-foreground/70">Takeaway:</span> {why}
                         </>
                       )}
                     </TableCell>
@@ -268,7 +308,7 @@ export default function App() {
               {picks.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={10} className="py-8 text-center text-muted-foreground">
-                    No decisions yet — the desk convenes when the news deserves it.
+                    No ideas yet — click "Find Trades" to scan the market.
                   </TableCell>
                 </TableRow>
               )}
@@ -279,9 +319,9 @@ export default function App() {
 
       <section>
         <h2 className="mb-2 text-lg font-semibold">
-          Attention windows{" "}
+          What it looked at{" "}
           <span className="text-sm font-normal text-muted-foreground">
-            what triage saw, picked, and skipped — with reasons
+            the stocks it considered and skipped each scan — with reasons
           </span>
         </h2>
         <Card className="px-4 py-1">
@@ -297,8 +337,8 @@ export default function App() {
                 <AccordionItem key={w.id} value={String(w.id)}>
                   <AccordionTrigger className="text-sm">
                     <span>
-                      {w.window_ts.slice(5, 16).replace("T", " ")} — <b>{w.picked} picked</b> of{" "}
-                      {w.candidates} candidates, {w.skipped} skipped
+                      {w.window_ts.slice(5, 16).replace("T", " ")} — <b>{w.picked} looked into</b> of{" "}
+                      {w.candidates} stocks, {w.skipped} skipped
                     </span>
                   </AccordionTrigger>
                   <AccordionContent>
