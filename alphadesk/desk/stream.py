@@ -32,16 +32,16 @@ from alphadesk.config import (
     SOLO_ARM_EVERY_N,
     session,
 )
-from alphadesk.desk import briefs as briefs_mod
 from alphadesk.desk import (
-    committee,
+    connections,
     debate,
     earnings_reader,
-    exposure,
-    materiality,
-    reeval,
-    solo,
-    triage,
+    loner,
+    news_check,
+    notes,
+    review,
+    scout,
+    team,
 )
 from alphadesk.ingest import news, prices
 from alphadesk.ledger import store
@@ -144,7 +144,7 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
             pctx = await loop.run_in_executor(None, prices.get_context, psym)
             fresh = candidates.get(psym, [])
             verdict = await loop.run_in_executor(
-                None, reeval.reevaluate, pos, pctx, fresh, f"reeval-{pos['id']}")
+                None, review.reevaluate, pos, pctx, fresh, f"reeval-{pos['id']}")
             if verdict["decision"] == "EXIT":
                 await loop.run_in_executor(None, store.record_exit, pos["id"], verdict["reason"])
                 yield _ev("position_exit", id=pos["id"], symbol=psym, direction=pos["direction"],
@@ -190,7 +190,7 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
                           f"{len(shock_inputs)} material shocks (web-verified)…")
             for sym, _ in shock_inputs:
                 yield _ev("exposure_shock", symbol=sym)
-            exp_results = await exposure.run_exposure_desks(shock_inputs, "exposure")
+            exp_results = await connections.run_exposure_desks(shock_inputs, "exposure")
             added = 0
             for res in exp_results:
                 for c in res["candidates"]:
@@ -235,7 +235,7 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
             new_arts = [a for a in candidates[s] if str(a.get("published_at", "")) > ts]
             if new_arts:
                 v = await loop.run_in_executor(
-                    None, materiality.fresh_catalyst, s, last, new_arts, f"mat-{su}")
+                    None, news_check.fresh_catalyst, s, last, new_arts, f"mat-{su}")
                 if v.get("fresh_catalyst"):
                     yield _ev("status", msg=f"{s}: new development since last look — re-examining "
                                             f"({(v.get('reason') or '')[:90]}).")
@@ -269,7 +269,7 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
     movers = await loop.run_in_executor(None, prices.movers)
 
     try:
-        result = await loop.run_in_executor(None, triage.run_triage, window, movers)
+        result = await loop.run_in_executor(None, scout.run_triage, window, movers)
     except LLMError as exc:
         yield _ev("status", msg=f"Triage failed: {exc}")
         yield _ev("done", board=[])
@@ -292,7 +292,7 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
 
     # Grounded calibration prior — the desk's own graded scorecard, computed
     # once per run and handed to every analyst/solo call as facts (not lessons).
-    calibration = committee.calibration_block(
+    calibration = team.calibration_block(
         await loop.run_in_executor(None, store.stats))
 
     board: list[dict] = []
@@ -311,8 +311,8 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
             # freshness) — each a bounded Haiku research task feeding the analyst
             fundamentals = await loop.run_in_executor(None, prices.get_fundamentals, sym)
             briefs = list(await asyncio.gather(
-                loop.run_in_executor(None, briefs_mod.market_brief, sym, price_ctx, fundamentals, arts, decision_id),
-                loop.run_in_executor(None, briefs_mod.news_brief, sym, arts, decision_id),
+                loop.run_in_executor(None, notes.market_brief, sym, price_ctx, fundamentals, arts, decision_id),
+                loop.run_in_executor(None, notes.news_brief, sym, arts, decision_id),
             ))
             # If this pick just reported, read the ACTUAL report (web-grounded,
             # cached per event) — guidance/tone drive the drift, so it gets its own
@@ -346,12 +346,12 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
         yield _ev("decision", **row)
 
         # Solo control arm — every Nth pick, one strong agent works the SAME
-        # briefs blind to the committee. The ledger later answers: does the
+        # briefs blind to the team. The ledger later answers: does the
         # committee actually beat one agent? (kill-criterion #2)
         if SOLO_ARM_EVERY_N and (pick_idx + 1) % SOLO_ARM_EVERY_N == 0:
             try:
                 s = await loop.run_in_executor(
-                    None, lambda: solo.solo_analysis(
+                    None, lambda: loner.solo_analysis(
                         sym, pick["reason"], briefs, history, decision_id + "-solo", calibration))
                 s_model = s.pop("_downgraded_model", MODEL_MAP["loner"])
                 store.record_pick({
@@ -376,7 +376,7 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
         yield _ev("status", msg="Chief comparing all opportunities head-to-head…")
         try:
             chief = await loop.run_in_executor(
-                None, lambda: committee.chief_synthesis(board, "chief"))
+                None, lambda: team.chief_synthesis(board, "chief"))
             ranking = {r["symbol"].upper(): r for r in chief.get("ranked", [])}
             order = {r["symbol"].upper(): i for i, r in enumerate(chief.get("ranked", []))}
             for row in board:

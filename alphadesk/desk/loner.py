@@ -1,4 +1,4 @@
-"""The Solo control arm — one strong single agent (opus), no committee.
+"""The Solo control arm — one strong single agent (opus), no team.
 
 Runs on every ~Nth pick with the SAME briefs and memory the committee gets,
 producing the same output schema. Its graded track record vs the committee's
@@ -11,7 +11,7 @@ import logging
 
 from alphadesk.llm import call_role, wrap_data
 
-log = logging.getLogger("alphadesk.solo")
+log = logging.getLogger("alphadesk.loner")
 
 _SYSTEM = (
     "You are a senior stock analyst working ALONE on a predictive research "

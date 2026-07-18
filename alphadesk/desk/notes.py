@@ -10,7 +10,7 @@ import logging
 
 from alphadesk.llm import LLMError, call_role, wrap_data
 
-log = logging.getLogger("alphadesk.briefs")
+log = logging.getLogger("alphadesk.notes")
 
 _BRIEF_SCHEMA = {
     "summary": {"type": str, "maxlen": 600},

@@ -11,7 +11,7 @@ import logging
 
 from alphadesk.llm import call_role, wrap_data
 
-log = logging.getLogger("alphadesk.reeval")
+log = logging.getLogger("alphadesk.review")
 
 _SYSTEM = (
     "You are the position reviewer on a predictive trading desk. The desk earlier "

@@ -11,7 +11,7 @@ import logging
 from alphadesk.config import MAX_PICKS_PER_WINDOW
 from alphadesk.llm import call_role, wrap_data
 
-log = logging.getLogger("alphadesk.triage")
+log = logging.getLogger("alphadesk.scout")
 
 _SYSTEM = (
     "You are the triage desk of a predictive stock research firm. Your team "
@@ -77,7 +77,7 @@ def run_triage(window: dict[str, dict], movers: list[dict]) -> dict:
             "dollar_vol": price.get("avg_dollar_vol"),
             "low_liquidity": price.get("low_liquidity"),
         }))
-    from alphadesk.desk.committee import false_negative_block
+    from alphadesk.desk.team import false_negative_block
     fn = false_negative_block()
     user = (
         (f"{fn}\n\n" if fn else "")

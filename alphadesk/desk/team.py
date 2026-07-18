@@ -37,7 +37,7 @@ def false_negative_block(min_samples: int = FN_MIN_SAMPLES) -> str:
     return ("The desk's false-negative record so far (weigh it — is the desk too cautious "
             "in saying no?):\n" + "\n".join(lines))
 
-log = logging.getLogger("alphadesk.committee")
+log = logging.getLogger("alphadesk.team")
 
 _PREDICTIVE_FRAME = (
     "You work for a PREDICTIVE research desk: the question is always whether "

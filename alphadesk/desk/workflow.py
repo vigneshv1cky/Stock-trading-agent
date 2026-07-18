@@ -23,8 +23,7 @@ from alphadesk.config import (
     SYMBOL_REPICK_COOLDOWN_MIN,
     session,
 )
-from alphadesk.desk import briefs as briefs_mod
-from alphadesk.desk import committee, debate, solo, triage
+from alphadesk.desk import debate, loner, notes, scout, team
 from alphadesk.ingest import prices
 from alphadesk.ledger import store
 from alphadesk.llm import LLMError
@@ -80,8 +79,8 @@ async def _gather_briefs(loop, sym: str, articles: list[dict], price_ctx: dict |
                          decision_id: str) -> list[dict]:
     fundamentals = await loop.run_in_executor(None, prices.get_fundamentals, sym)
     return list(await asyncio.gather(
-        loop.run_in_executor(None, briefs_mod.market_brief, sym, price_ctx, fundamentals, articles, decision_id),
-        loop.run_in_executor(None, briefs_mod.news_brief, sym, articles, decision_id),
+        loop.run_in_executor(None, notes.market_brief, sym, price_ctx, fundamentals, articles, decision_id),
+        loop.run_in_executor(None, notes.news_brief, sym, articles, decision_id),
     ))
 
 
@@ -91,7 +90,7 @@ async def _run_committee(loop, sym: str, pick: dict, articles: list[dict],
     try:
         briefs = await _gather_briefs(loop, sym, articles, price_ctx, decision_id)
         history = await loop.run_in_executor(None, store.symbol_history, sym)
-        calibration = committee.calibration_block(
+        calibration = team.calibration_block(
             await loop.run_in_executor(None, store.stats))
         # shared committee core — same debate + ledger write as the streaming path
         result = None
@@ -121,7 +120,7 @@ async def _run_committee(loop, sym: str, pick: dict, articles: list[dict],
     if SOLO_ARM_EVERY_N and _pick_counter % SOLO_ARM_EVERY_N == 0:
         try:
             s = await loop.run_in_executor(
-                None, lambda: solo.solo_analysis(sym, pick["reason"], briefs, history,
+                None, lambda: loner.solo_analysis(sym, pick["reason"], briefs, history,
                                                  decision_id + "-solo", calibration))
             solo_model = s.pop("_downgraded_model", MODEL_MAP["loner"])
             store.record_pick({
@@ -177,7 +176,7 @@ async def research_run(candidates: dict[str, list[dict]], trigger_src: str = "ST
     movers = await loop.run_in_executor(None, prices.movers)
 
     try:
-        result = await loop.run_in_executor(None, triage.run_triage, window, movers)
+        result = await loop.run_in_executor(None, scout.run_triage, window, movers)
     except LLMError as exc:
         log.warning("Triage failed — window dropped: %s", exc)
         store.funnel_add(len(candidates), len(window), 0, len(window),

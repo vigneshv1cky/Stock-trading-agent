@@ -12,7 +12,7 @@ import logging
 
 from alphadesk.llm import call_role, wrap_data
 
-log = logging.getLogger("alphadesk.materiality")
+log = logging.getLogger("alphadesk.news_check")
 
 _SYSTEM = (
     "A company was analyzed recently. Decide whether the news SINCE THEN is a "

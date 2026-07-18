@@ -18,7 +18,7 @@ import asyncio
 import logging
 
 from alphadesk.config import MODEL_MAP, session
-from alphadesk.desk import committee
+from alphadesk.desk import team
 from alphadesk.ingest import prices
 from alphadesk.ledger import store
 
@@ -37,29 +37,29 @@ async def deliberate(sym: str, pick: dict, briefs: list[dict], price_ctx: dict |
     loop = asyncio.get_running_loop()
 
     thesis = await loop.run_in_executor(
-        None, lambda: committee.analyst_thesis(
+        None, lambda: team.analyst_thesis(
             sym, pick["reason"], briefs, history, decision_id, calibration))
     model_tags = {"researcher": thesis.pop("_downgraded_model", MODEL_MAP["researcher"])}
     yield {"type": "thesis", "symbol": sym, **thesis}
 
     concerns_out = await loop.run_in_executor(
-        None, lambda: committee.skeptic_challenge(sym, thesis, briefs, decision_id))
+        None, lambda: team.skeptic_challenge(sym, thesis, briefs, decision_id))
     model_tags["critic"] = concerns_out.pop("_downgraded_model", MODEL_MAP["critic"])
     concerns = concerns_out.get("concerns", [])
     for c in concerns:
         yield {"type": "concern", "symbol": sym, **c}
 
-    flags = committee.fact_check_concerns(concerns, price_ctx)
+    flags = team.fact_check_concerns(concerns, price_ctx)
     for f in flags:
         yield {"type": "fact_flag", "symbol": sym, "text": f}
 
     rebuttal = await loop.run_in_executor(
-        None, lambda: committee.analyst_rebuttal(sym, thesis, concerns, decision_id))
+        None, lambda: team.analyst_rebuttal(sym, thesis, concerns, decision_id))
     rebuttal.pop("_downgraded_model", None)
     yield {"type": "rebuttal", "symbol": sym, **rebuttal}
 
     verdict = await loop.run_in_executor(
-        None, lambda: committee.arbiter_verdict(sym, thesis, concerns, rebuttal, flags, decision_id))
+        None, lambda: team.arbiter_verdict(sym, thesis, concerns, rebuttal, flags, decision_id))
     model_tags["judge"] = verdict.pop("_downgraded_model", MODEL_MAP["judge"])
 
     sess = session()
