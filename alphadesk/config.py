@@ -82,7 +82,7 @@ LOW_LIQUIDITY_DOLLAR_VOL = 10_000_000  # avg daily dollar volume below this → 
 SKIP_GRADE_DAYS = 3             # trading days to judge a skipped name's forward move
 SKIP_MISS_ABS_ALPHA = 6.0       # |symbol return − SPY| above this % = a missed dislocation
 EARNINGS_DRIFT_DAYS = 3         # a name reported within this many days → post-earnings-drift candidate
-REPICK_COOLDOWN_HOURS = int(os.environ.get("REPICK_COOLDOWN_HOURS", "12"))  # don't re-debate a name within this window (anti-double-dip across runs)
+REPICK_COOLDOWN_HOURS = int(os.environ.get("REPICK_COOLDOWN_HOURS", "24"))  # don't re-debate a name within this window; matches the 24h news window so a catalyst is debated once (anti-double-dip across runs)
 
 # ---------------------------------------------------------------------------
 # Market sessions (ET clock math)
