@@ -41,15 +41,19 @@ function PerfStrip({ stats }: { stats: Stats | null }) {
   )
 }
 
-function IdeaRow({ p, onSelect }: { p: Pick; onSelect: (id: number) => void }) {
+function IdeaRow({ n, p, onSelect }: { n: number; p: Pick; onSelect: (id: number) => void }) {
   const long = p.direction === "LONG"
   const why = p.debate?.arbiter_summary ?? p.thesis ?? p.triage_reason ?? ""
   const graded = p.alpha_net != null
   return (
     <button
       onClick={() => onSelect(p.id)}
-      className="w-full rounded-lg border border-border bg-card p-3 text-left transition-colors hover:border-indigo-500/40 hover:bg-muted/40"
+      className="flex w-full gap-3 rounded-lg border border-border bg-card p-3 text-left transition-colors hover:border-indigo-500/40 hover:bg-muted/40"
     >
+      <span className="w-6 shrink-0 pt-0.5 text-right font-mono text-sm tabular-nums text-muted-foreground/50">
+        {n}
+      </span>
+      <div className="min-w-0 flex-1">
       <div className="flex items-center gap-2.5">
         <span
           className={`grid h-6 w-6 place-items-center rounded ${
@@ -97,6 +101,7 @@ function IdeaRow({ p, onSelect }: { p: Pick; onSelect: (id: number) => void }) {
         <span className="text-muted-foreground/70">· #{p.id}</span>
       </div>
       {why && <p className="mt-1.5 line-clamp-2 text-xs leading-snug text-muted-foreground">{why}</p>}
+      </div>
     </button>
   )
 }
@@ -155,22 +160,25 @@ export function Ledger({
         <EmptyState />
       ) : (
         <div className="space-y-4">
-          {groupByDay(picks).map(([date, items]) => (
-            <div key={date} className="space-y-2">
-              <div className="flex items-center gap-2 px-0.5">
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  {dayLabel(date)}
-                </h3>
-                <span className="text-[11px] tabular-nums text-muted-foreground">
-                  {items.length}
-                </span>
-                <div className="ml-1 h-px flex-1 bg-border" />
+          {(() => {
+            const pos = new Map(picks.map((p, i) => [p.id, i + 1]))
+            return groupByDay(picks).map(([date, items]) => (
+              <div key={date} className="space-y-2">
+                <div className="flex items-center gap-2 px-0.5">
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    {dayLabel(date)}
+                  </h3>
+                  <span className="text-[11px] tabular-nums text-muted-foreground">
+                    {items.length}
+                  </span>
+                  <div className="ml-1 h-px flex-1 bg-border" />
+                </div>
+                {items.map((p) => (
+                  <IdeaRow key={p.id} n={pos.get(p.id) ?? 0} p={p} onSelect={onSelect} />
+                ))}
               </div>
-              {items.map((p) => (
-                <IdeaRow key={p.id} p={p} onSelect={onSelect} />
-              ))}
-            </div>
-          ))}
+            ))
+          })()}
         </div>
       )}
     </div>
