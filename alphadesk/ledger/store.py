@@ -392,6 +392,17 @@ def get_relationships(from_sym: str, days: int = 7) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def symbols_debated_since(hours: int = 12) -> set:
+    """Symbols with a committee debate in the last `hours` — skip re-debating them
+    (anti-double-dip: an earnings/news name lingers as a candidate for days)."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT symbol FROM picks WHERE arm='COMMITTEE'"
+            " AND ts >= datetime('now', ?)", (f"-{int(hours)} hours",),
+        ).fetchall()
+    return {r["symbol"].upper() for r in rows}
+
+
 def mark_taken(pick_ids: list[int]) -> None:
     """Flag the picks the Chief chose to TAKE — the open positions later runs re-check."""
     if not pick_ids:

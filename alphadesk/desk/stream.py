@@ -28,6 +28,7 @@ from alphadesk.config import (
     EARNINGS_DRIFT_DAYS,
     EXPOSURE_MAX_SHOCKS,
     MODEL_MAP,
+    REPICK_COOLDOWN_HOURS,
     SOLO_ARM_EVERY_N,
     session,
 )
@@ -204,6 +205,23 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
                               direction=c["direction"], chain=c["chain"], strength=c["strength"])
                     added += 1
             yield _ev("status", msg=f"Exposure Desk surfaced {added} ripple candidates.")
+
+    # Anti-double-dip across runs: drop names we already HOLD (the position review
+    # just re-evaluated them — don't also re-debate them as fresh) and names debated
+    # within the cooldown (an earnings/news catalyst lingers as a candidate for days).
+    held = {p["symbol"].upper() for p in open_positions}
+    cooling = await loop.run_in_executor(None, store.symbols_debated_since, REPICK_COOLDOWN_HOURS)
+    skip = held | cooling
+    dropped = [s for s in list(candidates) if s.upper() in skip]
+    for s in dropped:
+        candidates.pop(s, None)
+    if dropped:
+        yield _ev("status", msg=f"Skipping {len(dropped)} name(s) already held or debated "
+                                f"in the last {REPICK_COOLDOWN_HOURS}h (no re-dip).")
+    if not candidates:
+        yield _ev("status", msg="Nothing fresh to debate after de-duping held/recent names.")
+        yield _ev("done", board=[])
+        return
 
     yield _ev("status", msg="Triaging…")
 
