@@ -98,6 +98,30 @@ function IdeaRow({ p, onSelect }: { p: Pick; onSelect: (id: number) => void }) {
   )
 }
 
+function dayLabel(dateStr: string): string {
+  const today = new Date().toISOString().slice(0, 10)
+  const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10)
+  if (dateStr === today) return "Today"
+  if (dateStr === yesterday) return "Yesterday"
+  return new Date(dateStr + "T12:00:00Z").toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  })
+}
+
+function groupByDay(picks: Pick[]): [string, Pick[]][] {
+  const map = new Map<string, Pick[]>()
+  for (const p of picks) {
+    const d = p.ts.slice(0, 10)
+    const arr = map.get(d)
+    if (arr) arr.push(p)
+    else map.set(d, [p])
+  }
+  return [...map.entries()]
+}
+
 function EmptyState() {
   return (
     <div className="rounded-lg border border-dashed border-border bg-card p-8 text-center">
@@ -125,9 +149,22 @@ export function Ledger({
       {picks.length === 0 ? (
         <EmptyState />
       ) : (
-        <div className="space-y-2">
-          {picks.map((p) => (
-            <IdeaRow key={p.id} p={p} onSelect={onSelect} />
+        <div className="space-y-4">
+          {groupByDay(picks).map(([date, items]) => (
+            <div key={date} className="space-y-2">
+              <div className="flex items-center gap-2 px-0.5">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  {dayLabel(date)}
+                </h3>
+                <span className="text-[11px] tabular-nums text-muted-foreground">
+                  {items.length}
+                </span>
+                <div className="ml-1 h-px flex-1 bg-border" />
+              </div>
+              {items.map((p) => (
+                <IdeaRow key={p.id} p={p} onSelect={onSelect} />
+              ))}
+            </div>
           ))}
         </div>
       )}
