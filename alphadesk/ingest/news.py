@@ -83,12 +83,16 @@ _ENRICH_SCHEMA = {
 
 
 def fetch_articles(since: datetime, limit: int = 200) -> list[dict]:
-    """Raw Polygon articles (ticker-tagged) since `since`, oldest first.
+    """Raw Polygon articles (ticker-tagged) since `since`, NEWEST first.
 
     Bounded: stops after `limit` usable articles OR `_MAX_SCAN` raw items paged
     through — whichever comes first. `list_ticker_news` paginates with no ticker
     filter, and the free tier rate-limits deep paging hard (429 backoffs stack
     into multi-minute stalls), so we cap how far we page rather than hang.
+
+    Recency-first is deliberate: a wide window holds far more than the cap, so with
+    a hard cap the ONLY correct policy is to sacrifice the OLDEST news, never the
+    newest — the whole thesis is trading fresh catalysts before they're priced.
     """
     import polygon
     client = polygon.RESTClient(api_key=_POLYGON_KEY)
@@ -96,7 +100,7 @@ def fetch_articles(since: datetime, limit: int = 200) -> list[dict]:
     scanned = 0
     for art in client.list_ticker_news(
         published_utc_gte=since.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        limit=min(limit, 1000), sort="published_utc", order="asc",
+        limit=min(limit, 1000), sort="published_utc", order="desc",
     ):
         scanned += 1
         if scanned > _MAX_SCAN:
