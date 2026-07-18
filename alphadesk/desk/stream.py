@@ -89,9 +89,12 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
     # committee judges whether the post-earnings move continues.
     reported = await loop.run_in_executor(None, store.recently_reported, EARNINGS_DRIFT_DAYS)
     for e in reported:
+        if await _gone():
+            return
         esym, surp = e["symbol"], (e.get("surprise_pct") or 0.0)
         beat = "beat" if surp > 0 else ("miss" if surp < 0 else "in-line")
-        candidates.setdefault(esym, []).insert(0, {
+        arts = candidates.setdefault(esym, [])
+        arts.insert(0, {
             "id": f"earnings-{esym}-{e['report_date'][:10]}",
             "title": f"[EARNINGS] {esym} reported {e['report_date'][:10]} {e.get('session') or ''}: "
                      f"EPS {e.get('eps_actual')} vs est {e.get('eps_estimate')} — {beat} {surp}%",
@@ -103,9 +106,11 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
                           "category": "EARNINGS"}],
             "relations": [],
         })
+        # read the actual reporting — revenue, guidance, tone — not just the EPS number
+        arts.extend(await loop.run_in_executor(None, news.fetch_ticker_news, esym, EARNINGS_DRIFT_DAYS + 1))
     if reported:
         yield _ev("status", msg=f"{len(reported)} name(s) reported in the last "
-                                f"{EARNINGS_DRIFT_DAYS}d — added as post-earnings-drift candidates.")
+                                f"{EARNINGS_DRIFT_DAYS}d — read their coverage, added as drift candidates.")
 
     # Position review — BEFORE hunting new trades (and even in a quiet window),
     # re-check every still-open TAKE from earlier runs against current price +

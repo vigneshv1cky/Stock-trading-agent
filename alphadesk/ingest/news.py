@@ -125,6 +125,39 @@ def fetch_articles(since: datetime, limit: int = 200) -> list[dict]:
     return out
 
 
+def fetch_ticker_news(symbol: str, days: int = 4, limit: int = 12) -> list[dict]:
+    """Recent Polygon news for ONE ticker (newest first) — used to read a name's
+    earnings coverage (revenue, guidance, management tone) so the committee argues
+    from the actual reporting, not just the EPS number."""
+    import polygon
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    client = polygon.RESTClient(api_key=_POLYGON_KEY)
+    out: list[dict] = []
+    try:
+        for art in client.list_ticker_news(
+            ticker=symbol.upper(), published_utc_gte=since,
+            sort="published_utc", order="desc", limit=min(limit, 50),
+        ):
+            title = getattr(art, "title", "") or ""
+            if not title:
+                continue
+            publisher = getattr(art, "publisher", None)
+            out.append({
+                "id": str(getattr(art, "id", "") or getattr(art, "article_url", "")),
+                "title": title,
+                "summary": (getattr(art, "description", "") or "")[:400],
+                "source": publisher.name if publisher and hasattr(publisher, "name") else "Polygon",
+                "url": getattr(art, "article_url", "") or "",
+                "published_at": str(getattr(art, "published_utc", "") or ""),
+                "tickers": [symbol.upper()],
+            })
+            if len(out) >= limit:
+                break
+    except Exception as exc:
+        log.warning("ticker news fetch failed for %s: %s", symbol, exc)
+    return out
+
+
 def enrich(articles: list[dict]) -> list[dict]:
     """Attach sentiment/label/relations to each article, reusing the persistent
     cache so overlapping news is never re-enriched across runs/restarts (the
