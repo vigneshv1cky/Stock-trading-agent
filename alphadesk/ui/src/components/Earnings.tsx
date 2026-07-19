@@ -49,6 +49,10 @@ export function Earnings({
                     {up ? "+" : ""}
                     {e.surprise_pct}%
                   </span>
+                  <span className="text-xs text-muted-foreground">
+                    {e.report_date.slice(5, 10)}
+                    {e.session ? ` ${e.session}` : ""}
+                  </span>
                 </span>
               )
             })}
