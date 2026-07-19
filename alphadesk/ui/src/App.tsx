@@ -56,8 +56,8 @@ export default function App() {
   const avg = stats?.total.avg_alpha_net ?? null
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <header className="sticky top-0 z-30 border-b border-border bg-background/85 backdrop-blur">
+    <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
+      <header className="z-30 shrink-0 border-b border-border bg-background/85 backdrop-blur">
         <div className="mx-auto flex max-w-[1400px] items-center gap-4 px-5 py-3">
           <div className="flex items-center gap-2.5">
             <span className="h-3.5 w-3.5 rotate-45 rounded-[3px] bg-indigo-500" />
@@ -97,18 +97,24 @@ export default function App() {
         </div>
       </header>
 
-      <main className="mx-auto grid max-w-[1400px] grid-cols-1 gap-5 px-5 py-5 lg:grid-cols-[minmax(0,440px)_minmax(0,1fr)]">
-        <div className="lg:sticky lg:top-[73px] lg:self-start">
-          <FindTrades onDone={refresh} onRunningChange={setLive} />
+      {/* App shell: on desktop the two columns each scroll independently and the
+          window itself doesn't scroll; on mobile they stack and scroll normally. */}
+      <main className="min-h-0 flex-1 overflow-y-auto lg:overflow-hidden">
+        <div className="mx-auto grid max-w-[1400px] grid-cols-1 gap-5 px-5 py-5 lg:h-full lg:grid-cols-[minmax(0,440px)_minmax(0,1fr)] lg:py-0">
+          <div className="min-w-0 lg:min-h-0 lg:overflow-y-auto lg:py-5 lg:pr-2">
+            <FindTrades onDone={refresh} onRunningChange={setLive} />
+          </div>
+          <div className="min-w-0 lg:min-h-0 lg:overflow-y-auto lg:py-5 lg:pr-2">
+            <RightRail
+              picks={picks}
+              stats={stats}
+              funnel={funnel}
+              tokens={tokens}
+              earnings={earnings}
+              onSelect={setSelected}
+            />
+          </div>
         </div>
-        <RightRail
-          picks={picks}
-          stats={stats}
-          funnel={funnel}
-          tokens={tokens}
-          earnings={earnings}
-          onSelect={setSelected}
-        />
       </main>
 
       <PickSheet pickId={selected} onClose={() => setSelected(null)} />

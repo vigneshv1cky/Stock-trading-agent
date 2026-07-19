@@ -420,7 +420,7 @@ export function FindTrades({
         )}
 
         {feed.length > 0 && (
-          <div className="mt-4 max-h-[30rem] space-y-2 overflow-y-auto pr-1">
+          <div className="mt-4 space-y-2">
             {feed.map((ev, i) => (
               <Line key={i} ev={ev} />
             ))}
