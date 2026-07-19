@@ -108,7 +108,6 @@ export default function App() {
             <RightRail
               picks={picks}
               stats={stats}
-              funnel={funnel}
               tokens={tokens}
               earnings={earnings}
               onSelect={setSelected}

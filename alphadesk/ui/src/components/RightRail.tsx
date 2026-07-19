@@ -1,22 +1,20 @@
 import { useState } from "react"
-import type { EarningsRow, FunnelWindow, Pick, Stats, TokenRow } from "@/lib/api"
+import type { EarningsRow, Pick, Stats, TokenRow } from "@/lib/api"
 import { Ledger } from "@/components/Ledger"
 import { Earnings } from "@/components/Earnings"
 import { Activity } from "@/components/Activity"
 
-type View = "record" | "calendar" | "activity"
+type View = "record" | "calendar" | "usage"
 
 export function RightRail({
   picks,
   stats,
-  funnel,
   tokens,
   earnings,
   onSelect,
 }: {
   picks: Pick[]
   stats: Stats | null
-  funnel?: { paused: string | null; windows: FunnelWindow[] }
   tokens: TokenRow[]
   earnings?: { upcoming: EarningsRow[]; reported: EarningsRow[] }
   onSelect: (id: number) => void
@@ -25,7 +23,7 @@ export function RightRail({
   const tabs: { id: View; label: string }[] = [
     { id: "record", label: "Track record" },
     { id: "calendar", label: "Calendar" },
-    { id: "activity", label: "Activity" },
+    { id: "usage", label: "Usage" },
   ]
 
   return (
@@ -48,7 +46,7 @@ export function RightRail({
 
       {view === "record" && <Ledger picks={picks} stats={stats} onSelect={onSelect} />}
       {view === "calendar" && <Earnings earnings={earnings} />}
-      {view === "activity" && <Activity funnel={funnel} tokens={tokens} />}
+      {view === "usage" && <Activity tokens={tokens} />}
     </div>
   )
 }
