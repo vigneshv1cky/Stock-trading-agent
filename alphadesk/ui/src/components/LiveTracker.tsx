@@ -140,9 +140,20 @@ export function LiveTracker() {
 
             <Track p={p} />
 
-            <div className="mt-1.5 text-[11px] text-muted-foreground">
-              hold ~{p.horizon_days}d · through {exitDate(p.ts, p.session, p.horizon_days)}
-              {!p.approved && " · thin lean"}
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 text-[11px] text-muted-foreground">
+              <span>
+                hold ~{p.horizon_days}d · through {exitDate(p.ts, p.session, p.horizon_days)}
+              </span>
+              {p.alpha_so_far != null && (
+                <span
+                  className={`font-medium ${p.alpha_so_far >= 0 ? "text-emerald-500" : "text-red-500"}`}
+                  title="Return vs S&P so far, net of friction — a live mark, not the official grade (which settles at the horizon)"
+                >
+                  vs S&P {p.alpha_so_far >= 0 ? "+" : ""}
+                  {p.alpha_so_far}% so far
+                </span>
+              )}
+              {!p.approved && <span>· thin lean</span>}
             </div>
             {p.plan_note && <p className="mt-1 text-xs text-muted-foreground">{p.plan_note}</p>}
           </div>

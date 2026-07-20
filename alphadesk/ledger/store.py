@@ -459,7 +459,7 @@ def recent_team_picks(days: int = 30) -> list[dict]:
         rows = conn.execute(
             "SELECT id, ts, symbol, direction, horizon_days, edge, verdict, approved,"
             " adjusted_score, confidence, plan_entry, plan_target, plan_stop, plan_note,"
-            " entry_price, alpha_net, ret_horizon, graded_at, exit_ts, exit_reason"
+            " entry_price, spy_price, alpha_net, ret_horizon, graded_at, exit_ts, exit_reason"
             " FROM picks WHERE arm='TEAM' AND ts >= datetime('now', ?)"
             " ORDER BY symbol, id", (f"-{int(days)} days",),
         ).fetchall()
@@ -472,7 +472,7 @@ def live_picks() -> list[dict]:
     with _connect() as conn:
         rows = conn.execute(
             "SELECT id, ts, symbol, direction, horizon_days, session, edge, verdict,"
-            " approved, adjusted_score, confidence, taken,"
+            " approved, adjusted_score, confidence, taken, spy_price,"
             " plan_entry, plan_target, plan_stop, plan_note FROM picks"
             " WHERE arm='TEAM' AND plan_entry IS NOT NULL"
             "   AND graded_at IS NULL AND exit_ts IS NULL"

@@ -54,6 +54,7 @@ function Outcome({ e }: { e: TimelineEvent }) {
   }
   if (e.pnl_pct != null) {
     const pos = e.pnl_pct >= 0
+    const aPos = (e.alpha_so_far ?? 0) >= 0
     return (
       <span className="text-right">
         <span className="font-mono text-sm tabular-nums">${e.current}</span>{" "}
@@ -61,8 +62,11 @@ function Outcome({ e }: { e: TimelineEvent }) {
           ({pos ? "+" : ""}
           {e.pnl_pct}%)
         </span>
-        {e.status && e.status !== "working" && (
-          <span className="ml-1 text-[10px] text-muted-foreground">{e.status}</span>
+        {e.alpha_so_far != null && (
+          <span className={`ml-1 text-[10px] ${aPos ? "text-emerald-500" : "text-red-500"}`}>
+            S&P {aPos ? "+" : ""}
+            {e.alpha_so_far}%
+          </span>
         )}
       </span>
     )

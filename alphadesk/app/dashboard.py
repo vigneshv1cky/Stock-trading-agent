@@ -153,20 +153,38 @@ def api_earnings():
     return {"upcoming": upcoming, "reported": reported}
 
 
+def _alpha_so_far(direction: str, stock_then, cur, spy_then, spy_now):
+    """Interim (unofficial) alpha: your return so far minus SPY over the SAME
+    elapsed window, net of round-trip friction. None if a baseline is missing.
+    This is a live mark, NOT the ledger grade (which settles only at the horizon)."""
+    from alphadesk.config import FRICTION_BPS_PER_SIDE
+    if not (stock_then and cur and spy_then and spy_now):
+        return None
+    sign = 1.0 if direction == "LONG" else -1.0
+    stock_ret = sign * (cur - stock_then) / stock_then * 100
+    spy_ret = sign * (spy_now - spy_then) / spy_then * 100
+    friction = 2 * FRICTION_BPS_PER_SIDE / 100.0
+    return round(stock_ret - spy_ret - friction, 2)
+
+
 @app.get("/api/live")
 def api_live():
     """Live tracking of open picks that carry a trade plan: current price vs
-    entry/target/stop, P&L, and a status. Status/P&L/progress are pure arithmetic
-    (code owns physics + scoring); the levels came from the desk."""
+    entry/target/stop, P&L, alpha-so-far vs SPY, and a status. All pure arithmetic
+    (code owns physics + scoring); the levels came from the desk. Alpha-so-far is a
+    live mark, NOT the official grade — that still settles only at the horizon."""
     from alphadesk.config import session as market_session
     from alphadesk.ingest import prices
     picks = store.live_picks()
-    quotes = prices.latest_prices([p["symbol"] for p in picks])
+    quotes = prices.latest_prices([p["symbol"] for p in picks] + ["SPY"])
+    spy_now = quotes.get("SPY")
     out = []
     for p in picks:
         cur = quotes.get(p["symbol"].upper())
         entry, target, stop = p["plan_entry"], p["plan_target"], p["plan_stop"]
-        row = dict(p, current=cur, pnl_pct=None, progress=None, status="no quote")
+        row = dict(p, current=cur, pnl_pct=None, progress=None, status="no quote",
+                   alpha_so_far=_alpha_so_far(p["direction"], entry, cur,
+                                              p.get("spy_price"), spy_now))
         if cur and entry and target and stop and target != stop:
             up = p["direction"] == "LONG"
             row["pnl_pct"] = round((1.0 if up else -1.0) * (cur - entry) / entry * 100, 2)
@@ -201,7 +219,8 @@ def api_timelines(days: int = 30):
         by_sym.setdefault(r["symbol"], []).append(r)
     open_syms = [s for s, evs in by_sym.items()
                  if any(e["graded_at"] is None and e["exit_ts"] is None for e in evs)]
-    quotes = prices.latest_prices(open_syms)
+    quotes = prices.latest_prices(open_syms + ["SPY"])
+    spy_now = quotes.get("SPY")
 
     symbols = []
     for sym, evs in by_sym.items():
@@ -209,11 +228,13 @@ def api_timelines(days: int = 30):
         events = []
         for e in evs:
             state = "exited" if e["exit_ts"] else ("graded" if e["graded_at"] else "open")
-            ev = dict(e, state=state, current=None, pnl_pct=None, status=None)
+            ev = dict(e, state=state, current=None, pnl_pct=None, status=None, alpha_so_far=None)
             if state == "open":
                 cur = quotes.get(sym.upper())
                 entry, target, stop = e["plan_entry"], e["plan_target"], e["plan_stop"]
                 ev["current"] = cur
+                ev["alpha_so_far"] = _alpha_so_far(e["direction"], entry, cur,
+                                                   e.get("spy_price"), spy_now)
                 if cur and entry and target and stop and target != stop:
                     up = e["direction"] == "LONG"
                     ev["pnl_pct"] = round((1.0 if up else -1.0) * (cur - entry) / entry * 100, 2)

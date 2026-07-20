@@ -92,6 +92,7 @@ export interface LivePick {
   plan_note: string | null
   current: number | null
   pnl_pct: number | null
+  alpha_so_far: number | null // interim vs-SPY, net friction — NOT the official grade
   progress: number | null // 0 = at stop, 1 = at target
   status: string // working | near target | near stop | target hit | stopped out | no quote
 }
@@ -117,6 +118,7 @@ export interface TimelineEvent {
   state: "open" | "graded" | "exited"
   current: number | null
   pnl_pct: number | null
+  alpha_so_far: number | null // interim vs-SPY while open; official alpha_net settles at horizon
   status: string | null
 }
 
