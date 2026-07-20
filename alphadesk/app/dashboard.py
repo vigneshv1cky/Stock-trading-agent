@@ -129,6 +129,21 @@ def api_earnings():
     # Sort so the UI can group by run-day (earliest to run first) with the biggest
     # names surfaced first inside each day — never truncated by earlier small-caps.
     upcoming.sort(key=lambda e: (e["run_at"] or "9999", -(e.get("market_cap") or 0.0)))
+    # Collapse dual-class listings of the same company (identical report date +
+    # market cap to the dollar, e.g. GOOG/GOOGL) to one row. Two different firms
+    # never share a 13-digit cap exactly, so this only merges share classes; the
+    # list is already biggest-first, so we keep the first occurrence.
+    seen_dual: set = set()
+    deduped = []
+    for e in upcoming:
+        mc = e.get("market_cap")
+        if mc:
+            key = (e["report_date"], mc)
+            if key in seen_dual:
+                continue
+            seen_dual.add(key)
+        deduped.append(e)
+    upcoming = deduped
     reported = store.recently_reported(days=3)
     # Show the real, verifiable signal: how much the stock has moved SINCE the
     # report went public (the drift itself) — not a maybe-misleading EPS surprise%.
