@@ -99,6 +99,7 @@ export interface EarningsRow {
   eps_estimate: number | null
   eps_actual?: number | null
   surprise_pct?: number | null
+  move_since_report_pct?: number | null // % price move since the report went public (the drift so far)
   run_at?: string | null // when to run the desk to catch the drift (9:30 ET, next session)
 }
 

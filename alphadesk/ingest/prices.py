@@ -95,6 +95,59 @@ def get_fundamentals(symbol: str) -> Optional[dict]:
     return out
 
 
+_earn_move_cache: dict[str, Any] = {"ts": 0.0, "key": None, "data": {}}
+
+
+def moves_since_report(items: list[dict], ttl: int = 300) -> dict[str, Optional[float]]:
+    """% price move since each name's earnings went public — the real drift, a hard
+    price fact (no EPS-basis ambiguity). Baseline is the last close BEFORE the report
+    was public (session-aware: AMC → report-day close; BMO/other → prior close);
+    current is the latest close. One batched yfinance download for all names, cached.
+
+    items: [{symbol, report_date, session}]. Returns {symbol: pct move | None}.
+    """
+    import pandas as pd
+
+    key = repr(sorted((i["symbol"], i["report_date"], i.get("session")) for i in items))
+    now = time.time()
+    with _cache_lock:
+        c = _earn_move_cache
+        if c["key"] == key and now - c["ts"] < ttl:
+            return c["data"]
+
+    syms = sorted({i["symbol"] for i in items})
+    out: dict[str, Optional[float]] = {s: None for s in syms}
+    if syms:
+        try:
+            import yfinance as yf
+            df = yf.download(syms, period="20d", interval="1d", group_by="ticker",
+                             progress=False, threads=True, auto_adjust=True)
+            for i in items:
+                sym, rd, sess = i["symbol"], i["report_date"], i.get("session")
+                try:
+                    sub = df[sym] if len(syms) > 1 else df
+                    closes = sub["Close"].dropna()
+                    if closes.empty:
+                        continue
+                    days = closes.index.normalize()
+                    rdts = pd.Timestamp(rd).normalize()
+                    mask = (days <= rdts) if sess == "AMC" else (days < rdts)
+                    base_days = closes.index[mask]
+                    if len(base_days) == 0:
+                        continue
+                    base = float(closes.loc[base_days[-1]])
+                    cur = float(closes.iloc[-1])
+                    out[sym] = round((cur - base) / base * 100, 2) if base else None
+                except Exception:
+                    continue
+        except Exception as exc:
+            log.debug("earnings moves download failed: %s", exc)
+
+    with _cache_lock:
+        _earn_move_cache.update(ts=now, key=key, data=out)
+    return out
+
+
 def movers(limit: int = 10) -> list[dict[str, Any]]:
     """Top movers FYI ranking from Alpaca's screener — a fact, not a filter."""
     try:

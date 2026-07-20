@@ -35,20 +35,26 @@ export function Earnings({
   return (
     <div className="space-y-3">
       {earnings.reported.length > 0 && (
-        <Panel title="Just reported" sub="post-earnings drift — first-class candidates">
+        <Panel title="Just reported" sub="move since the report — the drift so far">
           <div className="flex flex-wrap gap-2">
             {earnings.reported.map((e) => {
-              const up = (e.surprise_pct ?? 0) >= 0
+              const move = e.move_since_report_pct
+              const has = move != null
+              const up = (move ?? 0) >= 0
               return (
                 <span
                   key={e.symbol}
                   className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 text-sm"
                 >
                   <span className="font-semibold">{e.symbol}</span>
-                  <span className={up ? "text-emerald-500" : "text-red-500"}>
-                    {up ? "+" : ""}
-                    {e.surprise_pct}%
-                  </span>
+                  {has ? (
+                    <span className={up ? "text-emerald-500" : "text-red-500"}>
+                      {up ? "+" : ""}
+                      {move}%
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )}
                   <span className="text-xs text-muted-foreground">
                     {e.report_date.slice(5, 10)}
                     {e.session ? ` ${e.session}` : ""}

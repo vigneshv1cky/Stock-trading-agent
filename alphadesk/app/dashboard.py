@@ -108,11 +108,18 @@ def api_tokens(days: int = 1):
 def api_earnings():
     """Be-ready view: who reports next (with the time to RUN the desk to catch the
     drift) and who just reported."""
+    from alphadesk.ingest import prices
     from alphadesk.ingest.earnings import run_at
     upcoming = store.upcoming_earnings(days=7)
     for e in upcoming:
         e["run_at"] = run_at(e["report_date"], e.get("session"))
-    return {"upcoming": upcoming, "reported": store.recently_reported(days=3)}
+    reported = store.recently_reported(days=3)
+    # Show the real, verifiable signal: how much the stock has moved SINCE the
+    # report went public (the drift itself) — not a maybe-misleading EPS surprise%.
+    moves = prices.moves_since_report(reported)
+    for e in reported:
+        e["move_since_report_pct"] = moves.get(e["symbol"])
+    return {"upcoming": upcoming, "reported": reported}
 
 
 _run_day = ""
