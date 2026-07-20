@@ -18,7 +18,7 @@ import asyncio
 import logging
 
 from alphadesk.config import MODEL_MAP, session
-from alphadesk.desk import team
+from alphadesk.desk import plan, team
 from alphadesk.ingest import prices
 from alphadesk.ledger import store
 
@@ -80,6 +80,15 @@ async def deliberate(sym: str, pick: dict, briefs: list[dict], price_ctx: dict |
 
     sess = session()
     horizon = int(verdict.get("adjusted_horizon_days") or thesis["horizon_days"])
+
+    # Execution desk: turn the committed call into an actionable trade plan
+    # (entry/target/stop/note). Fail-open — a missing plan never blocks the pick.
+    trade = await loop.run_in_executor(
+        None, lambda: plan.trade_plan(sym, booked_dir, horizon, price_ctx,
+                                      thesis["thesis"], decision_id))
+    if trade:
+        yield {"type": "plan", "symbol": sym, "direction": booked_dir, **trade}
+
     pick_id = store.record_pick({
         "symbol": sym, "arm": "TEAM", "edge": pick.get("edge_hint"),
         "trigger_src": trigger_src, "session": sess,
@@ -101,13 +110,17 @@ async def deliberate(sym: str, pick: dict, briefs: list[dict], price_ctx: dict |
         "arbiter_overrode": int(bool(verdict["approved"]) != (float(rebuttal["revised_score"]) > 50)),
         "entry_price": (price_ctx or {}).get("last_price") if sess == "OPEN" else None,
         "spy_price": (prices.get_context("SPY") or {}).get("last_price"),
+        "plan_entry": (trade or {}).get("entry"),
+        "plan_target": (trade or {}).get("target"),
+        "plan_stop": (trade or {}).get("stop"),
+        "plan_note": (trade or {}).get("note"),
     })
     row = {
         "id": pick_id, "symbol": sym, "direction": booked_dir,
         "horizon_days": horizon, "edge": pick.get("edge_hint"),
         "conviction": verdict["adjusted_score"], "confidence": verdict["adjusted_confidence"],
         "verdict": verdict["verdict"], "approved": bool(verdict["approved"]),
-        "flipped": flipped, "summary": verdict["summary"],
+        "flipped": flipped, "summary": verdict["summary"], "plan": trade,
     }
     yield {"type": "_result", "row": row, "pick_id": pick_id,
            "thesis": thesis, "verdict": verdict}

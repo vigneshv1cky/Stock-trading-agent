@@ -46,6 +46,11 @@ CREATE TABLE IF NOT EXISTS picks (
     -- market snapshot
     entry_price     REAL,                          -- NULL when decided market-closed
     spy_price       REAL,
+    -- actionable trade plan (execution desk): suggested levels for the committed call
+    plan_entry      REAL,
+    plan_target     REAL,
+    plan_stop       REAL,
+    plan_note       TEXT,
     -- outcomes
     ret_1d          REAL,
     ret_horizon     REAL,
@@ -172,6 +177,12 @@ def init() -> None:
             conn.execute("ALTER TABLE earnings ADD COLUMN market_cap REAL")
         except sqlite3.OperationalError:
             pass  # already migrated
+        for col, decl in (("plan_entry", "REAL"), ("plan_target", "REAL"),
+                          ("plan_stop", "REAL"), ("plan_note", "TEXT")):
+            try:
+                conn.execute(f"ALTER TABLE picks ADD COLUMN {col} {decl}")
+            except sqlite3.OperationalError:
+                pass  # already migrated
 
 
 def _now() -> str:

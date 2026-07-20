@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { ArrowDown, ArrowUp, Loader2, Search } from "lucide-react"
 import { dirUp, dirWord, plainEdge, plainVerdict } from "@/lib/plain"
+import type { Plan } from "@/lib/api"
 
 // Streamed events (loosely typed — they arrive as JSON off the SSE feed).
 interface Ev {
@@ -34,6 +35,10 @@ interface Ev {
   chain?: string
   entry?: number
   now?: number
+  target?: number
+  stop?: number
+  hold?: string
+  note?: string
   stance?: string
   counter_direction?: string
   counter?: string
@@ -55,6 +60,7 @@ interface BoardRow {
   take?: boolean
   chief_reason?: string
   flipped?: boolean
+  plan?: Plan | null
 }
 
 const ACCENT: Record<string, string> = {
@@ -69,6 +75,31 @@ const ACCENT: Record<string, string> = {
   fact_flag: "border-l-orange-500",
   rebuttal: "border-l-blue-500",
   decision: "border-l-emerald-500",
+  plan: "border-l-indigo-500",
+}
+
+// "Buy at 253.80 · target 380 · stop 359.50 · multi-day" — the actionable levels.
+function PlanLine({ plan, direction }: { plan: Plan; direction?: string }) {
+  const action = dirUp(direction) ? "Buy" : "Short"
+  return (
+    <div className="mt-1.5 rounded-md bg-muted/50 px-2 py-1.5 text-xs">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+        <span className="font-semibold">
+          {action} ${plan.entry}
+        </span>
+        <span className="text-muted-foreground">·</span>
+        <span>
+          target <span className="font-medium text-emerald-500">${plan.target}</span>
+        </span>
+        <span className="text-muted-foreground">·</span>
+        <span>
+          stop <span className="font-medium text-red-500">${plan.stop}</span>
+        </span>
+        <span className="text-muted-foreground">· {plan.hold}</span>
+      </div>
+      <p className="mt-1 text-muted-foreground">{plan.note}</p>
+    </div>
+  )
 }
 
 function Tag({ children, className = "" }: { children: React.ReactNode; className?: string }) {
@@ -194,6 +225,24 @@ function Line({ ev }: { ev: Ev }) {
             {ev.flipped && <span className="text-fuchsia-500"> · reversed by critic</span>}
           </p>
           <p className="text-muted-foreground">{ev.summary}</p>
+        </div>
+      )
+    case "plan":
+      return (
+        <div className={cls}>
+          <Tag className="text-indigo-500">Trade plan · {ev.symbol}</Tag>
+          {ev.entry != null && ev.target != null && ev.stop != null && (
+            <PlanLine
+              plan={{
+                entry: ev.entry,
+                target: ev.target,
+                stop: ev.stop,
+                note: ev.note ?? "",
+                hold: ev.hold ?? "",
+              }}
+              direction={ev.direction}
+            />
+          )}
         </div>
       )
     default:
@@ -416,6 +465,7 @@ export function FindTrades({
                   )}
                 </div>
                 <p className="mt-1 text-xs text-muted-foreground">{r.summary}</p>
+                {r.plan && <PlanLine plan={r.plan} direction={r.direction} />}
                 {r.chief_reason && (
                   <p className="mt-1 text-xs text-amber-600 dark:text-amber-500/90">
                     <span className="font-medium">Final call:</span> {r.chief_reason}

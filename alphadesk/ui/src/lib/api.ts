@@ -30,6 +30,16 @@ export interface Brief {
   key_facts?: { fact: string }[]
 }
 
+// Actionable execution levels for a committed call (may be null if the desk
+// couldn't set a coherent plan — the directional call still stands).
+export interface Plan {
+  entry: number
+  target: number
+  stop: number
+  note: string
+  hold: string // "single-day" | "multi-day"
+}
+
 export interface Pick {
   id: number
   ts: string
@@ -53,6 +63,10 @@ export interface Pick {
   low_liquidity: number
   entry_price: number | null
   spy_price: number | null
+  plan_entry: number | null
+  plan_target: number | null
+  plan_stop: number | null
+  plan_note: string | null
   ret_1d: number | null
   ret_horizon: number | null
   spy_ret_horizon: number | null

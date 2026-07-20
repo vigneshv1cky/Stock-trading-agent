@@ -45,6 +45,7 @@ MODEL_MAP: dict[str, str] = {
     "head": "opus",            # comparative head-to-head selection across debated ideas
     "earnings_reader": "sonnet",      # web-grounded read of an actual earnings report
     "connections": "opus",     # one web-grounded call: supplier/customer/competitor map → spillover candidates
+    "plan": "sonnet",          # execution desk — entry/target/stop for a committed call
 }
 
 # Connections desk fires only on the top-N most material shocks per run (cost gate)

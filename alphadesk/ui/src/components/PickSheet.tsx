@@ -58,6 +58,24 @@ function TheCall({ pick }: { pick: Pick }) {
           buy at {pick.entry_price ? `$${pick.entry_price}` : "next market open"} · confidence{" "}
           {Math.round(pick.adjusted_score ?? pick.score)}/100
         </div>
+        {pick.plan_entry != null && pick.plan_target != null && pick.plan_stop != null && (
+          <div className="rounded-md bg-muted/50 px-2.5 py-2 text-sm">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+              <span className="font-semibold">
+                {long ? "Buy" : "Short"} ${pick.plan_entry}
+              </span>
+              <span className="text-muted-foreground">·</span>
+              <span>
+                target <span className="font-medium text-green-500">${pick.plan_target}</span>
+              </span>
+              <span className="text-muted-foreground">·</span>
+              <span>
+                stop <span className="font-medium text-red-500">${pick.plan_stop}</span>
+              </span>
+            </div>
+            {pick.plan_note && <p className="mt-1 text-muted-foreground">{pick.plan_note}</p>}
+          </div>
+        )}
         <div className="text-sm">
           {pick.approved ? (
             <Badge className="bg-green-600">Conviction call</Badge>
