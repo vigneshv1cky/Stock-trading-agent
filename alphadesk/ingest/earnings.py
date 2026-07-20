@@ -1,66 +1,72 @@
-"""Earnings calendar — who reported (with the EPS surprise) and who's about to.
+"""Earnings calendar — MARKET-WIDE: who reported (with the EPS surprise) and
+who's about to, across the whole US tape, not a curated list.
 
-Pulls per-ticker earnings dates from yfinance over a liquid watchlist and stores
-them in the ledger. Two consumers:
-  • upcoming()          → "be ready": what reports in the next N days
-  • recently_reported() → post-earnings-drift candidates (reported, surprise known)
+Design law #1 (code owns facts, agents own judgment): this module supplies the
+FACT "who reported / who's about to", filtered only by tradability (a factual
+screen), and hands every reporter to the scout. The scout — not a hardcoded
+watchlist — decides which are worth the team's attention. That removes the old
+large-cap selection bias, so post-earnings drift can reach small/mid caps where
+the edge actually lives; liquidity stays as EVIDENCE downstream (the grader's
+double-friction haircut), never a gate here.
 
-No new API key — yfinance gives estimate / actual / surprise% per ticker. The
-watchlist is a plain JSON file the user can grow (~/.alphadesk/earnings_watchlist.json),
-seeded with liquid large caps on first run.
+Source: the Nasdaq earnings calendar (api.nasdaq.com) — one call per date, no
+API key, giving EPS estimate / actual / surprise% and the BMO/AMC session. It's
+an undocumented endpoint, so every fetch is wrapped defensively: a bad day just
+yields nothing and the next refresh heals it.
+
+Two consumers:
+  • upcoming_earnings()  → "be ready": what reports in the next N days
+  • drift_candidates()   → post-earnings-drift candidates (reported, surprise known)
 """
 
 import json
 import logging
+import time
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta
 
-from alphadesk.config import DATA_DIR, ET
+from alphadesk.config import ET, in_universe, now_et
 from alphadesk.ledger import store
 
 log = logging.getLogger("alphadesk.earnings")
 
-_WATCHLIST_FILE = DATA_DIR / "earnings_watchlist.json"
-
-# Seed: liquid large caps whose earnings actually move and are tradeable. Grow the
-# JSON file to widen coverage; per-ticker yfinance calls are the cost, so keep it
-# to names you'd actually trade.
-_DEFAULT_WATCHLIST = [
-    "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "AVGO", "ORCL", "AMD",
-    "NFLX", "CRM", "ADBE", "INTC", "QCOM", "CSCO", "TXN", "MU", "AMAT", "PANW",
-    "JPM", "BAC", "WFC", "GS", "MS", "C", "V", "MA", "AXP", "SCHW",
-    "UNH", "JNJ", "LLY", "PFE", "MRK", "ABBV", "TMO", "ABT", "DHR", "BMY",
-    "XOM", "CVX", "COP", "SLB",
-    "WMT", "COST", "HD", "LOW", "TGT", "PG", "KO", "PEP", "MCD", "SBUX", "NKE", "DIS",
-    "CAT", "BA", "GE", "HON", "UPS", "RTX", "LMT", "DE",
-    "T", "VZ", "TMUS", "NEE", "UNP",
-]
+_CAL_URL = "https://api.nasdaq.com/api/calendar/earnings?date={date}"
+# Nasdaq blocks non-browser agents; these headers are required for a 200.
+_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+}
 
 
-def _load_watchlist() -> list[str]:
-    if _WATCHLIST_FILE.exists():
-        try:
-            return json.loads(_WATCHLIST_FILE.read_text())
-        except Exception:
-            pass
-    _WATCHLIST_FILE.write_text(json.dumps(sorted(_DEFAULT_WATCHLIST), indent=0))
-    return list(_DEFAULT_WATCHLIST)
-
-
-def _session(dt) -> str:
-    h, m = dt.hour, dt.minute
-    if h >= 16:
-        return "AMC"           # after market close
-    if h < 9 or (h == 9 and m < 30):
-        return "BMO"           # before market open
-    return "DAY"
-
-
-def _f(v):
+def _f(v) -> float | None:
+    """Parse a Nasdaq numeric string ('$1.23', '(0.45)', '89.08', 'N/A') → float|None."""
+    if v is None:
+        return None
+    s = str(v).strip().replace("$", "").replace(",", "").replace("%", "")
+    if not s or s.upper() in ("N/A", "NA", "--"):
+        return None
+    neg = s.startswith("(") and s.endswith(")")   # accounting negatives: (0.45)
+    if neg:
+        s = s[1:-1]
     try:
-        f = float(v)
-        return f if f == f else None   # drop NaN
+        f = float(s)
+        f = -f if neg else f
+        return f if f == f else None               # drop NaN
     except (TypeError, ValueError):
         return None
+
+
+def _time_bucket(t: str | None) -> str:
+    """Map Nasdaq's 'time' field → our session code."""
+    t = (t or "").lower()
+    if "pre-market" in t:
+        return "BMO"           # before market open
+    if "after-hours" in t:
+        return "AMC"           # after market close
+    return "DAY"               # time-not-supplied / intraday
 
 
 def run_at(report_iso: str, session: str | None) -> str | None:
@@ -77,41 +83,71 @@ def run_at(report_iso: str, session: str | None) -> str | None:
     return datetime(run_day.year, run_day.month, run_day.day, 9, 30, tzinfo=ET).isoformat()
 
 
-def refresh_calendar(symbols: list[str] | None = None, limit: int = 8) -> int:
-    """Pull each ticker's earnings dates (past + upcoming) into the ledger.
-    Returns the number of rows upserted."""
-    import yfinance as yf
+def _fetch_calendar_date(date_str: str) -> list[dict]:
+    """One day of the Nasdaq earnings calendar → raw row dicts (empty on any error)."""
+    req = urllib.request.Request(_CAL_URL.format(date=date_str), headers=_HEADERS)
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            payload = json.loads(resp.read().decode("utf-8", "ignore"))
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
+        log.warning("earnings calendar fetch failed for %s: %s", date_str, exc)
+        return []
+    data = payload.get("data") or {}
+    return data.get("rows") or []
 
-    watch = symbols or _load_watchlist()
+
+def refresh_calendar(days_back: int = 5, days_fwd: int = 7) -> int:
+    """Pull the market-wide earnings calendar for [today-days_back, today+days_fwd]
+    into the ledger, keeping only Alpaca-tradable names. Returns rows upserted.
+
+    report_date is stored DATE-ONLY so an event is keyed stably whether we see it
+    pre-report (forecast row) or post-report (actual row) — the ON CONFLICT REPLACE
+    then just fills in eps_actual/surprise as they land, never duplicating the event.
+    """
+    today = now_et().date()
     rows: list[dict] = []
-    for sym in watch:
-        try:
-            df = yf.Ticker(sym).get_earnings_dates(limit=limit)
-        except Exception as exc:
-            log.warning("earnings fetch failed for %s: %s", sym, exc)
+    seen: set[tuple[str, str]] = set()
+    for offset in range(-days_back, days_fwd + 1):
+        day = today + timedelta(days=offset)
+        if day.weekday() >= 5:                       # markets closed — skip
             continue
-        if df is None or df.empty:
-            continue
-        for dt, r in df.iterrows():
+        date_str = day.isoformat()
+        for r in _fetch_calendar_date(date_str):
+            sym = (r.get("symbol") or "").strip().upper()
+            if not sym or not in_universe(sym):      # factual tradability screen
+                continue
+            key = (sym, date_str)
+            if key in seen:
+                continue
+            seen.add(key)
+            est = _f(r.get("epsForecast"))
+            act = _f(r.get("eps"))                     # present only once reported
+            surp = _f(r.get("surprise"))
+            # Nasdaq sometimes omits surprise% even with both numbers — arithmetic
+            # is ours to own, so compute it rather than mislabel a beat/miss as in-line.
+            if surp is None and act is not None and est is not None and est != 0:
+                surp = round((act - est) / abs(est) * 100, 2)
             rows.append({
                 "symbol": sym,
-                "report_date": dt.isoformat(),
-                "session": _session(dt),
-                "eps_estimate": _f(r.get("EPS Estimate")),
-                "eps_actual": _f(r.get("Reported EPS")),
-                "surprise_pct": _f(r.get("Surprise(%)")),
+                "report_date": date_str,             # date-only, stable key
+                "session": _time_bucket(r.get("time")),
+                "eps_estimate": est,
+                "eps_actual": act,
+                "surprise_pct": surp,
             })
+        time.sleep(0.4)                               # be polite to the endpoint
     store.upsert_earnings(rows)
-    log.info("earnings calendar refreshed: %d rows across %d tickers", len(rows), len(watch))
+    log.info("earnings calendar refreshed: %d tradable reporters across %d days",
+             len(rows), days_back + days_fwd + 1)
     return len(rows)
 
 
 def drift_candidates(days: int) -> dict[str, list[dict]]:
     """Recently-reported names → synthetic [EARNINGS] candidate articles, keyed by
     symbol. A CANDIDATE SOURCE, parallel to news.poll: it lets post-earnings drift
-    flow through the SAME scout → team pipeline as news. The yfinance fetch already
-    ran (refresh_calendar, on the 6h loop); this just reads the calendar rows the
-    run needs and shapes them as candidates — the caller merges them into the pool.
+    flow through the SAME scout → team pipeline as news. The calendar fetch already
+    ran (refresh_calendar, on the 6h loop); this just reads the rows the run needs
+    and shapes them as candidates — the caller merges them into the pool.
     """
     out: dict[str, list[dict]] = {}
     for e in store.recently_reported(days):

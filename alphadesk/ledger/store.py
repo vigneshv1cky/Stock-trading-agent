@@ -537,7 +537,7 @@ def recently_reported(days: int = 3) -> list[dict]:
         rows = conn.execute(
             "SELECT symbol, report_date, session, eps_estimate, eps_actual, surprise_pct"
             " FROM earnings WHERE eps_actual IS NOT NULL"
-            "   AND report_date >= datetime('now', ?) AND report_date <= datetime('now')"
+            "   AND report_date >= date('now', ?) AND report_date <= date('now')"
             " ORDER BY report_date DESC", (f"-{int(days)} days",),
         ).fetchall()
     return [dict(r) for r in rows]
@@ -548,8 +548,8 @@ def upcoming_earnings(days: int = 7) -> list[dict]:
     with _connect() as conn:
         rows = conn.execute(
             "SELECT symbol, report_date, session, eps_estimate FROM earnings"
-            " WHERE eps_actual IS NULL AND report_date >= datetime('now')"
-            "   AND report_date <= datetime('now', ?) ORDER BY report_date", (f"+{int(days)} days",),
+            " WHERE eps_actual IS NULL AND report_date >= date('now')"
+            "   AND report_date <= date('now', ?) ORDER BY report_date", (f"+{int(days)} days",),
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -561,7 +561,7 @@ def earnings_row(symbol: str, days: int = 4) -> dict | None:
         row = conn.execute(
             "SELECT symbol, report_date, session, eps_estimate, eps_actual, surprise_pct"
             " FROM earnings WHERE symbol=? AND eps_actual IS NOT NULL"
-            "   AND report_date >= datetime('now', ?) AND report_date <= datetime('now')"
+            "   AND report_date >= date('now', ?) AND report_date <= date('now')"
             " ORDER BY report_date DESC LIMIT 1", (symbol.upper(), f"-{int(days)} days"),
         ).fetchone()
     return dict(row) if row else None
