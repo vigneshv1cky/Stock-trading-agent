@@ -74,6 +74,28 @@ export interface Pick {
   graded_at: string | null
 }
 
+// One open pick tracked live against the current price.
+export interface LivePick {
+  id: number
+  ts: string
+  symbol: string
+  direction: "LONG" | "SHORT"
+  horizon_days: number
+  session: string
+  edge: string | null
+  verdict: string | null
+  approved: number
+  taken: number
+  plan_entry: number
+  plan_target: number
+  plan_stop: number
+  plan_note: string | null
+  current: number | null
+  pnl_pct: number | null
+  progress: number | null // 0 = at stop, 1 = at target
+  status: string // working | near target | near stop | target hit | stopped out | no quote
+}
+
 export interface Stats {
   total: {
     picks: number
@@ -127,6 +149,7 @@ async function get<T>(path: string): Promise<T> {
 export const api = {
   picks: (limit = 40) => get<{ picks: Pick[] }>(`/api/picks?limit=${limit}`),
   pick: (id: number) => get<Pick>(`/api/picks/${id}`),
+  live: () => get<{ live: LivePick[]; market: string }>("/api/live"),
   stats: () => get<Stats>("/api/stats"),
   funnel: (limit = 20) =>
     get<{ paused: string | null; windows: FunnelWindow[] }>(`/api/funnel?limit=${limit}`),

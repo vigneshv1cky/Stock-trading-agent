@@ -148,6 +148,36 @@ def moves_since_report(items: list[dict], ttl: int = 300) -> dict[str, Optional[
     return out
 
 
+def latest_prices(symbols: list[str]) -> dict[str, float]:
+    """Real-time last-trade prices, batched in one Alpaca call (fallback: the
+    cached yfinance context per missing symbol). For live position tracking."""
+    out: dict[str, float] = {}
+    syms = sorted({s.upper() for s in symbols if s})
+    if not syms:
+        return out
+    try:
+        import os
+        from alpaca.data.historical import StockHistoricalDataClient
+        from alpaca.data.requests import StockLatestTradeRequest
+        client = StockHistoricalDataClient(
+            os.environ["ALPACA_API_KEY"], os.environ["ALPACA_SECRET_KEY"])
+        trades = client.get_stock_latest_trade(
+            StockLatestTradeRequest(symbol_or_symbols=syms))
+        for sym, trade in trades.items():
+            try:
+                out[sym] = round(float(trade.price), 4)
+            except (TypeError, ValueError):
+                continue
+    except Exception as exc:
+        log.debug("alpaca latest_prices failed: %s", exc)
+    for sym in syms:                       # fill any gaps from the yfinance context
+        if sym not in out:
+            ctx = get_context(sym)
+            if ctx and ctx.get("last_price") is not None:
+                out[sym] = float(ctx["last_price"])
+    return out
+
+
 def movers(limit: int = 10) -> list[dict[str, Any]]:
     """Top movers FYI ranking from Alpaca's screener — a fact, not a filter."""
     try:

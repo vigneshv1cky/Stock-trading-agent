@@ -153,6 +153,41 @@ def api_earnings():
     return {"upcoming": upcoming, "reported": reported}
 
 
+@app.get("/api/live")
+def api_live():
+    """Live tracking of open picks that carry a trade plan: current price vs
+    entry/target/stop, P&L, and a status. Status/P&L/progress are pure arithmetic
+    (code owns physics + scoring); the levels came from the desk."""
+    from alphadesk.config import session as market_session
+    from alphadesk.ingest import prices
+    picks = store.live_picks()
+    quotes = prices.latest_prices([p["symbol"] for p in picks])
+    out = []
+    for p in picks:
+        cur = quotes.get(p["symbol"].upper())
+        entry, target, stop = p["plan_entry"], p["plan_target"], p["plan_stop"]
+        row = dict(p, current=cur, pnl_pct=None, progress=None, status="no quote")
+        if cur and entry and target and stop and target != stop:
+            up = p["direction"] == "LONG"
+            row["pnl_pct"] = round((1.0 if up else -1.0) * (cur - entry) / entry * 100, 2)
+            prog = (cur - stop) / (target - stop) if up else (stop - cur) / (stop - target)
+            row["progress"] = round(max(0.0, min(1.0, prog)), 3)  # 0 = at stop, 1 = at target
+            hit_target = cur >= target if up else cur <= target
+            hit_stop = cur <= stop if up else cur >= stop
+            if hit_target:
+                row["status"] = "target hit"
+            elif hit_stop:
+                row["status"] = "stopped out"
+            elif abs(cur - target) <= 0.15 * abs(target - entry):
+                row["status"] = "near target"
+            elif abs(cur - stop) <= 0.15 * abs(stop - entry):
+                row["status"] = "near stop"
+            else:
+                row["status"] = "working"
+        out.append(row)
+    return {"live": out, "market": market_session()}
+
+
 _run_day = ""
 _run_count = 0
 

@@ -3,8 +3,9 @@ import type { EarningsRow, Pick, Stats, TokenRow } from "@/lib/api"
 import { Ledger } from "@/components/Ledger"
 import { Earnings } from "@/components/Earnings"
 import { Activity } from "@/components/Activity"
+import { LiveTracker } from "@/components/LiveTracker"
 
-type View = "record" | "calendar" | "usage"
+type View = "live" | "record" | "calendar" | "usage"
 
 export function RightRail({
   picks,
@@ -19,8 +20,9 @@ export function RightRail({
   earnings?: { upcoming: EarningsRow[]; reported: EarningsRow[] }
   onSelect: (id: number) => void
 }) {
-  const [view, setView] = useState<View>("record")
+  const [view, setView] = useState<View>("live")
   const tabs: { id: View; label: string }[] = [
+    { id: "live", label: "Live" },
     { id: "record", label: "Track record" },
     { id: "calendar", label: "Calendar" },
     { id: "usage", label: "Usage" },
@@ -44,6 +46,7 @@ export function RightRail({
         ))}
       </div>
 
+      {view === "live" && <LiveTracker />}
       {view === "record" && <Ledger picks={picks} stats={stats} onSelect={onSelect} />}
       {view === "calendar" && <Earnings earnings={earnings} />}
       {view === "usage" && <Activity tokens={tokens} />}

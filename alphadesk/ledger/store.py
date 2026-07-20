@@ -452,6 +452,22 @@ def open_taken_picks() -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def live_picks() -> list[dict]:
+    """Open picks carrying a trade plan, still inside their horizon window (not
+    graded, not exited) — the set to track live against the current price."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT id, ts, symbol, direction, horizon_days, session, edge, verdict,"
+            " approved, adjusted_score, confidence, taken,"
+            " plan_entry, plan_target, plan_stop, plan_note FROM picks"
+            " WHERE arm='TEAM' AND plan_entry IS NOT NULL"
+            "   AND graded_at IS NULL AND exit_ts IS NULL"
+            "   AND datetime(ts, '+' || (horizon_days + 2) || ' days') >= datetime('now')"
+            " ORDER BY approved DESC, id DESC",
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def record_exit(pick_id: int, reason: str) -> None:
     """Stamp an early exit issued by a position re-evaluation."""
     with _lock, _connect() as conn:
