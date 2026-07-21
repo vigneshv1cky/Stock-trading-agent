@@ -327,9 +327,12 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
         try:
             # brief subagents fan out in PARALLEL (technical, news, fundamentals,
             # freshness) — each a bounded Haiku research task feeding the researcher
-            fundamentals = await loop.run_in_executor(None, prices.get_fundamentals, sym)
+            fundamentals, opts = await asyncio.gather(
+                loop.run_in_executor(None, prices.get_fundamentals, sym),
+                loop.run_in_executor(None, prices.get_options_context, sym),
+            )
             briefs = list(await asyncio.gather(
-                loop.run_in_executor(None, notes.market_brief, sym, price_ctx, fundamentals, arts, decision_id),
+                loop.run_in_executor(None, notes.market_brief, sym, price_ctx, fundamentals, arts, decision_id, opts),
                 loop.run_in_executor(None, notes.news_brief, sym, arts, decision_id),
             ))
             # If this pick just reported, read the ACTUAL report (web-grounded,

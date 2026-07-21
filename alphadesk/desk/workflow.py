@@ -77,9 +77,12 @@ def _avg_sentiment(articles: list[dict]) -> float:
 
 async def _gather_briefs(loop, sym: str, articles: list[dict], price_ctx: dict | None,
                          decision_id: str) -> list[dict]:
-    fundamentals = await loop.run_in_executor(None, prices.get_fundamentals, sym)
+    fundamentals, opts = await asyncio.gather(
+        loop.run_in_executor(None, prices.get_fundamentals, sym),
+        loop.run_in_executor(None, prices.get_options_context, sym),
+    )
     return list(await asyncio.gather(
-        loop.run_in_executor(None, notes.market_brief, sym, price_ctx, fundamentals, articles, decision_id),
+        loop.run_in_executor(None, notes.market_brief, sym, price_ctx, fundamentals, articles, decision_id, opts),
         loop.run_in_executor(None, notes.news_brief, sym, articles, decision_id),
     ))
 

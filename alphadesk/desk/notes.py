@@ -54,12 +54,14 @@ def news_brief(symbol: str, articles: list[dict], decision_id: str | None = None
 
 
 def market_brief(symbol: str, price_ctx: dict | None, fundamentals: dict | None,
-                 articles: list[dict], decision_id: str | None = None) -> dict:
+                 articles: list[dict], decision_id: str | None = None,
+                 options: dict | None = None) -> dict:
     """One call covering the three code-fact dimensions that used to be three
     briefs: technicals, valuation, and the priced-in / still-developing read."""
     payload = {
         "price": price_ctx or "none",
         "fundamentals": fundamentals or "none",
+        "options": options or "none",
         "catalyst_timestamps": [a.get("published_at", "")[:16] for a in articles[:6]],
     }
     return _brief(
@@ -74,7 +76,13 @@ def market_brief(symbol: str, price_ctx: dict | None, fundamentals: dict | None,
         "catalyst or is priced for perfection. (3) PRICED-IN & LEGS: compare "
         "catalyst timing to the move — already moved hard (fade risk) vs barely "
         "moved (repricing may be ahead); and is this a spent POINT event or a "
-        "STILL-DEVELOPING story with multi-day drift left.",
+        "STILL-DEVELOPING story with multi-day drift left. If options data is "
+        "present, anchor the priced-in read on it: the options-implied "
+        "expected_move_*_pct is the market's OWN estimate of the move over that "
+        "window — a thesis whose move sits INSIDE the expected move for its horizon "
+        "is largely priced in, while a move beyond it is either genuine underpricing "
+        "or an overreach; elevated atm_iv_pct means a bigger move is already "
+        "expected (and flags post-catalyst IV-crush risk).",
         "Data:\n" + wrap_data("market", json.dumps(payload, default=str)),
         decision_id,
     )

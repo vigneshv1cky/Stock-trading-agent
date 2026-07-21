@@ -109,6 +109,109 @@ def get_fundamentals(symbol: str) -> Optional[dict]:
     return out
 
 
+_opt_cache: dict[str, tuple[float, dict | None]] = {}
+_OPT_TTL_S = 900   # 15m — IV/expected-move drift slowly enough intraday
+
+
+def _mid(row) -> Optional[float]:
+    """Bid/ask midpoint, falling back to last trade; None if neither is usable."""
+    bid = float(row.get("bid") or 0)
+    ask = float(row.get("ask") or 0)
+    if bid > 0 and ask > 0:
+        return (bid + ask) / 2
+    last = float(row.get("lastPrice") or 0)
+    return last if last > 0 else None
+
+
+def get_options_context(symbol: str) -> Optional[dict]:
+    """Options-implied expected move + ATM IV — the market's own 'how much is
+    already priced in' number, the quantitative anchor for the priced-in debate.
+
+    Best-effort via yfinance, cached 15m, fail-open (None when a name has no
+    options or the chain is too illiquid to trust). Pure facts — the agents weigh
+    them; nothing here decides anything (design law #2). Two independent reads:
+      • expected_move_to_expiry_pct — the ATM straddle mid ÷ spot: the market's
+        actual quoted move to the nearest expiry (ground truth, no term-structure
+        assumption).
+      • expected_move_{1,5,10}d_pct — ATM IV projected over standard trading-day
+        windows (sqrt-time), so the desk can match it to the pick's horizon.
+    """
+    import math
+
+    sym = symbol.upper()
+    with _cache_lock:
+        hit = _opt_cache.get(sym)
+        if hit and time.time() - hit[0] < _OPT_TTL_S:
+            return hit[1]
+
+    out: dict | None = None
+    try:
+        import pandas as pd
+        import yfinance as yf
+
+        ctx = get_context(sym)
+        spot = float(ctx["last_price"]) if ctx and ctx.get("last_price") else 0.0
+        if not spot:
+            raise ValueError("no spot price")
+
+        tk = yf.Ticker(sym)
+        expiries = tk.options or ()
+        if not expiries:
+            raise ValueError("no listed options")
+
+        # nearest expiry ≥2 calendar days out (skip 0-1 DTE gamma noise)
+        today = now_et().date()
+        exp, dte = None, 0
+        for e in expiries:
+            d = (pd.Timestamp(e).date() - today).days
+            if d >= 2:
+                exp, dte = e, d
+                break
+        if exp is None:  # only ultra-short expiries listed — take the furthest
+            exp = expiries[-1]
+            dte = max(1, (pd.Timestamp(exp).date() - today).days)
+
+        chain = tk.option_chain(exp)
+        calls, puts = chain.calls, chain.puts
+        if calls.empty or puts.empty:
+            raise ValueError("empty chain")
+
+        call = calls.iloc[(calls["strike"] - spot).abs().argmin()]
+        put = puts.iloc[(puts["strike"] - spot).abs().argmin()]
+
+        ivs = [float(v) for v in (call.get("impliedVolatility"), put.get("impliedVolatility"))
+               if v and float(v) > 0]
+        atm_iv = sum(ivs) / len(ivs) if ivs else None   # decimal, annualized
+
+        cm, pm = _mid(call), _mid(put)
+        straddle = cm + pm if (cm and pm) else None
+        em_expiry = round(straddle / spot * 100, 2) if straddle else None
+        if em_expiry and em_expiry > 100:  # nonsense from a broken/illiquid quote
+            em_expiry = None
+
+        if atm_iv is None and em_expiry is None:
+            raise ValueError("no usable IV or straddle")
+
+        def _em_days(nd: int) -> float | None:
+            return round(atm_iv * math.sqrt(nd / 252) * 100, 2) if atm_iv else None
+
+        out = {
+            "atm_iv_pct": round(atm_iv * 100, 1) if atm_iv else None,
+            "expiry": exp,
+            "days_to_expiry": dte,
+            "expected_move_to_expiry_pct": em_expiry,
+            "expected_move_1d_pct": _em_days(1),
+            "expected_move_5d_pct": _em_days(5),
+            "expected_move_10d_pct": _em_days(10),
+        }
+    except Exception as exc:
+        log.debug("options context failed %s: %s", sym, exc)
+        out = None
+    with _cache_lock:
+        _opt_cache[sym] = (time.time(), out)
+    return out
+
+
 _earn_move_cache: dict[str, Any] = {"ts": 0.0, "key": None, "data": {}}
 
 
