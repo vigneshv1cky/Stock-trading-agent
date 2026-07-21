@@ -145,16 +145,6 @@ export interface Stats {
   debate_lift: { post_debate_acc: number | null; pre_debate_acc: number | null }
 }
 
-export interface FunnelWindow {
-  id: number
-  window_ts: string
-  ingested: number
-  candidates: number
-  picked: number
-  skipped: number
-  skip_reasons: string // JSON string of [{symbol, reason}]
-}
-
 export interface TokenRow {
   role: string
   model: string
@@ -182,13 +172,10 @@ async function get<T>(path: string): Promise<T> {
 }
 
 export const api = {
-  picks: (limit = 40) => get<{ picks: Pick[] }>(`/api/picks?limit=${limit}`),
   pick: (id: number) => get<Pick>(`/api/picks/${id}`),
   live: () => get<{ live: LivePick[]; market: string }>("/api/live"),
   timelines: () => get<{ symbols: SymbolTimeline[]; market: string }>("/api/timelines"),
   stats: () => get<Stats>("/api/stats"),
-  funnel: (limit = 20) =>
-    get<{ paused: string | null; windows: FunnelWindow[] }>(`/api/funnel?limit=${limit}`),
   tokens: (days = 1) => get<{ usage: TokenRow[] }>(`/api/tokens?days=${days}`),
   earnings: () =>
     get<{ upcoming: EarningsRow[]; reported: EarningsRow[] }>("/api/earnings"),

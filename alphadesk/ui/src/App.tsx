@@ -3,7 +3,6 @@ import {
   api,
   fmtAlpha,
   type EarningsRow,
-  type FunnelWindow,
   type Stats,
   type TokenRow,
 } from "@/lib/api"
@@ -11,7 +10,6 @@ import { useTheme } from "@/lib/theme"
 import { FindTrades } from "@/components/FindTrades"
 import { PickSheet } from "@/components/PickSheet"
 import { RightRail } from "@/components/RightRail"
-import { Badge } from "@/components/ui/badge"
 import { Moon, Sun } from "lucide-react"
 
 function Kpi({ label, value, tone }: { label: string; value: string; tone?: number | null }) {
@@ -26,7 +24,6 @@ function Kpi({ label, value, tone }: { label: string; value: string; tone?: numb
 
 export default function App() {
   const [stats, setStats] = useState<Stats | null>(null)
-  const [funnel, setFunnel] = useState<{ paused: string | null; windows: FunnelWindow[] }>()
   const [tokens, setTokens] = useState<TokenRow[]>([])
   const [earnings, setEarnings] = useState<{ upcoming: EarningsRow[]; reported: EarningsRow[] }>()
   const [selected, setSelected] = useState<number | null>(null)
@@ -35,7 +32,6 @@ export default function App() {
 
   const refresh = useCallback(() => {
     api.stats().then(setStats).catch(console.error)
-    api.funnel().then(setFunnel).catch(console.error)
     api.tokens().then((d) => setTokens(d.usage)).catch(console.error)
     api.earnings().then(setEarnings).catch(console.error)
   }, [])
@@ -82,7 +78,6 @@ export default function App() {
             <Kpi label="Beat S&P" value={winRate != null ? `${winRate}%` : "—"} />
             <Kpi label="Avg vs S&P" value={avg != null ? fmtAlpha(avg) : "—"} tone={avg} />
             <Kpi label="AI today" value={burn > 0 ? `${Math.round(burn / 1000)}k` : "0"} />
-            {funnel?.paused && <Badge variant="destructive">PAUSED</Badge>}
             <button
               onClick={toggleTheme}
               aria-label="Toggle light / dark"

@@ -236,12 +236,6 @@ def _decode(row: dict) -> dict:
     return row
 
 
-def recent(limit: int = 50) -> list[dict]:
-    with _connect() as conn:
-        rows = conn.execute("SELECT * FROM picks ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
-    return [_decode(dict(r)) for r in rows]
-
-
 def get_pick(pick_id: int) -> Optional[dict]:
     with _connect() as conn:
         row = conn.execute("SELECT * FROM picks WHERE id = ?", (pick_id,)).fetchone()
@@ -352,12 +346,6 @@ def funnel_add(ingested: int, candidates: int, picked: int, skipped: int,
             " VALUES (?,?,?,?,?,?)",
             (_now(), ingested, candidates, picked, skipped, json.dumps(skip_reasons[:20])),
         )
-
-
-def funnel_recent(limit: int = 30) -> list[dict]:
-    with _connect() as conn:
-        rows = conn.execute("SELECT * FROM funnel ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
-    return [dict(r) for r in rows]
 
 
 def token_sink(role: str, model: str, tin: int, tout: int, decision_id: str | None) -> None:

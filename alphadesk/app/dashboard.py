@@ -88,11 +88,6 @@ def _process_age_s() -> float:
 # JSON API
 # ---------------------------------------------------------------------------
 
-@app.get("/api/picks")
-def api_picks(limit: int = 30):
-    return {"picks": store.recent(limit)}
-
-
 @app.get("/api/picks/{pick_id}")
 def api_pick(pick_id: int):
     pick = store.get_pick(pick_id)
@@ -104,12 +99,6 @@ def api_pick(pick_id: int):
 @app.get("/api/stats")
 def api_stats():
     return store.stats()
-
-
-@app.get("/api/funnel")
-def api_funnel(limit: int = 30):
-    from alphadesk.app import scheduler
-    return {"paused": scheduler.paused(), "windows": store.funnel_recent(limit)}
 
 
 @app.get("/api/tokens")
