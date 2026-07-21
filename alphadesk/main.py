@@ -75,7 +75,45 @@ async def _serve() -> None:
                 log.error("earnings refresh error: %s", exc)
             await asyncio.sleep(6 * 3600)   # 4×/day keeps upcoming + recent fresh
 
-    await asyncio.gather(_grader_loop(), _earnings_loop(), _web_server().serve())
+    async def _position_watch_loop():
+        """Paper-close open picks when price crosses their plan target/stop. NOT an
+        order — just a ledger exit stamped at the level (research/paper), so a hit
+        actually closes the position instead of only relabeling it in the live view.
+        Pure code (a crossed level is a fact); no LLM, no token cost."""
+        from alphadesk.config import session as market_session
+        from alphadesk.desk.plan import level_crossed
+        from alphadesk.ingest import prices
+        from alphadesk.ledger import store
+        loop = asyncio.get_running_loop()
+        log = logging.getLogger("alphadesk.watch")
+        while True:
+            try:
+                if market_session() != "CLOSED":   # prices only move in-session
+                    open_pos = await loop.run_in_executor(None, store.live_picks)
+                    monitorable = [p for p in open_pos
+                                   if p.get("plan_target") and p.get("plan_stop")]
+                    if monitorable:
+                        quotes = await loop.run_in_executor(
+                            None, prices.latest_prices, [p["symbol"] for p in monitorable])
+                        for p in monitorable:
+                            cur = quotes.get(p["symbol"].upper())
+                            if not cur:
+                                continue
+                            hit = level_crossed(p["direction"], cur,
+                                                p["plan_target"], p["plan_stop"])
+                            if hit:
+                                level = p["plan_target"] if hit == "target" else p["plan_stop"]
+                                label = "target hit" if hit == "target" else "stopped out"
+                                reason = f"{label} @ {cur} ({hit} {level})"
+                                await loop.run_in_executor(None, store.record_exit, p["id"], reason)
+                                log.info("Auto-exit #%d %s %s — %s",
+                                         p["id"], p["symbol"], p["direction"], reason)
+            except Exception as exc:
+                log.error("position watch error: %s", exc)
+            await asyncio.sleep(180)   # ~3 min; a hit closes the paper position
+
+    await asyncio.gather(_grader_loop(), _earnings_loop(),
+                         _position_watch_loop(), _web_server().serve())
 
 
 def main() -> None:

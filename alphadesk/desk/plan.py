@@ -62,6 +62,19 @@ def _coherent(direction: str, entry: float, target: float, stop: float,
     return True
 
 
+def level_crossed(direction: str, price: float, target: float, stop: float) -> str | None:
+    """Which committed plan level the current price has reached, if any: 'target',
+    'stop', or None. Pure arithmetic — a crossed level is a FACT that both the live
+    view and the position watcher key on (code owns physics/rails, not judgment),
+    so they share this one definition and can never disagree on what 'hit' means."""
+    up = direction == "LONG"
+    if (price >= target) if up else (price <= target):
+        return "target"
+    if (price <= stop) if up else (price >= stop):
+        return "stop"
+    return None
+
+
 def trade_plan(symbol: str, direction: str, horizon_days: int,
                price_ctx: dict | None, thesis: str,
                decision_id: str | None = None) -> dict | None:
