@@ -44,7 +44,7 @@ from alphadesk.desk import (
     scout,
     team,
 )
-from alphadesk.ingest import earnings, news, prices
+from alphadesk.ingest import earnings, news, prices, world
 from alphadesk.ledger import store
 from alphadesk.llm import LLMError
 
@@ -120,6 +120,37 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
     if drift:
         yield _ev("status", msg=f"{len(drift)} name(s) reported in the last "
                                 f"{EARNINGS_DRIFT_DAYS}d — added as post-earnings-drift candidates.")
+
+    # World-news desk — another CANDIDATE SOURCE parallel to the financial-news
+    # scan: GDELT surfaces geopolitical / supply / policy shocks (Iran, tariffs,
+    # port strikes, export bans) that Polygon's company-centric feed misses,
+    # mapped to exposed tradable names as HYPOTHESES the team must verify. Merged
+    # into the SAME pool so they flow through scout → team. Fail-open — a GDELT
+    # outage or 429 just yields nothing. Tracked in world_syms so these surfaced
+    # names get scout-window priority (like ripple candidates) and aren't
+    # truncated out by the window cap below.
+    world_syms: set[str] = set()
+    if not await _gone():
+        try:
+            _, world_cands = await loop.run_in_executor(None, world.poll)
+        except Exception as exc:
+            world_cands = {}
+            log.warning("World-news poll failed: %s", exc)
+        for wsym, w_arts in world_cands.items():
+            world_syms.add(wsym.upper())
+            bucket = candidates.setdefault(wsym, [])
+            bucket.extend(w_arts)
+            # dedup by id — a name may surface from both the financial and world feeds
+            seen = set()
+            deduped = []
+            for a in bucket:
+                if a.get("id") not in seen:
+                    seen.add(a.get("id"))
+                    deduped.append(a)
+            bucket[:] = deduped
+        if world_cands:
+            yield _ev("status", msg=f"World-news desk surfaced {len(world_cands)} "
+                                    "geopolitically-exposed name(s) (hypotheses to verify).")
 
     # Position review — BEFORE hunting new trades (and even in a quiet window),
     # re-check every still-open TAKE from earlier runs against current price +
@@ -247,12 +278,13 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
     # (post-earnings drift is the most-favored signal — never let the window cap
     # starve it), then ripple candidates (so the Connections desk's web-grounded
     # work is never truncated out), then everything else.
+    prioritized = ripple_syms | world_syms   # web-grounded / geopolitical hypotheses
     ordered = (
         [kv for kv in candidates.items() if kv[0] in earnings_syms]
         + [kv for kv in candidates.items()
-           if kv[0] in ripple_syms and kv[0] not in earnings_syms]
+           if kv[0] in prioritized and kv[0] not in earnings_syms]
         + [kv for kv in candidates.items()
-           if kv[0] not in ripple_syms and kv[0] not in earnings_syms]
+           if kv[0] not in prioritized and kv[0] not in earnings_syms]
     )
     window: dict[str, dict] = {}
     for sym, arts in ordered[:80]:

@@ -24,6 +24,7 @@ dedupes, filters junk domains, and validates tickers against the universe.
 import hashlib
 import logging
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import json as _json
@@ -131,11 +132,27 @@ def fetch_category(category: str, query: str, timespan: str = "1h",
     req = urllib.request.Request(
         f"{_DOC_API}?{params}", headers={"User-Agent": "alphadesk-research/0.1"}
     )
-    try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            payload = _json.loads(resp.read().decode("utf-8", errors="replace"))
-    except Exception as exc:
-        log.warning("GDELT fetch failed (%s): %s", category, exc)
+    # GDELT's DOC API throttles aggressively (HTTP 429). Without a retry a transient
+    # throttle silently zeroes out geopolitical ingestion (returns []), so back off
+    # and retry a couple of times on 429 before giving up. Any other error fails fast.
+    payload = None
+    for attempt in range(1, 4):
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                payload = _json.loads(resp.read().decode("utf-8", errors="replace"))
+            break
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429 and attempt < 3:
+                wait = 5.0 * attempt   # 5s, 10s
+                log.warning("GDELT 429 (%s) — backoff %.0fs (attempt %d/3)", category, wait, attempt)
+                time.sleep(wait)
+                continue
+            log.warning("GDELT fetch failed (%s): %s", category, exc)
+            return []
+        except Exception as exc:
+            log.warning("GDELT fetch failed (%s): %s", category, exc)
+            return []
+    if payload is None:
         return []
 
     out = []
