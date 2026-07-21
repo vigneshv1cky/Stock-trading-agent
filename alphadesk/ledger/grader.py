@@ -36,8 +36,9 @@ def _daily_history(symbol: str):
     return df
 
 
-def _entry_and_outcomes(row: dict, df, spy) -> dict | None:
-    """Compute gradable fields for one pick, or None if not yet gradable."""
+def _entry(row: dict, df):
+    """(entry_day, entry_price) for a pick, or None if not determinable yet.
+    Shared by the horizon grade and the MFE/MAE path so both anchor identically."""
     import pandas as pd
 
     decided = datetime.fromisoformat(row["ts"])
@@ -45,23 +46,49 @@ def _entry_and_outcomes(row: dict, df, spy) -> dict | None:
         decided = decided.replace(tzinfo=timezone.utc)
     decided_et = decided.astimezone(ET)
     decided_day = pd.Timestamp(decided_et).normalize()
-
     days = df.index.normalize().unique()
 
     if row["entry_price"] is not None:
-        entry_price = float(row["entry_price"])
-        entry_day_candidates = days[days <= decided_day]
-        if len(entry_day_candidates) == 0:
+        cand = days[days <= decided_day]
+        if len(cand) == 0:
             return None
-        entry_day = entry_day_candidates[-1]
-    else:
-        # decided while closed → enter at next trading day's open
-        future = days[days > decided_day] if decided_et.hour >= 16 or row["session"] == "CLOSED" \
-            else days[days >= decided_day]
-        if len(future) == 0:
-            return None
-        entry_day = future[0]
-        entry_price = float(df.loc[df.index.normalize() == entry_day, "Open"].iloc[0])
+        return cand[-1], float(row["entry_price"])
+    # decided while closed → enter at next trading day's open
+    future = days[days > decided_day] if decided_et.hour >= 16 or row["session"] == "CLOSED" \
+        else days[days >= decided_day]
+    if len(future) == 0:
+        return None
+    entry_day = future[0]
+    return entry_day, float(df.loc[df.index.normalize() == entry_day, "Open"].iloc[0])
+
+
+def _window_end(row: dict, days, entry_day):
+    """Trading day the hold window closes on: the exit day if exited early, else
+    the horizon day if reached, else the latest bar so far (running for open picks).
+    Clamped to horizon so an exit stamp never runs the window past it."""
+    import pandas as pd
+
+    after = days[days > entry_day]
+    horizon = int(row["horizon_days"])
+    horizon_day = after[horizon - 1] if len(after) >= horizon else None
+    if row.get("exit_ts"):
+        ex = datetime.fromisoformat(row["exit_ts"])
+        if ex.tzinfo is None:
+            ex = ex.replace(tzinfo=timezone.utc)
+        ex_day = pd.Timestamp(ex.astimezone(ET)).normalize()
+        cand = days[days <= ex_day]
+        end = cand[-1] if len(cand) else entry_day
+        return min(end, horizon_day) if horizon_day is not None else end
+    return horizon_day if horizon_day is not None else days[-1]
+
+
+def _entry_and_outcomes(row: dict, df, spy) -> dict | None:
+    """Compute gradable fields for one pick, or None if not yet gradable."""
+    days = df.index.normalize().unique()
+    ent = _entry(row, df)
+    if ent is None:
+        return None
+    entry_day, entry_price = ent
 
     after = days[days > entry_day]
 
@@ -114,14 +141,12 @@ def _entry_and_outcomes(row: dict, df, spy) -> dict | None:
 
 
 def grade_due() -> int:
-    """Grade all picks whose horizons have elapsed. Returns rows updated."""
+    """Grade all picks whose horizons have elapsed. Returns rows updated.
+    Also updates the MFE/MAE path (open + closed) and skip grades each pass."""
     _history_cache.clear()
-    due = store.due_for_grading()
-    if not due:
-        return 0
     spy = _daily_history("SPY")
     graded = 0
-    for row in due:
+    for row in store.due_for_grading():
         try:
             df = _daily_history(row["symbol"])
             if df is None:
@@ -139,7 +164,49 @@ def grade_due() -> int:
                 )
         except Exception as exc:
             log.warning("Grading failed for #%d %s: %s", row["id"], row["symbol"], exc)
+    grade_paths()   # refresh MFE/MAE (open + closed); a routine update, not a "grade"
     return graded + grade_skips()
+
+
+def grade_paths() -> int:
+    """MFE/MAE over each position's hold window from daily High/Low — how far it
+    ran in profit (max favorable) and how far underwater (max adverse) BEFORE it
+    closed. Direction-aware, % vs entry. Running for open picks (updates each pass),
+    frozen once exited or past horizon. Reuses the warm history cache; pure code."""
+    due = store.picks_for_path()
+    if not due:
+        return 0
+    updated = 0
+    for row in due:
+        try:
+            df = _daily_history(row["symbol"])
+            if df is None:
+                continue
+            ent = _entry(row, df)
+            if ent is None:
+                continue
+            entry_day, entry_price = ent
+            if not entry_price:
+                continue
+            days = df.index.normalize().unique()
+            end_day = _window_end(row, days, entry_day)
+            norm = df.index.normalize()
+            window = df[(norm >= entry_day) & (norm <= end_day)]
+            if window.empty:
+                continue
+            hi = float(window["High"].astype(float).max())
+            lo = float(window["Low"].astype(float).min())
+            if row["direction"] == "LONG":     # favorable = up, adverse = down
+                mfe, mae = (hi - entry_price), (lo - entry_price)
+            else:                              # SHORT: favorable = down, adverse = up
+                mfe, mae = (entry_price - lo), (entry_price - hi)
+            store.update_pick(row["id"],
+                              mfe_pct=round(mfe / entry_price * 100, 3),
+                              mae_pct=round(mae / entry_price * 100, 3))
+            updated += 1
+        except Exception as exc:
+            log.warning("Path grading failed for #%d %s: %s", row["id"], row["symbol"], exc)
+    return updated
 
 
 def grade_skips() -> int:

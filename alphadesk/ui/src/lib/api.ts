@@ -118,6 +118,8 @@ export interface TimelineEvent {
   exit_price: number | null
   exit_return_pct: number | null // realized return entry→exit (direction-aware)
   exit_alpha: number | null // realized alpha vs SPY over the hold, net friction
+  mfe_pct: number | null // max favorable excursion (peak profit) over the hold, % vs entry
+  mae_pct: number | null // max adverse excursion (worst drawdown) over the hold, % vs entry
   state: "open" | "graded" | "exited"
   current: number | null
   pnl_pct: number | null

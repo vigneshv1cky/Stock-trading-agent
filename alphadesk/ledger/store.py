@@ -63,7 +63,10 @@ CREATE TABLE IF NOT EXISTS picks (
     exit_reason     TEXT,
     exit_price      REAL,                          -- price at exit (target/stop hit or review)
     exit_return_pct REAL,                          -- realized return entry→exit (direction-aware)
-    exit_alpha      REAL                           -- realized alpha vs SPY over the hold, net friction
+    exit_alpha      REAL,                          -- realized alpha vs SPY over the hold, net friction
+    -- path while held: how far it ran / how far underwater BEFORE it closed
+    mfe_pct         REAL,                          -- max favorable excursion (peak profit), % vs entry
+    mae_pct         REAL                           -- max adverse excursion (worst drawdown), % vs entry
 );
 CREATE INDEX IF NOT EXISTS idx_picks_ts ON picks (ts);
 CREATE INDEX IF NOT EXISTS idx_picks_symbol ON picks (symbol);
@@ -173,7 +176,8 @@ def init() -> None:
         for col, decl in (("taken", "INTEGER NOT NULL DEFAULT 0"),
                           ("exit_ts", "TEXT"), ("exit_reason", "TEXT"),
                           ("exit_price", "REAL"), ("exit_return_pct", "REAL"),
-                          ("exit_alpha", "REAL")):
+                          ("exit_alpha", "REAL"), ("mfe_pct", "REAL"),
+                          ("mae_pct", "REAL")):
             try:
                 conn.execute(f"ALTER TABLE picks ADD COLUMN {col} {decl}")
             except sqlite3.OperationalError:
@@ -453,9 +457,25 @@ def recent_team_picks(days: int = 30) -> list[dict]:
             "SELECT id, ts, symbol, direction, horizon_days, edge, verdict, approved,"
             " adjusted_score, confidence, plan_entry, plan_target, plan_stop, plan_note,"
             " entry_price, spy_price, alpha_net, ret_horizon, graded_at, exit_ts, exit_reason,"
-            " exit_price, exit_return_pct, exit_alpha"
+            " exit_price, exit_return_pct, exit_alpha, mfe_pct, mae_pct"
             " FROM picks WHERE arm='TEAM' AND ts >= datetime('now', ?)"
             " ORDER BY symbol, id", (f"-{int(days)} days",),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def picks_for_path(days: int = 20) -> list[dict]:
+    """Positions to (re)compute MFE/MAE for: carry a plan, recent, and either
+    still open (running peak/trough) or closed but not yet path-graded. Idempotent
+    and bounded — open ones update each pass, closed ones compute once."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT id, ts, symbol, direction, horizon_days, session, entry_price,"
+            " low_liquidity, exit_ts, plan_entry, mfe_pct FROM picks"
+            " WHERE arm='TEAM' AND plan_entry IS NOT NULL"
+            "   AND ts >= datetime('now', ?)"
+            "   AND (mfe_pct IS NULL OR (graded_at IS NULL AND exit_ts IS NULL))",
+            (f"-{int(days)} days",),
         ).fetchall()
     return [dict(r) for r in rows]
 
