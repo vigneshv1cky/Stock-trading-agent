@@ -14,7 +14,7 @@ import threading
 import time
 from typing import Any, Optional
 
-from alphadesk.config import LOW_LIQUIDITY_DOLLAR_VOL
+from alphadesk.config import LOW_LIQUIDITY_DOLLAR_VOL, now_et
 
 log = logging.getLogger("alphadesk.prices")
 
@@ -40,6 +40,19 @@ def get_context(symbol: str) -> Optional[dict]:
         last = float(closes.iloc[-1])
         prev = float(closes.iloc[-2])
         avg_dollar_vol = float((closes * vols).tail(20).mean())
+        # Relative volume: the last COMPLETED session's volume vs its own recent
+        # norm — a confirmation/participation fact (is the news being acted on, or
+        # ignored?). We skip an in-progress bar: intraday, yfinance's latest daily
+        # bar is partial, so partial ÷ full-day norm reads misleadingly low for
+        # every name. Reference the prior completed session instead; baseline is the
+        # 20 sessions before it. Evidence the agents weigh, never a code threshold.
+        n = len(vols)
+        ref = n - 1
+        if df.index[-1].date() == now_et().date() and n > 1:
+            ref = n - 2   # current bar is live/partial — use the last closed session
+        base_vols = vols.iloc[max(0, ref - 20):ref]
+        base_vol = float(base_vols.mean()) if len(base_vols) else 0.0
+        rvol = round(float(vols.iloc[ref]) / base_vol, 2) if base_vol else None
         ctx = {
             "symbol": sym,
             "last_price": round(last, 4),
@@ -51,6 +64,7 @@ def get_context(symbol: str) -> Optional[dict]:
             "high_90d": round(float(closes.max()), 2),
             "low_90d": round(float(closes.min()), 2),
             "avg_dollar_vol": round(avg_dollar_vol),
+            "rvol": rvol,          # latest-session volume ÷ its 20-session norm
             "low_liquidity": avg_dollar_vol < LOW_LIQUIDITY_DOLLAR_VOL,
             "closes_10d": [round(float(c), 2) for c in closes.tail(10)],
         }

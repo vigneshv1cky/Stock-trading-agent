@@ -20,6 +20,12 @@ _SYSTEM = (
     "scarce attention.\n\n"
     "You receive a window of news-active symbols (headlines + sentiment + price "
     "context) and an FYI list of today's top movers.\n\n"
+    "Each symbol carries rvol — the latest session's volume divided by its own "
+    "20-session norm. >1 means unusually active (real participation confirming a "
+    "move); ~1 means the crowd hasn't engaged yet. It's evidence to weigh, not a "
+    "rule: pair it with price — a big price move ON high rvol is a confirmed, "
+    "acted-on catalyst, while a connected/spillover name still near 1× rvol is the "
+    "unmoved neighbor the repricing may be ahead of.\n\n"
     "PICK up to {max_picks} symbols that most merit full team analysis. "
     "STRONGLY favor post-earnings-drift setups — candidates tagged [EARNINGS] just "
     "reported a result; stocks tend to drift in the surprise direction for days "
@@ -75,6 +81,7 @@ def run_scout(window: dict[str, dict], movers: list[dict]) -> dict:
             "today_pct": price.get("change_today_pct"),
             "5d_pct": price.get("change_5d_pct"),
             "dollar_vol": price.get("avg_dollar_vol"),
+            "rvol": price.get("rvol"),
             "low_liquidity": price.get("low_liquidity"),
         }))
     from alphadesk.desk.team import false_negative_block
