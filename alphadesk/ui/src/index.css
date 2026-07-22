@@ -51,12 +51,12 @@
 }
 
 :root {
-    /* softened base: off-white instead of pure #fff, text eased off near-black */
-    --background: oklch(0.98 0 0);
+    /* softened base: off-white PAGE, but white cards so they still elevate above it */
+    --background: oklch(0.975 0 0);
     --foreground: oklch(0.22 0 0);
-    --card: oklch(0.995 0 0);
+    --card: oklch(1 0 0);
     --card-foreground: oklch(0.22 0 0);
-    --popover: oklch(0.995 0 0);
+    --popover: oklch(1 0 0);
     --popover-foreground: oklch(0.22 0 0);
     --primary: oklch(0.205 0 0);
     --primary-foreground: oklch(0.985 0 0);
