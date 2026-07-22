@@ -122,7 +122,7 @@ def exit_signal(direction: str, entry: float | None, cur: float | None,
     if peak_fav_pct >= EXIT_GIVEBACK_MIN_PEAK:
         fav = (cur - entry) / entry * 100 * (1 if up else -1)
         if fav <= peak_fav_pct * (1 - EXIT_GIVEBACK_FRAC):
-            return f"faded to +{fav:.1f}% from a +{peak_fav_pct:.1f}% peak"
+            return f"faded to {fav:+.1f}% from a +{peak_fav_pct:.1f}% peak"
     return None
 
 

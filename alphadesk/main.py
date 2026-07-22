@@ -133,11 +133,16 @@ async def _serve() -> None:
                                          p["id"], p["symbol"], p["direction"], reason,
                                          perf.get("exit_alpha"))
                                 continue
-                            # track the peak favorable move, then run the cheap screen
+                            # track the peak favorable move, then run the cheap screen.
+                            # Fold in the PERSISTED MFE (grade_paths, daily High/Low):
+                            # it survives restarts and catches intraday spikes between
+                            # 180s polls, so a position that already ran up still fires
+                            # give-back after a restart (e.g. PKE peaked +12% then faded).
                             if entry:
                                 up = p["direction"] == "LONG"
                                 fav = (cur - entry) / entry * 100 * (1 if up else -1)
-                                peak_fav[p["id"]] = max(peak_fav.get(p["id"], fav), fav)
+                                peak_fav[p["id"]] = max(
+                                    peak_fav.get(p["id"], 0.0), p.get("mfe_pct") or 0.0, fav)
                             flag = exit_signal(p["direction"], entry, cur,
                                                p["plan_target"], p["plan_stop"],
                                                peak_fav.get(p["id"], 0.0))

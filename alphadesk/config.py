@@ -99,7 +99,7 @@ REPICK_COOLDOWN_HOURS = int(os.environ.get("REPICK_COOLDOWN_HOURS", "24"))  # do
 # exceeded its implied move) gets closed before the gain decays. Tunable/removable;
 # the reviewer is the real filter, so err toward escalating.
 EXIT_NEAR_TARGET_FRAC = float(os.environ.get("EXIT_NEAR_TARGET_FRAC", "0.85"))  # ≥ this much of the entry→target move captured → ask "take it now?"
-EXIT_GIVEBACK_MIN_PEAK = float(os.environ.get("EXIT_GIVEBACK_MIN_PEAK", "2.0"))  # only watch give-back once the favorable move peaked above this %
+EXIT_GIVEBACK_MIN_PEAK = float(os.environ.get("EXIT_GIVEBACK_MIN_PEAK", "4.0"))  # only watch give-back once the favorable move peaked above this % (below this is intraday noise, not a spent thesis)
 EXIT_GIVEBACK_FRAC = float(os.environ.get("EXIT_GIVEBACK_FRAC", "0.40"))         # faded ≥ this fraction of that peak → the MFE-decay flag
 EXIT_REVIEW_COOLDOWN_S = int(os.environ.get("EXIT_REVIEW_COOLDOWN_S", "1800"))   # don't re-review the same open position more often than this
 
