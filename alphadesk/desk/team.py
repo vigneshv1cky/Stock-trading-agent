@@ -220,9 +220,11 @@ def calibration_block(stats: dict, min_samples: int = CALIB_MIN_SAMPLES) -> str:
 def researcher_case(symbol: str, triage_reason: str, briefs: list[dict],
                    history: list[dict], decision_id: str | None,
                    calibration: str = "") -> dict:
+    from alphadesk.config import market_context_line
     calib = f"{calibration}\n\n" if calibration else ""
     user = (
         f"Symbol: {symbol}\nTriage rationale: {triage_reason}\n\n"
+        f"{market_context_line()}\n\n"
         f"{calib}{_memory_block(history)}\n\nSpecialist briefs:\n{_briefs_block(briefs)}"
     )
     return call_role("researcher", _ANALYST_SYSTEM, user, schema=_THESIS_SCHEMA,
@@ -316,6 +318,7 @@ def head_ranking(opportunities: list[dict], decision_id: str | None) -> dict:
 def judge_verdict(symbol: str, thesis: dict, concerns: list[dict], counter: dict,
                     rebuttal: dict, fact_flags: list[str],
                     decision_id: str | None) -> dict:
+    from alphadesk.config import market_context_line
     fn = false_negative_block()
     critic_call = {
         "stance": counter.get("stance", "SUPPORT"),
@@ -324,6 +327,7 @@ def judge_verdict(symbol: str, thesis: dict, concerns: list[dict], counter: dict
     }
     user = (
         (f"{fn}\n\n" if fn else "")
+        + market_context_line() + "\n\n"
         + f"Symbol: {symbol}\n"
         f"THESIS: {json.dumps(thesis)}\n"
         f"CRITIC CONCERNS: {json.dumps(concerns)}\n"

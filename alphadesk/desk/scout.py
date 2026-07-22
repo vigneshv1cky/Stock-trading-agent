@@ -84,10 +84,12 @@ def run_scout(window: dict[str, dict], movers: list[dict]) -> dict:
             "rvol": price.get("rvol"),
             "low_liquidity": price.get("low_liquidity"),
         }))
+    from alphadesk.config import market_context_line
     from alphadesk.desk.team import false_negative_block
     fn = false_negative_block()
     user = (
-        (f"{fn}\n\n" if fn else "")
+        market_context_line() + "\n\n"
+        + (f"{fn}\n\n" if fn else "")
         + "Candidate window:\n" + wrap_data("candidates", "\n".join(lines))
         + "\n\nToday's top movers (FYI ranking — investigate only if you judge it worthwhile):\n"
         + wrap_data("movers", json.dumps(movers) if movers else "unavailable")

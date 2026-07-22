@@ -347,6 +347,32 @@ def moves_since_report(items: list[dict], ttl: int = 300) -> dict[str, Optional[
     return out
 
 
+def fill_opens(items: list[dict]) -> dict[int, float]:
+    """The OPEN price on each pick's fill day — the real Model-A entry once the 9:30
+    open has passed. items: [{id, symbol, fill_date 'YYYY-MM-DD'}]. Returns {id: open}
+    for those whose fill day has traded; one batched daily download, best-effort."""
+    syms = sorted({i["symbol"] for i in items})
+    out: dict[int, float] = {}
+    if not syms:
+        return out
+    try:
+        import yfinance as yf
+        df = yf.download(syms, period="12d", interval="1d", group_by="ticker",
+                         progress=False, threads=True, auto_adjust=True)
+        for i in items:
+            try:
+                sub = df[i["symbol"]] if len(syms) > 1 else df
+                opens = sub["Open"].dropna()
+                vals = opens[opens.index.strftime("%Y-%m-%d") == i["fill_date"]]
+                if len(vals):
+                    out[int(i["id"])] = round(float(vals.iloc[0]), 4)
+            except Exception:
+                continue
+    except Exception as exc:
+        log.debug("fill_opens download failed: %s", exc)
+    return out
+
+
 def latest_prices(symbols: list[str]) -> dict[str, float]:
     """Real-time last-trade prices, batched in one Alpaca call (fallback: the
     cached yfinance context per missing symbol). For live position tracking."""

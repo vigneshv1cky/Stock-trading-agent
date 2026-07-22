@@ -87,7 +87,7 @@ async def _serve() -> None:
             per position (EXIT_REVIEW_COOLDOWN_S) so it can't spam the model."""
         import time as _time
 
-        from alphadesk.config import EXIT_REVIEW_COOLDOWN_S
+        from alphadesk.config import EXIT_REVIEW_COOLDOWN_S, entry_fill_time, now_et
         from alphadesk.config import session as market_session
         from alphadesk.desk import review
         from alphadesk.desk.plan import exit_signal, level_crossed, realized_exit
@@ -101,6 +101,23 @@ async def _serve() -> None:
             try:
                 if market_session() == "OPEN":   # Model A: only fill/exit in regular hours (skip thin pre/after-market)
                     open_pos = await loop.run_in_executor(None, store.live_picks)
+                    # Model A backfill: once a closed-market pick's 9:30 open has passed,
+                    # stamp its real fill price (that open) so live P&L / exits measure
+                    # from the fill, not the stale pre-open plan level.
+                    now = now_et()
+                    unfilled = [p for p in open_pos if p.get("entry_price") is None
+                                and (ft := entry_fill_time(p["ts"], p.get("session"))) and ft <= now]
+                    if unfilled:
+                        items = [{"id": p["id"], "symbol": p["symbol"],
+                                  "fill_date": entry_fill_time(p["ts"], p["session"]).strftime("%Y-%m-%d")}
+                                 for p in unfilled]
+                        opens = await loop.run_in_executor(None, prices.fill_opens, items)
+                        for p in open_pos:
+                            if p["id"] in opens:
+                                px = opens[p["id"]]
+                                await loop.run_in_executor(
+                                    None, lambda i=p["id"], x=px: store.set_entry_price(i, x))
+                                p["entry_price"] = px   # use it this pass too
                     monitorable = [p for p in open_pos
                                    if p.get("plan_target") and p.get("plan_stop")]
                     live_ids = {p["id"] for p in open_pos}

@@ -143,6 +143,40 @@ def next_market_open(dt: datetime) -> datetime:
     return open_at(d)
 
 
+def market_context() -> dict:
+    """The market clock, as facts for the agents — so they decide direction for a
+    fill at the RIGHT moment and weigh what has already traded in extended hours.
+    Model A: a call made off-hours fills at the next regular 9:30 open, so the
+    tradeable move is the drift FROM that open (the overnight/after-hours gap is
+    already gone). is_open lets the agents distinguish 'act now' from 'act at the
+    open'."""
+    now = now_et()
+    sess = session(now)
+    nxt = next_market_open(now)
+    return {
+        "session": sess,
+        "is_open": sess == "OPEN",
+        "now_et": now.strftime("%a %Y-%m-%d %H:%M ET"),
+        "fills_at": "now (market open)" if sess == "OPEN"
+        else nxt.strftime("%a %Y-%m-%d 09:30 ET"),
+        "hours_to_open": 0.0 if sess == "OPEN"
+        else round((nxt - now).total_seconds() / 3600, 1),
+    }
+
+
+def market_context_line() -> str:
+    """One-line market-clock note for agent prompts."""
+    m = market_context()
+    if m["is_open"]:
+        return (f"Market clock: OPEN now ({m['now_et']}). A committed call can be "
+                "acted on immediately at the current price.")
+    return (f"Market clock: CLOSED/extended-hours now ({m['now_et']}). Under regular-hours "
+            f"trading a committed call FILLS at the next open ({m['fills_at']}, ~{m['hours_to_open']}h away) "
+            "— so judge the tradeable move as the drift FROM that open, weighing how much of "
+            "the reaction has ALREADY happened in extended hours since the catalyst (a move "
+            "largely spent overnight leaves little to capture at the open).")
+
+
 def entry_fill_time(ts_iso: str, sess: str | None) -> datetime | None:
     """When a pick actually FILLS under Model A (regular hours): the decision time
     if the market was open, else the next 9:30 regular open. This is the honest

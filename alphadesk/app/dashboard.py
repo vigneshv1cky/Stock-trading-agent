@@ -214,7 +214,9 @@ def api_live():
     out = []
     for p in picks:
         cur = quotes.get(p["symbol"].upper())
-        entry, target, stop = p["plan_entry"], p["plan_target"], p["plan_stop"]
+        # once filled, P&L measures from the real fill (entry_price); until then the
+        # plan level is the best estimate. Model A: closed-market fills at the open.
+        entry, target, stop = p.get("entry_price") or p["plan_entry"], p["plan_target"], p["plan_stop"]
         fill = entry_fill_time(p["ts"], p.get("session"))   # honest entry (9:30 open if decided off-hours)
         row = dict(p, current=cur, pnl_pct=None, progress=None, status="no quote",
                    entry_ts=(fill.isoformat() if fill else p["ts"]),
@@ -286,7 +288,7 @@ def api_timelines(days: int = 30):
                       current=None, pnl_pct=None, status=None, alpha_so_far=None)
             if state == "open":
                 cur = quotes.get(sym.upper())
-                entry, target, stop = e["plan_entry"], e["plan_target"], e["plan_stop"]
+                entry, target, stop = e.get("entry_price") or e["plan_entry"], e["plan_target"], e["plan_stop"]
                 ev["current"] = cur
                 ev["alpha_so_far"] = _alpha_so_far(e["direction"], entry, cur,
                                                    e.get("spy_price"), spy_now)

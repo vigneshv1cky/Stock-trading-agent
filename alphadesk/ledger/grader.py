@@ -37,29 +37,40 @@ def _daily_history(symbol: str):
 
 
 def _entry(row: dict, df):
-    """(entry_day, entry_price) for a pick, or None if not determinable yet.
-    Shared by the horizon grade and the MFE/MAE path so both anchor identically."""
+    """(entry_day, entry_price) for a pick, or None if not determinable yet. Shared
+    by the horizon grade and the MFE/MAE path so both anchor identically. Uses the
+    Model-A fill clock (config.entry_fill_time) so a call fills at the next REGULAR
+    open — e.g. a pre-dawn (3am) call enters THAT day's 9:30, not a day late."""
     import pandas as pd
 
-    decided = datetime.fromisoformat(row["ts"])
-    if decided.tzinfo is None:
-        decided = decided.replace(tzinfo=timezone.utc)
-    decided_et = decided.astimezone(ET)
-    decided_day = pd.Timestamp(decided_et).normalize()
+    from alphadesk.config import entry_fill_time
+
     days = df.index.normalize().unique()
 
-    if row["entry_price"] is not None:
+    # OPEN-session picks filled LIVE at the decision (entry_price stamped then).
+    if row["session"] == "OPEN" and row["entry_price"] is not None:
+        decided = datetime.fromisoformat(row["ts"])
+        if decided.tzinfo is None:
+            decided = decided.replace(tzinfo=timezone.utc)
+        decided_day = pd.Timestamp(decided.astimezone(ET)).normalize()
         cand = days[days <= decided_day]
         if len(cand) == 0:
             return None
         return cand[-1], float(row["entry_price"])
-    # decided while closed → enter at next trading day's open
-    future = days[days > decided_day] if decided_et.hour >= 16 or row["session"] == "CLOSED" \
-        else days[days >= decided_day]
+    # closed-market decision → fills at the next regular 9:30 open (Model A). Use the
+    # backfilled entry_price (= that open, stamped by the watcher) if present, else the
+    # bar's open — both are the same fill price, so grade and live P&L stay consistent.
+    fill = entry_fill_time(row["ts"], row["session"])
+    if fill is None:
+        return None
+    fill_day = pd.Timestamp(fill).normalize()
+    future = days[days >= fill_day]
     if len(future) == 0:
         return None
     entry_day = future[0]
-    return entry_day, float(df.loc[df.index.normalize() == entry_day, "Open"].iloc[0])
+    px = (float(row["entry_price"]) if row["entry_price"] is not None
+          else float(df.loc[df.index.normalize() == entry_day, "Open"].iloc[0]))
+    return entry_day, px
 
 
 def _window_end(row: dict, days, entry_day):

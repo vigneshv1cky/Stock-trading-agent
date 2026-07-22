@@ -571,6 +571,16 @@ def live_picks() -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def set_entry_price(pick_id: int, price: float) -> None:
+    """Stamp the actual FILL price on a closed-market pick once its 9:30 open has
+    passed (Model A). Only fills a still-NULL entry_price, so live P&L / exits and
+    the grade all measure from the same real open price."""
+    with _lock, _connect() as conn:
+        conn.execute(
+            "UPDATE picks SET entry_price=? WHERE id=? AND entry_price IS NULL",
+            (round(float(price), 4), int(pick_id)))
+
+
 def record_exit(pick_id: int, reason: str, exit_price: float | None = None,
                 exit_return_pct: float | None = None,
                 exit_alpha: float | None = None) -> None:
