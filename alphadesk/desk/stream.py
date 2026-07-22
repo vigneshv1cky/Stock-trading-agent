@@ -98,37 +98,48 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
     async def _gone() -> bool:
         return bool(is_disconnected and await is_disconnected())
 
-    yield _ev("status", msg=f"Scanning the last {int(hours)}h of world + financial news…")
+    yield _ev("status", msg="Reading the earnings calendar, then recent financial news…")
     since = datetime.now(timezone.utc).timestamp() - hours * 3600
     from datetime import datetime as _dt
     since_dt = _dt.fromtimestamp(since, tz=timezone.utc)
-    # The earnings calendar (already cached, free, high-signal) is a first-class
-    # candidate source — a news-scan failure must NOT waste it. So news is fail-soft:
-    # on error we proceed on earnings drift (and world, if enabled) alone.
-    try:
-        n, candidates = await loop.run_in_executor(None, news.poll, since_dt)
-    except Exception as exc:
-        n, candidates = 0, {}
-        log.warning("News scan failed (%s) — proceeding on the earnings calendar", exc)
-        yield _ev("status", msg=f"News scan failed ({exc}) — running on earnings drift instead.")
-    await loop.run_in_executor(None, store.record_ingest, "FINANCIAL", n, len(candidates))
 
-    # Earnings drift — a CANDIDATE SOURCE parallel to the news scan: names that
-    # reported in the last few days are first-class candidates (the desk's cleanest
-    # MOMENTUM edge). ingest/earnings shapes the calendar rows into synthetic
-    # [EARNINGS] articles; we merge them into the SAME pool so they flow through the
-    # same scout → team pipeline. Tracked in earnings_syms so the flagship signal
-    # gets front-of-line priority against the scout-window cap below.
+    # Earnings drift FIRST — the cached calendar is the PRIMARY candidate source:
+    # free, high-signal, and the desk's cleanest edge (post-earnings drift). Gather
+    # it before the slower, failure-prone news scan so it always leads. ingest/
+    # earnings shapes the calendar rows into synthetic [EARNINGS] articles that flow
+    # through the same scout → team pipeline; earnings_syms gives them front-of-line
+    # priority against the scout-window cap below.
+    candidates: dict[str, list[dict]] = {}
     earnings_syms: set[str] = set()
     if await _gone():
         return
     drift = await loop.run_in_executor(None, earnings.drift_candidates, EARNINGS_DRIFT_DAYS)
     for esym, e_arts in drift.items():
         earnings_syms.add(esym.upper())
-        bucket = candidates.setdefault(esym, [])
-        bucket[:0] = e_arts        # earnings article first
-        # Anti-double-dip: the name may also have surfaced in the news scan on the
-        # SAME earnings story — dedup by id so it's never counted twice.
+        candidates[esym] = list(e_arts)   # earnings article(s) lead the bucket
+    if drift:
+        await loop.run_in_executor(None, store.record_ingest, "EARNINGS",
+                                   sum(len(a) for a in drift.values()), len(drift))
+        yield _ev("status", msg=f"{len(drift)} name(s) reported in the last "
+                                f"{EARNINGS_DRIFT_DAYS}d — post-earnings-drift candidates (primary signal).")
+
+    # Financial news — merged in AFTER earnings so the calendar leads. Fail-soft: a
+    # news error just means we run on earnings drift (and world, if enabled) alone.
+    if await _gone():
+        return
+    yield _ev("status", msg=f"Scanning the last {int(hours)}h of financial news…")
+    try:
+        n, news_cands = await loop.run_in_executor(None, news.poll, since_dt)
+    except Exception as exc:
+        n, news_cands = 0, {}
+        log.warning("News scan failed (%s) — proceeding on the earnings calendar", exc)
+        yield _ev("status", msg=f"News scan failed ({exc}) — running on earnings drift.")
+    await loop.run_in_executor(None, store.record_ingest, "FINANCIAL", n, len(news_cands))
+    for sym, arts in news_cands.items():
+        bucket = candidates.setdefault(sym, [])
+        bucket.extend(arts)        # earnings article (if any) stays first
+        # Anti-double-dip: a name may surface in both feeds on the SAME story —
+        # dedup by id so it's never counted twice.
         seen: set = set()
         deduped = []
         for a in bucket:
@@ -136,11 +147,6 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
                 seen.add(a.get("id"))
                 deduped.append(a)
         bucket[:] = deduped
-    if drift:
-        await loop.run_in_executor(None, store.record_ingest, "EARNINGS",
-                                   sum(len(a) for a in drift.values()), len(drift))
-        yield _ev("status", msg=f"{len(drift)} name(s) reported in the last "
-                                f"{EARNINGS_DRIFT_DAYS}d — added as post-earnings-drift candidates.")
 
     # World-news desk — OFF by default (WORLD_MAX_CATEGORIES=0): GDELT 429-throttles
     # hard and its enrichment dominated run time, and the button flow ran fine on
