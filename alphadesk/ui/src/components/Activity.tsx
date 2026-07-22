@@ -1,5 +1,13 @@
 import { useEffect, useState } from "react"
 import { api, fmtAlpha, type SourceStat, type TokenRow } from "@/lib/api"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
 
 function fmtTok(n: number) {
   return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n)
@@ -20,32 +28,35 @@ function BySource() {
       {sources.length === 0 ? (
         <p className="text-sm text-muted-foreground">No source data yet — run Find Trades.</p>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                <th className="pb-1 text-left font-medium">source</th>
-                <th className="pb-1 text-right font-medium">arts</th>
-                <th className="pb-1 text-right font-medium">tokens</th>
-                <th className="pb-1 text-right font-medium">picks</th>
-                <th className="pb-1 text-right font-medium">vs S&amp;P</th>
-              </tr>
-            </thead>
-            <tbody>
+        <div>
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                {["source", "arts", "tokens", "picks", "vs S&P"].map((h, i) => (
+                  <TableHead
+                    key={h}
+                    className={`h-auto pb-1 text-[10px] uppercase tracking-wider ${i === 0 ? "" : "text-right"}`}
+                  >
+                    {h}
+                  </TableHead>
+                ))}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {sources.map((s) => (
-                <tr key={s.source} className="border-t border-border/50">
-                  <td className="py-1.5 font-medium">{s.source}</td>
-                  <td className="py-1.5 text-right tabular-nums text-muted-foreground">
+                <TableRow key={s.source} className="border-border/50">
+                  <TableCell className="py-1.5 font-medium">{s.source}</TableCell>
+                  <TableCell className="py-1.5 text-right tabular-nums text-muted-foreground">
                     {s.articles || "—"}
-                  </td>
-                  <td className="py-1.5 text-right tabular-nums text-muted-foreground">
+                  </TableCell>
+                  <TableCell className="py-1.5 text-right tabular-nums text-muted-foreground">
                     {s.tokens ? fmtTok(s.tokens) : "—"}
-                  </td>
-                  <td className="py-1.5 text-right tabular-nums">
+                  </TableCell>
+                  <TableCell className="py-1.5 text-right tabular-nums">
                     {s.picks}
                     {s.graded > 0 && <span className="text-muted-foreground"> ({s.graded}g)</span>}
-                  </td>
-                  <td
+                  </TableCell>
+                  <TableCell
                     className={`py-1.5 text-right font-mono tabular-nums ${
                       s.avg_alpha == null
                         ? "text-muted-foreground"
@@ -55,11 +66,11 @@ function BySource() {
                     }`}
                   >
                     {s.avg_alpha == null ? "—" : fmtAlpha(s.avg_alpha)}
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
           <p className="mt-2 text-[10px] text-muted-foreground">
             tokens = ingestion + debate for that channel · (Ng) = graded so far ·
             “—” = not tracked (arts count from new runs only)

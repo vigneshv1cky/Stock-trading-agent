@@ -2,6 +2,12 @@ import { useState, type ReactNode } from "react"
 import { ChevronDown } from "lucide-react"
 import type { EarningsRow } from "@/lib/api"
 import { InfoTip } from "@/components/InfoTip"
+import { Badge } from "@/components/ui/badge"
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
 
 function Panel({
   title,
@@ -19,44 +25,52 @@ function Panel({
   count?: number
 }) {
   const [open, setOpen] = useState(defaultOpen)
-  const show = !collapsible || open
+  if (collapsible && title) {
+    // controlled Collapsible: keeps the exact chevron/count/sub look while adding
+    // the animated height reveal + aria-expanded/controls for free.
+    return (
+      <Collapsible
+        open={open}
+        onOpenChange={setOpen}
+        className="rounded-lg border border-border bg-card p-4"
+      >
+        <CollapsibleTrigger
+          render={
+            <button className="group -mx-1 flex w-full items-center gap-2 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-muted/40" />
+          }
+        >
+          <span className="text-xs font-semibold uppercase tracking-wider text-foreground/75">
+            {title}
+          </span>
+          {count != null && (
+            <Badge variant="secondary" className="tabular-nums">
+              {count}
+            </Badge>
+          )}
+          <ChevronDown
+            className={`ml-auto h-4 w-4 shrink-0 text-muted-foreground/70 transition-transform group-hover:text-foreground ${
+              open ? "" : "-rotate-90"
+            }`}
+          />
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          {sub && <div className="mb-2 mt-1 px-1 text-[11px] text-muted-foreground">{sub}</div>}
+          {children}
+        </CollapsibleContent>
+      </Collapsible>
+    )
+  }
   return (
     <div className="rounded-lg border border-border bg-card p-4">
-      {title &&
-        (collapsible ? (
-          <div className={show ? "mb-2" : ""}>
-            <button
-              onClick={() => setOpen((o) => !o)}
-              className="group -mx-1 flex w-full items-center gap-2 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-muted/40"
-              aria-expanded={open}
-            >
-              <span className="text-xs font-semibold uppercase tracking-wider text-foreground/75">
-                {title}
-              </span>
-              {count != null && (
-                <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold tabular-nums text-muted-foreground">
-                  {count}
-                </span>
-              )}
-              <ChevronDown
-                className={`ml-auto h-4 w-4 shrink-0 text-muted-foreground/70 transition-transform group-hover:text-foreground ${
-                  open ? "" : "-rotate-90"
-                }`}
-              />
-            </button>
-            {sub && open && (
-              <div className="mt-1 px-1 text-[11px] text-muted-foreground">{sub}</div>
-            )}
+      {title && (
+        <div className="mb-2">
+          <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            {title}
           </div>
-        ) : (
-          <div className="mb-2">
-            <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              {title}
-            </div>
-            {sub && <div className="text-[11px] text-muted-foreground">{sub}</div>}
-          </div>
-        ))}
-      {show && children}
+          {sub && <div className="text-[11px] text-muted-foreground">{sub}</div>}
+        </div>
+      )}
+      {children}
     </div>
   )
 }
