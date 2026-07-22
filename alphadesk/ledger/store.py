@@ -688,7 +688,12 @@ def recently_reported(days: int = 3) -> list[dict]:
             "SELECT symbol, report_date, session, eps_estimate, eps_actual, surprise_pct"
             " FROM earnings WHERE eps_actual IS NOT NULL"
             "   AND report_date >= date('now', ?) AND report_date <= date('now')"
-            " ORDER BY report_date DESC", (f"-{int(days)} days",),
+            # recency of RELEASE: newest day first, then within a day latest-released
+            # first (AMC=evening > DAY > BMO=morning) — also the freshest drift.
+            " ORDER BY report_date DESC,"
+            "   CASE session WHEN 'AMC' THEN 2 WHEN 'DAY' THEN 1 ELSE 0 END DESC,"
+            "   surprise_pct DESC",
+            (f"-{int(days)} days",),
         ).fetchall()
     return [dict(r) for r in rows]
 
