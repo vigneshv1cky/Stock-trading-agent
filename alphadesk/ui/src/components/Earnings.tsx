@@ -1,18 +1,59 @@
-import type { ReactNode } from "react"
+import { useState, type ReactNode } from "react"
+import { ChevronRight } from "lucide-react"
 import type { EarningsRow } from "@/lib/api"
 
-function Panel({ title, sub, children }: { title?: string; sub?: string; children: ReactNode }) {
+function Panel({
+  title,
+  sub,
+  children,
+  collapsible = false,
+  defaultOpen = true,
+  count,
+}: {
+  title?: string
+  sub?: string
+  children: ReactNode
+  collapsible?: boolean
+  defaultOpen?: boolean
+  count?: number
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  const show = !collapsible || open
   return (
     <div className="rounded-lg border border-border bg-card p-4">
-      {title && (
-        <div className="mb-2">
-          <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            {title}
+      {title &&
+        (collapsible ? (
+          <button
+            onClick={() => setOpen((o) => !o)}
+            className="flex w-full items-center gap-2 text-left"
+            aria-expanded={open}
+          >
+            <ChevronRight
+              className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${
+                open ? "rotate-90" : ""
+              }`}
+            />
+            <div className={`min-w-0 flex-1 ${show ? "mb-2" : ""}`}>
+              <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                {title}
+                {count != null && (
+                  <span className="ml-1.5 font-normal normal-case text-muted-foreground">
+                    ({count})
+                  </span>
+                )}
+              </div>
+              {sub && open && <div className="text-[11px] text-muted-foreground">{sub}</div>}
+            </div>
+          </button>
+        ) : (
+          <div className="mb-2">
+            <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              {title}
+            </div>
+            {sub && <div className="text-[11px] text-muted-foreground">{sub}</div>}
           </div>
-          {sub && <div className="text-[11px] text-muted-foreground">{sub}</div>}
-        </div>
-      )}
-      {children}
+        ))}
+      {show && children}
     </div>
   )
 }
@@ -68,7 +109,13 @@ export function Earnings({
   return (
     <div className="space-y-3">
       {earnings.reported.length > 0 && (
-        <Panel title="Just reported" sub="grouped by report day — move since the report (the drift so far)">
+        <Panel
+          title="Just reported"
+          sub="grouped by report day — move since the report (the drift so far)"
+          collapsible
+          defaultOpen={false}
+          count={earnings.reported.length}
+        >
           <div className="mb-2 flex items-center gap-2 border-b border-border pb-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
             <span className="w-16">Symbol</span>
             <span className="w-14">Cap</span>
