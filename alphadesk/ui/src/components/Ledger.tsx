@@ -175,7 +175,7 @@ function SymbolCard({ s, onSelect }: { s: SymbolTimeline; onSelect: (id: number)
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-semibold">{s.symbol}</span>
         <StanceBadge current={s.current} exit={exit} />
-        {s.changed && (
+        {s.changed && s.current !== "EXITED" && (
           <Badge className="gap-1 bg-fuchsia-500/15 font-semibold text-fuchsia-600 dark:text-fuchsia-400">
             <RotateCcw className="h-2.5 w-2.5" /> changed
           </Badge>
