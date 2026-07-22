@@ -191,7 +191,8 @@ def _validate(spec: dict, data: Any, path: str = "") -> list[str]:
                 data[field] = value.upper()
         if isinstance(value, list):
             if "maxitems" in rules and len(value) > rules["maxitems"]:
-                errors.append(f"{loc}: {len(value)} items > max {rules['maxitems']}")
+                value = value[: rules["maxitems"]]   # truncate (a cap), don't re-ask
+                data[field] = value
             item_spec = rules.get("items")
             if item_spec:
                 for i, item in enumerate(value):

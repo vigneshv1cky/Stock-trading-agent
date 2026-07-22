@@ -102,7 +102,9 @@ _WORLD_SCHEMA = {
             "i": {"type": int, "min": 1, "max": _BATCH},
             "relevant": {"type": bool},
             "reason": {"type": str, "maxlen": 200},
-            "event_type": {"type": str, "optional": True, "enum": list(QUERY_TAXONOMY)},
+            # not enum-validated: an off-taxonomy value (e.g. "COMPANY") falls back
+            # to the query category in assess() — no costly re-ask over a label.
+            "event_type": {"type": str, "optional": True, "maxlen": 40},
             "magnitude": {"type": str, "optional": True, "enum": ["MINOR", "NOTABLE", "MAJOR"]},
             "themes": {"type": list, "optional": True, "maxitems": 4},  # list of strings
             "exposures": {
