@@ -18,19 +18,22 @@ export function RightRail({
 }) {
   // Base UI Tabs: keyboard arrow-nav, roving focus, and ARIA roles for free;
   // inactive panels unmount, so each tab's data loads only when it's the view.
+  // Active tab = indigo pill (the app's brand accent), matching the prior look.
+  const trigger =
+    "px-3 text-sm data-active:bg-indigo-600 data-active:text-white dark:data-active:border-transparent dark:data-active:bg-indigo-600 dark:data-active:text-white"
   return (
     <Tabs defaultValue="live" className="gap-4">
       <TabsList className="h-9 bg-card p-1">
-        <TabsTrigger value="live" className="px-3 text-sm">
+        <TabsTrigger value="live" className={trigger}>
           Live
         </TabsTrigger>
-        <TabsTrigger value="record" className="px-3 text-sm">
+        <TabsTrigger value="record" className={trigger}>
           Track record
         </TabsTrigger>
-        <TabsTrigger value="calendar" className="px-3 text-sm">
+        <TabsTrigger value="calendar" className={trigger}>
           Calendar
         </TabsTrigger>
-        <TabsTrigger value="usage" className="px-3 text-sm">
+        <TabsTrigger value="usage" className={trigger}>
           Usage
         </TabsTrigger>
       </TabsList>
