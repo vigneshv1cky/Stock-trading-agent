@@ -693,6 +693,21 @@ def recently_reported(days: int = 3) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def earnings_window(days_back: int = 4, days_fwd: int = 14) -> list[dict]:
+    """All calendar rows in [today-days_back, today+days_fwd] — reported AND
+    upcoming, NOT gated on eps_actual. For the time-aware Calendar view, which
+    splits reported/upcoming by when the report is public (see earnings.reported_public),
+    not by whether Nasdaq has backfilled the actual EPS yet."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT symbol, report_date, session, eps_estimate, eps_actual, surprise_pct,"
+            " market_cap FROM earnings"
+            " WHERE report_date >= date('now', ?) AND report_date <= date('now', ?)"
+            " ORDER BY report_date", (f"-{int(days_back)} days", f"+{int(days_fwd)} days"),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def upcoming_earnings(days: int = 7) -> list[dict]:
     """Companies REPORTING in the next `days` — the 'be ready' watch."""
     with _connect() as conn:

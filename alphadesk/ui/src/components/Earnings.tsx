@@ -25,23 +25,24 @@ function fmtCap(v?: number | null): string {
   return `$${Math.round(v)}`
 }
 
-function runDayLabel(runDay: string): string {
-  const d = new Date(`${runDay}T12:00:00`) // noon avoids TZ date-rollover
+function dayLabel(day: string): string {
+  const d = new Date(`${day}T12:00:00`) // noon avoids TZ date-rollover
   const wd = d.toLocaleDateString("en-US", { weekday: "short" })
-  return `${wd} ${runDay.slice(5)}`
+  return `${wd} ${day.slice(5)}`
 }
 
-type RunGroup = { runDay: string; rows: EarningsRow[] }
+type DayGroup = { day: string; rows: EarningsRow[] }
 
-// upcoming arrives pre-sorted by (run_at asc, market_cap desc), so a single pass
-// yields run-day groups with the biggest names first inside each.
-function groupByRunDay(rows: EarningsRow[]): RunGroup[] {
-  const groups: RunGroup[] = []
+// Rows arrive pre-sorted, so a single pass yields contiguous day-groups (biggest
+// names first inside each). `key` picks the grouping day: run-day for upcoming,
+// report-day for just-reported.
+function groupByDay(rows: EarningsRow[], key: (e: EarningsRow) => string): DayGroup[] {
+  const groups: DayGroup[] = []
   for (const e of rows) {
-    const runDay = (e.run_at ?? "").slice(0, 10) || "—"
+    const day = key(e)
     let g = groups[groups.length - 1]
-    if (!g || g.runDay !== runDay) {
-      g = { runDay, rows: [] }
+    if (!g || g.day !== day) {
+      g = { day, rows: [] }
       groups.push(g)
     }
     g.rows.push(e)
@@ -67,33 +68,41 @@ export function Earnings({
   return (
     <div className="space-y-3">
       {earnings.reported.length > 0 && (
-        <Panel title="Just reported" sub="move since the report — the drift so far">
-          <div className="flex flex-wrap gap-2">
-            {earnings.reported.map((e) => {
-              const move = e.move_since_report_pct
-              const has = move != null
-              const up = (move ?? 0) >= 0
-              return (
-                <span
-                  key={e.symbol}
-                  className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 text-sm"
-                >
-                  <span className="font-semibold">{e.symbol}</span>
-                  {has ? (
-                    <span className={up ? "text-emerald-500" : "text-red-500"}>
-                      {up ? "+" : ""}
-                      {move}%
-                    </span>
-                  ) : (
-                    <span className="text-muted-foreground">—</span>
-                  )}
-                  <span className="text-xs text-muted-foreground">
-                    {e.report_date.slice(5, 10)}
-                    {e.session ? ` ${e.session}` : ""}
-                  </span>
-                </span>
-              )
-            })}
+        <Panel title="Just reported" sub="grouped by report day — move since the report (the drift so far)">
+          <div className="space-y-3">
+            {groupByDay(earnings.reported, (e) => e.report_date.slice(0, 10)).map((g) => (
+              <div key={g.day}>
+                <div className="mb-1.5 text-xs font-semibold text-muted-foreground">
+                  Reported {dayLabel(g.day)}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {g.rows.map((e) => {
+                    const move = e.move_since_report_pct
+                    const has = move != null
+                    const up = (move ?? 0) >= 0
+                    return (
+                      <span
+                        key={e.symbol}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 text-sm"
+                      >
+                        <span className="font-semibold">{e.symbol}</span>
+                        {has ? (
+                          <span className={up ? "text-emerald-500" : "text-red-500"}>
+                            {up ? "+" : ""}
+                            {move}%
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                        {e.session && (
+                          <span className="text-xs text-muted-foreground">{e.session}</span>
+                        )}
+                      </span>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
         </Panel>
       )}
@@ -101,13 +110,13 @@ export function Earnings({
       {earnings.upcoming.length > 0 && (
         <Panel title="Reporting soon" sub="grouped by when to run the desk — biggest names first">
           <div className="space-y-3">
-            {groupByRunDay(earnings.upcoming).map((g) => {
+            {groupByDay(earnings.upcoming, (e) => (e.run_at ?? "").slice(0, 10) || "—").map((g) => {
               const shown = g.rows.slice(0, 8)
               const more = g.rows.length - shown.length
               return (
-                <div key={g.runDay}>
+                <div key={g.day}>
                   <div className="mb-1 text-xs font-semibold text-emerald-500">
-                    {g.runDay === "—" ? "Run time n/a" : `Run ${runDayLabel(g.runDay)} · 9:30 ET`}
+                    {g.day === "—" ? "Run time n/a" : `Run ${dayLabel(g.day)} · 9:30 ET`}
                   </div>
                   <ul className="divide-y divide-border">
                     {shown.map((e) => (

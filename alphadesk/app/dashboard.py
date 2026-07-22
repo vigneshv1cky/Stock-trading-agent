@@ -117,30 +117,49 @@ def api_sources(days: int = 30):
 def api_earnings():
     """Be-ready view: who reports next (with the time to RUN the desk to catch the
     drift) and who just reported."""
+    from alphadesk.config import now_et
     from alphadesk.ingest import prices
-    from alphadesk.ingest.earnings import run_at
-    upcoming = store.upcoming_earnings(days=14)
-    for e in upcoming:
-        e["run_at"] = run_at(e["report_date"], e.get("session"))
+    from alphadesk.ingest.earnings import reported_public, run_at
+
+    # Time-aware split: a report is "just reported" once it's PUBLIC (BMO/DAY at the
+    # 9:30 open, AMC at the 16:00 close of its report day) — not when Nasdaq happens
+    # to backfill the actual EPS. So a name reporting today flips after 9:30 today.
+    now = now_et()
+    upcoming, reported = [], []
+    for e in store.earnings_window(days_back=4, days_fwd=14):
+        pub = reported_public(e["report_date"], e.get("session"))
+        if pub is not None and now >= pub:
+            reported.append(e)
+        else:
+            e["run_at"] = run_at(e["report_date"], e.get("session"))
+            upcoming.append(e)
     # Sort so the UI can group by run-day (earliest to run first) with the biggest
     # names surfaced first inside each day — never truncated by earlier small-caps.
     upcoming.sort(key=lambda e: (e["run_at"] or "9999", -(e.get("market_cap") or 0.0)))
+    # newest report first, then group by report-day in the UI (biggest names first)
+    reported.sort(key=lambda e: (e["report_date"], -(e.get("market_cap") or 0.0)), reverse=True)
+
     # Collapse dual-class listings of the same company (identical report date +
     # market cap to the dollar, e.g. GOOG/GOOGL) to one row. Two different firms
-    # never share a 13-digit cap exactly, so this only merges share classes; the
-    # list is already biggest-first, so we keep the first occurrence.
-    seen_dual: set = set()
-    deduped = []
-    for e in upcoming:
-        mc = e.get("market_cap")
-        if mc:
-            key = (e["report_date"], mc)
-            if key in seen_dual:
-                continue
-            seen_dual.add(key)
-        deduped.append(e)
-    upcoming = deduped
-    reported = store.recently_reported(days=3)
+    # never share a 13-digit cap exactly, so this only merges share classes.
+    def _dedupe_dual(rows: list[dict]) -> list[dict]:
+        seen: set = set()
+        out = []
+        for e in rows:
+            mc = e.get("market_cap")
+            if mc:
+                key = (e["report_date"], mc)
+                if key in seen:
+                    continue
+                seen.add(key)
+            out.append(e)
+        return out
+
+    # Sort so the UI can group by run-day (earliest to run first) with the biggest
+    # names surfaced first inside each day — never truncated by earlier small-caps.
+    upcoming.sort(key=lambda e: (e["run_at"] or "9999", -(e.get("market_cap") or 0.0)))
+    upcoming = _dedupe_dual(upcoming)
+    reported = _dedupe_dual(reported)
     # Show the real, verifiable signal: how much the stock has moved SINCE the
     # report went public (the drift itself) — not a maybe-misleading EPS surprise%.
     moves = prices.moves_since_report(reported)

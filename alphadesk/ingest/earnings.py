@@ -83,6 +83,20 @@ def run_at(report_iso: str, session: str | None) -> str | None:
     return datetime(run_day.year, run_day.month, run_day.day, 9, 30, tzinfo=ET).isoformat()
 
 
+def reported_public(report_iso: str, session: str | None) -> datetime | None:
+    """The ET moment a report becomes PUBLIC — the boundary between 'reporting
+    soon' and 'just reported'. BMO/DAY names are public by the 9:30 open of their
+    report day; AMC names after the 16:00 close. So a BMO/DAY name reporting today
+    flips to 'just reported' at 9:30 today (time-aware — not gated on when Nasdaq
+    backfills the actual EPS)."""
+    try:
+        d = datetime.fromisoformat(report_iso[:10])   # date-only key
+    except (ValueError, TypeError):
+        return None
+    hour, minute = (16, 0) if session == "AMC" else (9, 30)
+    return datetime(d.year, d.month, d.day, hour, minute, tzinfo=ET)
+
+
 def _fetch_calendar_date(date_str: str) -> list[dict]:
     """One day of the Nasdaq earnings calendar → raw row dicts (empty on any error)."""
     req = urllib.request.Request(_CAL_URL.format(date=date_str), headers=_HEADERS)
