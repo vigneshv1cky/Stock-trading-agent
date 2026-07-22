@@ -79,7 +79,7 @@ export function Earnings({
             {groupByDay(earnings.reported, (e) => e.report_date.slice(0, 10)).map((g) => (
               <div key={g.day}>
                 <div className="mb-1 flex items-baseline justify-between">
-                  <span className="text-xs font-semibold text-muted-foreground">
+                  <span className="text-xs font-semibold text-indigo-500">
                     Reported {dayLabel(g.day)}
                   </span>
                   <span className="text-[11px] text-muted-foreground">{g.rows.length} names</span>
