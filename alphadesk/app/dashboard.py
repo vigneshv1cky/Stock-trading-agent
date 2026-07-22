@@ -137,7 +137,9 @@ def api_earnings():
     # names surfaced first inside each day — never truncated by earlier small-caps.
     upcoming.sort(key=lambda e: (e["run_at"] or "9999", -(e.get("market_cap") or 0.0)))
     # newest report first, then group by report-day in the UI (biggest names first)
-    reported.sort(key=lambda e: (e["report_date"], -(e.get("market_cap") or 0.0)), reverse=True)
+    # reverse=True → newest report day first AND biggest market cap first within a
+    # day (a plain cap here, NOT -cap: reverse already flips it to descending).
+    reported.sort(key=lambda e: (e["report_date"], e.get("market_cap") or 0.0), reverse=True)
 
     # Collapse dual-class listings of the same company (identical report date +
     # market cap to the dollar, e.g. GOOG/GOOGL) to one row. Two different firms
