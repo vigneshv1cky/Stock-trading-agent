@@ -83,7 +83,7 @@ Tech debt):
 ### Pipeline
 
 ```
-Polygon (financial news) + earnings drift + Alpaca/yfinance (price context)
+Polygon (financial news) + earnings drift (+ since-report move) + Alpaca real-time last trade / yfinance history (price context)
         │  candidates (symbol → enriched articles)
         │  [+ GDELT world news if WORLD_MAX_CATEGORIES>0 — OFF by default]
    [Connections desk]  (expose=true) shock → 1 web-grounded opus call → spillover candidates
@@ -92,7 +92,7 @@ Polygon (financial news) + earnings drift + Alpaca/yfinance (price context)
         │
    GATE (haiku)  ── drop picks with no real external catalyst BEFORE the debate (fail-open)
         │  per surviving pick, in parallel:
-   2 NOTES (haiku): market (price+valuation+priced-in) · news
+   2 NOTES (haiku): market (price+valuation+priced-in, incl. realized-vs-implied "spent move" ratio) · news
    + calibration prior (the desk's own graded scorecard, sample-gated at 8 trades)
         │
    RESEARCHER (sonnet) → CRITIC (opus) → fact-check (code) → RESEARCHER rebuttal → JUDGE (opus)
@@ -101,6 +101,9 @@ Polygon (financial news) + earnings drift + Alpaca/yfinance (price context)
    HEAD (opus) → head-to-head ranking, TAKE/pass
         │
    LEDGER (SQLite/WAL) → GRADER (hourly, alpha_net vs SPY at own horizon)
+        │
+   POSITION WATCHER (~180s): target/stop cross → close (pure code);
+     cheap give-back / near-target SCREEN → selective opus REVIEW → HOLD/EXIT (close a spent move before it decays)
 ```
 
 ### Model tiering (`config.MODEL_MAP`, every role env-overridable `MODEL_<ROLE>`)
@@ -130,29 +133,31 @@ alphadesk/
   llm.py               the guarded call stack — every LLM call goes here
   ingest/
     news.py            Polygon poll → Haiku enrichment → candidates
+    earnings.py        Nasdaq earnings calendar → post-earnings-drift candidates (+ realized since-report move)
     world.py           GDELT world-news (11-cat taxonomy) — OFF by default in Find Trades
                        (WORLD_MAX_CATEGORIES=0); still used by the scheduler + `world` CLI
-    prices.py          lazy per-symbol context — NO triggers, NO universe sweeps
+    prices.py          lazy per-symbol context — real-time Alpaca last trade (yfinance history fallback); NO triggers, NO sweeps
   desk/
     stream.py          on-demand "Find Trades" SSE flow (v2 primary path)
     workflow.py        research_run() — batch pipeline (desk CLI, scheduler, replay)
     debate.py          deliberate() — the shared Researcher→Critic→Judge core
     scout.py           all attention judgment, in one prompt (was triage.py)
     gate.py            pre-debate catalyst screen — drop phantom setups (haiku, fail-open)
-    notes.py           2 parallel haiku note subagents: market, news (was briefs.py)
+    notes.py           2 parallel haiku note subagents: market (incl. realized-vs-implied spent-move ratio), news (was briefs.py)
     connections.py     the Connections desk (web-grounded spillover mapping; was exposure.py)
     team.py            Researcher ⇄ Critic → Judge, + calibration_block, + head_ranking (was committee.py)
     loner.py           single-agent control arm (was solo.py)
-    review.py          position review — HOLD/EXIT on open TAKEs (was reeval.py)
+    plan.py            trade plan (entry/target/stop, agent) + level_crossed / exit_signal / realized_exit (pure-code exit physics)
+    review.py          position review — HOLD/EXIT on open TAKEs, per run + between-run watcher escalations (was reeval.py)
     news_check.py      same-story vs new-catalyst check on a recently-debated name
     earnings_reader.py web-grounded read of an actual earnings report
   ledger/
-    store.py           SQLite/WAL: picks, funnel, token_usage, relationships
-    grader.py          forward grading vs SPY, friction haircut — pure code
+    store.py           SQLite/WAL: picks (+ exit/mfe/source cols), earnings, funnel, token_usage, relationships
+    grader.py          forward grading vs SPY + MFE/MAE paths + skip-grading — pure code
   app/
     dashboard.py       FastAPI + Basic Auth + SSE endpoint + static SPA
     scheduler.py       hourly grader loop (v2); legacy 24/7 loop (run mode)
-  main.py              CLI entrypoint (dashboard/desk/world/grade/status/backfill/run)
+  main.py              CLI entrypoint (dashboard/desk/world/grade/status/backfill/run) + position watcher (level cross + give-back screen → review)
   ui/                  React 19 + TS + Vite + shadcn/ui → built into app/static/
 ```
 
@@ -167,6 +172,11 @@ ADMIN_PASSWORD=...
 ALPHADESK_DATA=~/.alphadesk   # ledger.db, universe.json, relationship cache
 SOLO_ARM_EVERY_N=0            # 0=off (lean default); set e.g. 6 to measure committee-vs-solo
 WORLD_MAX_CATEGORIES=0        # GDELT world news in Find Trades: 0=off (default); 4=full sweep every ~3 runs; 11=every run (slow)
+# Exit-monitoring screens (tunable; the opus reviewer is the real filter — defaults escalate generously):
+EXIT_NEAR_TARGET_FRAC=0.85    # ≥ this much of the entry→target move captured → escalate to review
+EXIT_GIVEBACK_MIN_PEAK=4.0    # watch give-back only after the favorable move peaks above this % (below = noise)
+EXIT_GIVEBACK_FRAC=0.40       # faded ≥ this fraction of that peak → escalate (MFE-decay flag)
+EXIT_REVIEW_COOLDOWN_S=1800   # min seconds between reviews of the same open position
 ```
 
 ## Key design notes
@@ -185,11 +195,24 @@ WORLD_MAX_CATEGORIES=0        # GDELT world news in Find Trades: 0=off (default)
   gated, removable, tagged as an experiment.
 - **Miss diagnosis is conversational** — ask Claude "why did we miss X?"; it traces
   `store.symbol_traces` / `symbol_skips` and fixes data/prompt/bug. No UI tool for it.
-- **Position review (exits)** — each run, BEFORE hunting new trades, re-checks every
-  still-open TAKE (`store.open_taken_picks`) against current price + fresh news via the
-  opus `review` agent → HOLD or EXIT with a reason, surfaced first (you may have traded
-  it). Exits are stamped (`exit_ts`/`exit_reason`); HOLD is the fail-safe default. The
-  team opens positions; `desk/review.py` is the only thing that closes them early.
+- **Spent-move symmetry** — "how much of the expected move is left?" is asked at BOTH
+  ends. At ENTRY the market note gets an explicit realized-vs-implied ratio (today/5d
+  move ÷ options-implied move) plus the earnings since-report move, so a fully-repriced
+  setup reads "spent → pass" (the fix for entering a gap that already happened). At EXIT
+  the give-back screen closes a position once the *remaining* move plays out. Both are
+  evidence the agents weigh (not gates), and the ratio only fires where options data
+  exists (liquid names); thin names fall back to the qualitative priced-in read.
+- **Position review (exits)** — the team only opens positions; three things close them
+  early, all research/paper (a ledger `exit_ts`/`exit_reason` stamp, never an order):
+  (1) each Find Trades run, BEFORE hunting new trades, the opus `review` agent re-checks
+  every open TAKE (`store.open_taken_picks`) vs price + fresh news → HOLD/EXIT, surfaced
+  first (you may have traded it); (2) the **position watcher** (`main._position_watch_loop`,
+  ~180s) closes on a target/stop level cross (pure code); (3) between runs, a cheap code
+  SCREEN (`plan.exit_signal`: near-target, or MFE give-back seeded from the persisted
+  `mfe_pct` so it survives restarts) flags a spent move and escalates that ONE position to
+  the same opus reviewer — so a played-out move is closed before the gain decays, not only
+  on the next run. HOLD is always the fail-safe default; escalation is throttled per
+  position (`EXIT_REVIEW_COOLDOWN_S`).
 
 ## Tech debt / honest status
 
@@ -197,7 +220,11 @@ WORLD_MAX_CATEGORIES=0        # GDELT world news in Find Trades: 0=off (default)
   `deliberate()` async generator for the researcher→critic→judge→ledger-write sequence,
   and now the same notes (market + news), so they no longer drift. Only the loner-arm
   record is still lightly duplicated between them.
-- **Unproven.** The full deep-scan path has not been run end-to-end live, and there
-  are **zero graded trades** — so the calibration prior, kill criteria, and the entire
-  alpha thesis are dormant. The highest-value next step is a supervised live run to
-  start the forward-only ledger clock.
+- **Unproven.** The ledger clock is running but the sample is tiny and shows **no edge
+  yet** (~28 graded as of 2026-07-22, direction ≈ 43% ≈ coin-flip, mean alpha negative —
+  statistically indistinguishable from zero). The calibration prior and kill criteria stay
+  dormant until the sample is large enough. A **stale-price bug** (fixed 2026-07-22) had
+  inflated early paper-exit P&L and priced-in reasoning by anchoring to yfinance's stale
+  daily close the morning after an earnings gap; the forward grade (`alpha_net`) was never
+  affected (it enters at the real next-session open). Highest-value next step: let the
+  current honestly-priced cohort grade to a real read before changing anything.

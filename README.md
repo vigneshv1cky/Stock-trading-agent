@@ -71,7 +71,7 @@ pass of the pipeline. Both entry points share the same debate core (`desk/debate
 they can't drift apart.
 
 ```
-Polygon (financial news) + earnings drift + Alpaca/yfinance (price context)
+Polygon (financial news) + earnings drift (+ since-report move) + Alpaca real-time last trade / yfinance history
         │  candidates: symbol → enriched articles
         │  GDELT world news is OFF by default (set WORLD_MAX_CATEGORIES>0 to enable)
         │
@@ -86,7 +86,7 @@ Polygon (financial news) + earnings drift + Alpaca/yfinance (price context)
         │
    GATE  ── drop picks with no real external catalyst, in parallel, fail-open   (haiku)
         │  per surviving pick:
-   2 NOTES (market · news) + optional earnings read + the desk's calibration scorecard
+   2 NOTES (market — incl. realized-vs-implied "spent move" ratio · news) + optional earnings read + calibration scorecard
         │
    RESEARCHER → CRITIC → code fact-check → RESEARCHER rebuttal → JUDGE          (debate)
    PLAN: entry / target / stop / instruction for the committed call            (sonnet)
@@ -95,6 +95,9 @@ Polygon (financial news) + earnings drift + Alpaca/yfinance (price context)
    HEAD → genuine head-to-head ranking across all ideas, marks TAKE / pass      (opus)
         │
    LEDGER (SQLite/WAL) → GRADER (hourly, alpha_net vs SPY at each pick's own horizon)
+        │
+   POSITION WATCHER (~180s, between runs): target/stop cross → close (code);
+     cheap give-back / near-target screen → selective opus REVIEW → HOLD / EXIT
 ```
 
 Every intermediate step — each thesis, each concern, each rebuttal, each verdict — is
@@ -109,7 +112,7 @@ waiting for a final answer.
 |------|-------|-----|
 | **Scout** | sonnet | Sees every news-active symbol (headlines + sentiment + price context) and today's movers. Allocates the team's scarce attention: picks ≤5, with a reason for every pick *and* every skip. No thresholds — words, not numbers. |
 | **Gate** | haiku | Cheap pre-debate screen. Drops picks with no verifiable external catalyst *before* spending the expensive debate. Fail-open (an error keeps the pick). |
-| **Notes** | haiku | Two parallel briefs per pick — a *market* note (price, valuation, what's priced in) and a *news* note. Feed the researcher. |
+| **Notes** | haiku | Two parallel briefs per pick — a *market* note (price, valuation, what's priced in, incl. an explicit realized-vs-implied "spent move" ratio where options data exists) and a *news* note. Feed the researcher. |
 | **Earnings reader** | sonnet | If a pick just reported, a web-grounded read of the actual results / guidance / reaction. Cached per event. |
 | **Connections** | opus | The web-grounded spillover desk. Maps a shock to its supplier/customer/competitor graph and proposes the connected, unmoved names to trade. |
 | **Researcher** | sonnet | Forms the directional thesis from the briefs and the desk's own track record on the symbol. Picks the horizon that matches the mechanism. |
@@ -118,7 +121,7 @@ waiting for a final answer.
 | **Plan** | sonnet | Turns the committed call into an actionable trade plan: entry, target, stop, one-line instruction. Fail-open — a missing plan never blocks the pick. |
 | **Loner** | opus | A single strong agent works the same briefs blind to the team. The control arm for kill-criterion #2: *does the committee actually beat one good agent?* Off by default. |
 | **Head** | opus | Compares all debated ideas head-to-head on one common standard (isolated conviction scores aren't comparable), de-dups correlated bets and share classes, and marks what actually gets taken. |
-| **Review** | opus | Runs before hunting new trades: re-checks every still-open position against current price + fresh news and issues HOLD or EXIT with a reason. The only thing that closes a position early. |
+| **Review** | opus | Re-checks a still-open position against current price + fresh news → HOLD or EXIT with a reason. Runs before hunting new trades each run, and *between* runs when the position watcher's cheap screen flags a spent move (near-target or MFE give-back). The team opens positions; the reviewer and the level-cross watcher are what close them early. |
 
 Researcher (sonnet) and Critic (opus) run **different models on purpose** — decorrelated
 errors, so the critic isn't just agreeing with a copy of itself.
@@ -182,7 +185,11 @@ Every evaluation — team or loner, approved or rejected — is one row in a SQL
   `2 × 15 bps` per round trip, doubled again for low-liquidity names.
 
 The hourly grader marks the paper portfolio forward even when nothing else is running.
-Positions the Head marked **TAKE** are re-reviewed on the next run and can be exited early.
+Open positions are re-reviewed on the next run, closed on a target/stop cross by the ~180s
+position watcher, and — between runs — escalated to the opus reviewer when a cheap code
+screen flags a spent move (near-target, or a give-back from the persisted MFE peak), so a
+played-out move is closed before the gain decays. The forward grade (`alpha_net`) settles
+at the declared horizon regardless of any early exit.
 
 ---
 
@@ -281,6 +288,10 @@ SOLO_ARM_EVERY_N=0            # 0=off; set e.g. 6 to accumulate team-vs-loner co
 WORLD_MAX_CATEGORIES=0        # GDELT world news in Find Trades: 0=off (default); 4=full sweep every ~3 runs; 11=every run
 EXPOSURE_MAX_SHOCKS=2         # how many top shocks the Connections desk web-maps per run
 REPICK_COOLDOWN_HOURS=24      # don't re-debate the same name/story within this window
+EXIT_NEAR_TARGET_FRAC=0.85    # exit screen: ≥ this much of entry→target captured → escalate to review
+EXIT_GIVEBACK_MIN_PEAK=4.0    # watch give-back only after the favorable move peaks above this %
+EXIT_GIVEBACK_FRAC=0.40       # faded ≥ this fraction of that peak → escalate (MFE-decay flag)
+EXIT_REVIEW_COOLDOWN_S=1800   # min seconds between reviews of the same open position
 LLM_MAX_CONCURRENCY=4         # cap on concurrent Claude CLI subprocesses (memory)
 LLM_MAX_INPUT_CHARS=48000     # per-call input truncation (~12k tokens; cost/DoS cap)
 LLM_TOOL_BUDGET_USD=0.50      # hard ceiling on a single web-search agent call
@@ -303,8 +314,8 @@ alphadesk/
     news.py            Polygon poll → haiku enrichment → candidates
     world.py           GDELT world-news (11-cat taxonomy) — OFF by default in Find Trades
                        (WORLD_MAX_CATEGORIES=0); still used by the scheduler + `world` CLI
-    prices.py          lazy per-symbol price context — no triggers, no universe sweeps
-    earnings.py        earnings calendar + post-earnings-drift candidate source
+    prices.py          lazy per-symbol context — real-time Alpaca last trade (yfinance history fallback); no triggers, no sweeps
+    earnings.py        Nasdaq earnings calendar + post-earnings-drift candidates (+ realized since-report move)
   desk/
     stream.py          on-demand "Find Trades" SSE flow (v2 primary path)
     workflow.py        research_run() — the batch pipeline (desk CLI, scheduler, replay)
@@ -314,9 +325,9 @@ alphadesk/
     notes.py           2 parallel note subagents: market, news
     connections.py     the web-grounded spillover desk
     team.py            researcher ⇄ critic → judge, calibration block, head ranking
-    plan.py            execution desk — entry/target/stop for a committed call
+    plan.py            execution desk — entry/target/stop + pure-code exit physics (level_crossed, exit_signal, realized_exit)
     loner.py           single-agent control arm
-    review.py          position review — HOLD/EXIT on still-open takes
+    review.py          position review — HOLD/EXIT on still-open takes (per run + between-run watcher escalations)
     news_check.py      same-story vs new-catalyst check on a recently-debated name
     earnings_reader.py web-grounded read of an actual earnings report
   ledger/
@@ -347,10 +358,15 @@ alphadesk/
 
 ## Status
 
-Early and **unproven by design.** The engine is built and unit-verified, but the
-forward-only ledger has **zero graded trades** yet — so the calibration prior, the kill
-criteria, and the alpha thesis itself are all dormant until real picks accumulate and get
-graded. The highest-value next step is a supervised live run to start the ledger clock.
+Early and **unproven by design.** The ledger clock is running, but the sample is tiny and
+shows **no edge yet** (~28 graded as of 2026-07-22, direction ≈ coin-flip, mean alpha
+negative — statistically indistinguishable from zero). The calibration prior, the kill
+criteria, and the alpha thesis itself stay dormant until enough honestly-priced picks
+grade. A stale-price bug (fixed 2026-07-22) had inflated early paper-exit P&L and priced-in
+reasoning by anchoring to yfinance's stale daily close the morning after an earnings gap;
+the forward grade (`alpha_net`) was never affected, since it enters at the real
+next-session open. The highest-value next step is to let the current cohort grade to a real
+read before changing anything.
 
 ---
 
