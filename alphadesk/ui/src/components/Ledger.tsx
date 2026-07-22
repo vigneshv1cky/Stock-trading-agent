@@ -3,15 +3,17 @@ import { api, etDateTime, fmtAlpha, type SymbolTimeline, type TimelineEvent, typ
 import { dirUp, dirWord, plainEdge } from "@/lib/plain"
 import { ArrowDown, ArrowUp, RotateCcw } from "lucide-react"
 import { InfoTip } from "@/components/InfoTip"
+import { Card } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
 
 function Stat({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: number | null }) {
   const color = tone == null ? "" : tone > 0 ? "text-emerald-600 dark:text-emerald-400" : tone < 0 ? "text-red-600 dark:text-red-400" : ""
   return (
-    <div className="rounded-lg border border-border bg-card p-3">
+    <Card size="sm">
       <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
       <div className={`mt-0.5 font-mono text-lg font-semibold tabular-nums ${color}`}>{value}</div>
       {sub && <div className="text-[11px] text-muted-foreground">{sub}</div>}
-    </div>
+    </Card>
   )
 }
 
@@ -38,7 +40,7 @@ function StanceBadge({ current }: { current: string }) {
     CLOSED: { label: "Closed", cls: "bg-muted text-muted-foreground" },
   }
   const s = map[current] ?? map.CLOSED
-  return <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${s.cls}`}>{s.label}</span>
+  return <Badge className={`text-[11px] font-semibold ${s.cls}`}>{s.label}</Badge>
 }
 
 // What happened with one call: vs S&P (graded), exited, or live P&L (open).
@@ -103,7 +105,7 @@ function EventRow({ e, onSelect }: { e: TimelineEvent; onSelect: (id: number) =>
       {up ? <ArrowUp className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" /> : <ArrowDown className="h-3.5 w-3.5 shrink-0 text-red-600 dark:text-red-400" />}
       <span className={`text-xs font-medium ${up ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>{dirWord(e.direction)}</span>
       <span className="font-mono text-[11px] tabular-nums text-muted-foreground">{etDateTime(e.ts)}</span>
-      {e.edge && <span className="hidden rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground sm:inline">{plainEdge(e.edge)}</span>}
+      {e.edge && <Badge className="hidden bg-muted font-normal text-muted-foreground sm:inline-flex">{plainEdge(e.edge)}</Badge>}
       <span className="ml-auto flex shrink-0 items-center gap-2.5">
         {e.mfe_pct != null && (
           <InfoTip
@@ -127,14 +129,14 @@ function SymbolCard({ s, onSelect }: { s: SymbolTimeline; onSelect: (id: number)
   const latest = events[0]
   const exitReason = s.current === "EXITED" ? latest?.exit_reason : null
   return (
-    <div className="rounded-lg border border-border bg-card p-3">
+    <Card size="sm">
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-semibold">{s.symbol}</span>
         <StanceBadge current={s.current} />
         {s.changed && (
-          <span className="inline-flex items-center gap-1 rounded bg-fuchsia-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-fuchsia-600 dark:text-fuchsia-400">
+          <Badge className="gap-1 bg-fuchsia-500/15 font-semibold text-fuchsia-600 dark:text-fuchsia-400">
             <RotateCcw className="h-2.5 w-2.5" /> changed
-          </span>
+          </Badge>
         )}
         <span className="ml-auto text-[11px] text-muted-foreground">
           {events.length} call{events.length > 1 ? "s" : ""}
@@ -147,7 +149,7 @@ function SymbolCard({ s, onSelect }: { s: SymbolTimeline; onSelect: (id: number)
         ))}
       </div>
       {more > 0 && <div className="mt-1 px-2 text-[11px] text-muted-foreground">+{more} earlier</div>}
-    </div>
+    </Card>
   )
 }
 
@@ -179,13 +181,13 @@ export function Ledger({ stats, onSelect }: { stats: Stats | null; onSelect: (id
     <div className="space-y-3">
       <PerfStrip stats={stats} />
       {loaded && symbols.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-border bg-card p-8 text-center">
+        <Card className="border-dashed p-8 text-center">
           <p className="text-sm font-medium">No ideas yet</p>
           <p className="mx-auto mt-1 max-w-xs text-xs text-muted-foreground">
             Hit <b className="text-foreground">Run</b> on the desk. Each stock builds a timeline here —
             every call, whether it worked, and when the desk changed its mind.
           </p>
-        </div>
+        </Card>
       ) : (
         <div className="space-y-2">
           {symbols.map((s) => (

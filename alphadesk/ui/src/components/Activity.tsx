@@ -8,6 +8,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { Card } from "@/components/ui/card"
 
 function fmtTok(n: number) {
   return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n)
@@ -21,7 +22,7 @@ function BySource() {
   }, [])
   if (!sources) return null
   return (
-    <div className="rounded-lg border border-border bg-card p-4">
+    <Card>
       <div className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
         By source · 30d
       </div>
@@ -77,7 +78,7 @@ function BySource() {
           </p>
         </div>
       )}
-    </div>
+    </Card>
   )
 }
 
@@ -88,7 +89,7 @@ export function Activity({ tokens }: { tokens: TokenRow[] }) {
   const total = rows.reduce((s, t) => s + t.input_tok + t.output_tok, 0)
   return (
     <div className="space-y-4">
-      <div className="rounded-lg border border-border bg-card p-4">
+      <Card>
         <div className="mb-3 flex items-baseline justify-between">
           <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             AI usage today
@@ -123,7 +124,7 @@ export function Activity({ tokens }: { tokens: TokenRow[] }) {
             })}
           </div>
         )}
-      </div>
+      </Card>
       <BySource />
     </div>
   )

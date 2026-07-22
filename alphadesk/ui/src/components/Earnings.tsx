@@ -3,6 +3,7 @@ import { ChevronDown } from "lucide-react"
 import type { EarningsRow } from "@/lib/api"
 import { InfoTip } from "@/components/InfoTip"
 import { Badge } from "@/components/ui/badge"
+import { Card } from "@/components/ui/card"
 import {
   Collapsible,
   CollapsibleContent,
@@ -61,7 +62,7 @@ function Panel({
     )
   }
   return (
-    <div className="rounded-lg border border-border bg-card p-4">
+    <Card>
       {title && (
         <div className="mb-2">
           <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -71,7 +72,7 @@ function Panel({
         </div>
       )}
       {children}
-    </div>
+    </Card>
   )
 }
 
@@ -118,7 +119,7 @@ const ENG: Record<string, { label: string; cls: string }> = {
 function EngBadge({ state }: { state?: string }) {
   const b = state ? ENG[state] : undefined
   if (!b) return <span className="text-[11px] text-muted-foreground/40">·</span>
-  return <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${b.cls}`}>{b.label}</span>
+  return <Badge className={b.cls}>{b.label}</Badge>
 }
 
 const BIG_MOVE = 6 // % drift that counts as a real move (matches the skip-miss line)

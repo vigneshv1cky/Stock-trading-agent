@@ -2,6 +2,8 @@ import { useEffect, useState } from "react"
 import { api, exitDate, type LivePick } from "@/lib/api"
 import { dirUp, dirWord, plainEdge } from "@/lib/plain"
 import { InfoTip } from "@/components/InfoTip"
+import { Card } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
 import { ArrowDown, ArrowUp, RefreshCw } from "lucide-react"
 
 const STATUS: Record<string, { label: string; cls: string }> = {
@@ -85,10 +87,10 @@ export function LiveTracker() {
 
   if (loaded && rows.length === 0) {
     return (
-      <div className="rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground">
+      <Card className="text-sm text-muted-foreground">
         No open picks to track. Run <span className="font-medium text-foreground">Find Trades</span> —
         picks with a plan show up here and update live.
-      </div>
+      </Card>
     )
   }
 
@@ -106,11 +108,10 @@ export function LiveTracker() {
         const st = STATUS[p.status] ?? STATUS["no quote"]
         const pos = (p.pnl_pct ?? 0) >= 0
         return (
-          <div
+          <Card
             key={p.id}
-            className={`rounded-lg border bg-card p-3 ${
-              p.approved ? "border-border" : "border-border/60 opacity-80"
-            }`}
+            size="sm"
+            className={p.approved ? "" : "border-border/60 opacity-80"}
           >
             <div className="flex flex-wrap items-center gap-2 text-sm">
               {dirUp(p.direction) ? (
@@ -122,12 +123,10 @@ export function LiveTracker() {
                 {dirWord(p.direction)}
               </span>
               <span className="font-bold">{p.symbol}</span>
-              <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+              <Badge className="bg-muted font-normal text-muted-foreground">
                 {plainEdge(p.edge)}
-              </span>
-              <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${st.cls}`}>
-                {st.label}
-              </span>
+              </Badge>
+              <Badge className={`font-semibold ${st.cls}`}>{st.label}</Badge>
               <span className="ml-auto font-mono text-sm tabular-nums">
                 {p.current != null ? `$${p.current}` : "—"}{" "}
                 {p.pnl_pct != null && (
@@ -157,7 +156,7 @@ export function LiveTracker() {
               {!p.approved && <span>· thin lean</span>}
             </div>
             {p.plan_note && <p className="mt-1 text-xs text-muted-foreground">{p.plan_note}</p>}
-          </div>
+          </Card>
         )
       })}
     </div>

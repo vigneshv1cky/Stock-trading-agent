@@ -1,7 +1,7 @@
 import { useRef, useState } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
+import { Card } from "@/components/ui/card"
 import { ArrowDown, ArrowUp, Loader2, Search } from "lucide-react"
 import { dirUp, dirWord, plainEdge, plainVerdict } from "@/lib/plain"
 import type { Plan } from "@/lib/api"
@@ -308,7 +308,6 @@ export function FindTrades({
 
   return (
     <Card className="overflow-hidden">
-      <CardContent className="p-4">
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
@@ -486,7 +485,6 @@ export function FindTrades({
             ))}
           </div>
         )}
-      </CardContent>
     </Card>
   )
 }
