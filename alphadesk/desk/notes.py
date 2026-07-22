@@ -53,6 +53,29 @@ def news_brief(symbol: str, articles: list[dict], decision_id: str | None = None
     )
 
 
+def _priced_in_digest(price_ctx: dict | None, options: dict | None) -> dict | None:
+    """Explicit 'how much of the move is already done vs what the options market
+    priced' — the entry-side counterpart to the exit give-back screen. Code owns
+    the arithmetic; the note still judges. None when options data is unavailable
+    (then the model falls back to the qualitative read). A realized move already
+    well past the implied move = the drift is likely SPENT (the PEGA-at-entry case:
+    it had already moved ~2.5x its implied move before we looked)."""
+    if not (price_ctx and options):
+        return None
+    em = options.get("expected_move_to_expiry_pct")
+    if not em:
+        return None
+    out: dict = {"implied_move_pct": em}
+    t, f = price_ctx.get("change_today_pct"), price_ctx.get("change_5d_pct")
+    if t is not None:
+        out["moved_today_pct"] = t
+        out["today_vs_implied"] = round(abs(t) / em, 2)
+    if f is not None:
+        out["moved_5d_pct"] = f
+        out["5d_vs_implied"] = round(abs(f) / em, 2)
+    return out
+
+
 def market_brief(symbol: str, price_ctx: dict | None, fundamentals: dict | None,
                  articles: list[dict], decision_id: str | None = None,
                  options: dict | None = None) -> dict:
@@ -62,6 +85,7 @@ def market_brief(symbol: str, price_ctx: dict | None, fundamentals: dict | None,
         "price": price_ctx or "none",
         "fundamentals": fundamentals or "none",
         "options": options or "none",
+        "already_moved_vs_implied": _priced_in_digest(price_ctx, options) or "no options data",
         "catalyst_timestamps": [a.get("published_at", "")[:16] for a in articles[:6]],
     }
     return _brief(
@@ -82,7 +106,12 @@ def market_brief(symbol: str, price_ctx: dict | None, fundamentals: dict | None,
         "window — a thesis whose move sits INSIDE the expected move for its horizon "
         "is largely priced in, while a move beyond it is either genuine underpricing "
         "or an overreach; elevated atm_iv_pct means a bigger move is already "
-        "expected (and flags post-catalyst IV-crush risk).",
+        "expected (and flags post-catalyst IV-crush risk). The already_moved_vs_implied "
+        "block makes this explicit: *_vs_implied is how many times the realized move "
+        "has already covered the market's implied move — ≳1.5 means the move is likely "
+        "SPENT (the easy repricing is done → fade risk, size down or pass), while ≲0.5 "
+        "means it has barely moved vs what's priced (repricing may be AHEAD → the drift "
+        "the desk wants). State the spent/ahead read plainly.",
         "Data:\n" + wrap_data("market", json.dumps(payload, default=str)),
         decision_id,
     )

@@ -169,16 +169,29 @@ def drift_candidates(days: int) -> dict[str, list[dict]]:
     ran (refresh_calendar, on the 6h loop); this just reads the rows the run needs
     and shapes them as candidates — the caller merges them into the pool.
     """
+    reporters = store.recently_reported(days)
+    # How much each name has ALREADY moved since its report went public — the
+    # realized drift so far. Fed to the scout so "the move is already spent" is
+    # visible at entry, not just at exit (the PEGA lesson: it had fully repriced
+    # before we looked). Best-effort; a missing move just omits the note.
+    from alphadesk.ingest import prices
+    moved = prices.moves_since_report(
+        [{"symbol": e["symbol"], "report_date": e["report_date"],
+          "session": e.get("session")} for e in reporters])
     out: dict[str, list[dict]] = {}
-    for e in store.recently_reported(days):
+    for e in reporters:
         esym = e["symbol"]
         surp = e.get("surprise_pct") or 0.0
         beat = "beat" if surp > 0 else ("miss" if surp < 0 else "in-line")
+        mv = moved.get(esym)
+        mv_txt = f"; moved {mv:+.1f}% since (drift so far)" if mv is not None else ""
+        mv_note = (f" Price has already moved {mv:+.1f}% since the report went public"
+                   " — weigh how much drift is left." if mv is not None else "")
         out[esym] = [{
             "id": f"earnings-{esym}-{e['report_date'][:10]}",
             "title": f"[EARNINGS] {esym} reported {e['report_date'][:10]} {e.get('session') or ''}: "
-                     f"EPS {e.get('eps_actual')} vs est {e.get('eps_estimate')} — {beat} {surp}%",
-            "summary": f"Post-earnings-drift setup: {esym} {beat} consensus by {surp}%.",
+                     f"EPS {e.get('eps_actual')} vs est {e.get('eps_estimate')} — {beat} {surp}%{mv_txt}",
+            "summary": f"Post-earnings-drift setup: {esym} {beat} consensus by {surp}%.{mv_note}",
             "source": "EarningsCalendar", "url": "", "published_at": e["report_date"],
             "category": "EARNINGS", "tickers": [esym],
             "mentions": [{"symbol": esym,
