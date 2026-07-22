@@ -68,7 +68,13 @@ export function Earnings({
   return (
     <div className="space-y-3">
       {earnings.reported.length > 0 && (
-        <Panel title="Just reported" sub="grouped by report day — cap · session · move since the report (the drift so far)">
+        <Panel title="Just reported" sub="grouped by report day — move since the report (the drift so far)">
+          <div className="mb-2 flex items-center gap-2 border-b border-border pb-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+            <span className="w-16">Symbol</span>
+            <span className="w-14">Cap</span>
+            <span className="w-10">Session</span>
+            <span className="ml-auto">Move</span>
+          </div>
           <div className="space-y-3">
             {groupByDay(earnings.reported, (e) => e.report_date.slice(0, 10)).map((g) => (
               <div key={g.day}>
@@ -112,6 +118,11 @@ export function Earnings({
 
       {earnings.upcoming.length > 0 && (
         <Panel title="Reporting soon" sub="grouped by when to run the desk — biggest names first">
+          <div className="mb-2 flex items-center gap-2 border-b border-border pb-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+            <span className="w-14">Symbol</span>
+            <span className="w-14">Cap</span>
+            <span className="ml-auto">Report</span>
+          </div>
           <div className="space-y-3">
             {groupByDay(earnings.upcoming, (e) => (e.run_at ?? "").slice(0, 10) || "—").map((g) => {
               const shown = g.rows.slice(0, 8)

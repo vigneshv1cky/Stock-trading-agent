@@ -252,7 +252,14 @@ def moves_since_report(items: list[dict], ttl: int = 300) -> dict[str, Optional[
                     base_days = closes.index[mask]
                     if len(base_days) == 0:
                         continue
-                    base = float(closes.loc[base_days[-1]])
+                    base_day = base_days[-1]
+                    # No regular session has traded since the report's baseline (e.g.
+                    # an AMC report today — the drift only starts NEXT session). The
+                    # move isn't measurable yet: leave it None (shown as "—"), never a
+                    # misleading 0%.
+                    if closes.index[-1].normalize() <= base_day.normalize():
+                        continue
+                    base = float(closes.loc[base_day])
                     cur = float(closes.iloc[-1])
                     out[sym] = round((cur - base) / base * 100, 2) if base else None
                 except Exception:
