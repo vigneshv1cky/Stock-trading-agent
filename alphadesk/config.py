@@ -51,13 +51,12 @@ MODEL_MAP: dict[str, str] = {
 # Connections desk fires only on the top-N most material shocks per run (cost gate)
 EXPOSURE_MAX_SHOCKS = int(os.environ.get("EXPOSURE_MAX_SHOCKS", "2"))
 
-# World-news breadth per Find Trades run. The cursor rotates, so N per run covers
-# the full 11-category taxonomy over ~11/N runs. Default 4 keeps a button press
-# fast: sweeping all 11 every run meant ~6 min of GDELT 429 backoffs + ~14 min of
-# enrichment. Each category adds ~5s of throttle-spaced fetching plus its share of
-# enrichment; set WORLD_MAX_CATEGORIES=11 for a full deterministic sweep (slow),
-# or 0/1 to nearly skip world news. Capped at the taxonomy size.
-WORLD_MAX_CATEGORIES = int(os.environ.get("WORLD_MAX_CATEGORIES", "4"))
+# World-news breadth per Find Trades run. Default 0 = OFF (world news was never
+# part of the button flow historically, and GDELT 429s + its enrichment dominated
+# run time). Set >0 to enable: the cursor rotates, so N per run covers the full
+# 11-category taxonomy over ~11/N runs (e.g. 4 = full sweep every ~3 runs; 11 =
+# every run, slowest). Capped at the taxonomy size.
+WORLD_MAX_CATEGORIES = int(os.environ.get("WORLD_MAX_CATEGORIES", "0"))
 
 for _role in list(MODEL_MAP):
     _override = os.environ.get(f"MODEL_{_role.upper()}")

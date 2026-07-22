@@ -148,7 +148,7 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
     # names get scout-window priority (like ripple candidates) and aren't
     # truncated out by the window cap below.
     world_syms: set[str] = set()
-    if not await _gone():
+    if WORLD_MAX_CATEGORIES > 0 and not await _gone():
         world_events = 0
         try:
             world_events, world_cands = await loop.run_in_executor(None, world.poll, WORLD_MAX_CATEGORIES)
