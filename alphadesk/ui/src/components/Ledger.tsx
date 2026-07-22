@@ -142,7 +142,13 @@ function EventRow({ e, onSelect }: { e: TimelineEvent; onSelect: (id: number) =>
     >
       {up ? <ArrowUp className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" /> : <ArrowDown className="h-3.5 w-3.5 shrink-0 text-red-600 dark:text-red-400" />}
       <span className={`text-xs font-medium ${up ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>{dirWord(e.direction)}</span>
-      <span className="font-mono text-[11px] tabular-nums text-muted-foreground">{etDateTime(e.ts)}</span>
+      <InfoTip
+        tip={e.exit_ts ? "Entered (call time) → exited" : "Call time (entry)"}
+        className="cursor-help font-mono text-[11px] tabular-nums text-muted-foreground"
+      >
+        {etDateTime(e.ts)}
+        {e.exit_ts && <span className="text-muted-foreground/70"> → {etDateTime(e.exit_ts)}</span>}
+      </InfoTip>
       {e.edge && <Badge className="hidden bg-muted font-normal text-muted-foreground sm:inline-flex">{plainEdge(e.edge)}</Badge>}
       <span className="ml-auto flex shrink-0 items-center gap-2.5">
         {e.mfe_pct != null && (
