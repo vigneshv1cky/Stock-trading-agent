@@ -68,39 +68,42 @@ export function Earnings({
   return (
     <div className="space-y-3">
       {earnings.reported.length > 0 && (
-        <Panel title="Just reported" sub="grouped by report day — move since the report (the drift so far)">
+        <Panel title="Just reported" sub="grouped by report day — cap · session · move since the report (the drift so far)">
           <div className="space-y-3">
             {groupByDay(earnings.reported, (e) => e.report_date.slice(0, 10)).map((g) => (
               <div key={g.day}>
-                <div className="mb-1.5 text-xs font-semibold text-muted-foreground">
-                  Reported {dayLabel(g.day)}
+                <div className="mb-1 flex items-baseline justify-between">
+                  <span className="text-xs font-semibold text-muted-foreground">
+                    Reported {dayLabel(g.day)}
+                  </span>
+                  <span className="text-[11px] text-muted-foreground">{g.rows.length} names</span>
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <ul className="divide-y divide-border">
                   {g.rows.map((e) => {
                     const move = e.move_since_report_pct
                     const has = move != null
                     const up = (move ?? 0) >= 0
                     return (
-                      <span
-                        key={e.symbol}
-                        className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 text-sm"
+                      <li
+                        key={e.symbol + e.report_date}
+                        className="flex items-center gap-2 py-1.5 text-sm"
                       >
-                        <span className="font-semibold">{e.symbol}</span>
-                        {has ? (
-                          <span className={up ? "text-emerald-500" : "text-red-500"}>
-                            {up ? "+" : ""}
-                            {move}%
-                          </span>
-                        ) : (
-                          <span className="text-muted-foreground">—</span>
-                        )}
-                        {e.session && (
-                          <span className="text-xs text-muted-foreground">{e.session}</span>
-                        )}
-                      </span>
+                        <span className="w-16 font-semibold">{e.symbol}</span>
+                        <span className="w-14 text-xs text-muted-foreground">
+                          {fmtCap(e.market_cap)}
+                        </span>
+                        <span className="w-10 text-xs text-muted-foreground">{e.session}</span>
+                        <span
+                          className={`ml-auto font-mono tabular-nums ${
+                            has ? (up ? "text-emerald-500" : "text-red-500") : "text-muted-foreground"
+                          }`}
+                        >
+                          {has ? `${up ? "+" : ""}${move}%` : "—"}
+                        </span>
+                      </li>
                     )
                   })}
-                </div>
+                </ul>
               </div>
             ))}
           </div>
