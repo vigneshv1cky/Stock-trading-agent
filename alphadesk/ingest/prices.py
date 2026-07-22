@@ -22,6 +22,47 @@ _TTL_S = 120
 _cache: dict[str, tuple[float, dict]] = {}
 _cache_lock = threading.Lock()
 
+_alpaca_client: Any = None
+_alpaca_client_lock = threading.Lock()
+
+
+def _alpaca_data_client():
+    """Lazily-built, process-wide Alpaca market-data client (paper keys fine).
+    Returns None if keys are missing or the SDK can't initialise."""
+    global _alpaca_client
+    if _alpaca_client is None:
+        with _alpaca_client_lock:
+            if _alpaca_client is None:
+                try:
+                    import os
+                    from alpaca.data.historical import StockHistoricalDataClient
+                    _alpaca_client = StockHistoricalDataClient(
+                        os.environ["ALPACA_API_KEY"], os.environ["ALPACA_SECRET_KEY"])
+                except Exception as exc:      # missing keys / import failure
+                    log.debug("alpaca data client unavailable: %s", exc)
+                    return None
+    return _alpaca_client
+
+
+def _live_last_trade(symbol: str) -> Optional[float]:
+    """Real-time last trade for ONE symbol from Alpaca, or None. Deliberately has
+    NO yfinance fallback (get_context owns that) so it can never recurse. This is
+    the fix for the stale-close bug: the morning after an earnings gap, yfinance's
+    latest *daily* bar is yesterday's pre-gap close, so anchoring plans/marks to it
+    books the overnight gap as if it were still-capturable drift."""
+    client = _alpaca_data_client()
+    if client is None:
+        return None
+    try:
+        from alpaca.data.requests import StockLatestTradeRequest
+        trades = client.get_stock_latest_trade(
+            StockLatestTradeRequest(symbol_or_symbols=[symbol.upper()]))
+        t = trades.get(symbol.upper())
+        return round(float(t.price), 4) if t and t.price else None
+    except Exception as exc:
+        log.debug("live last-trade failed %s: %s", symbol, exc)
+        return None
+
 
 def get_context(symbol: str) -> Optional[dict]:
     """Price/liquidity context for one symbol (fetched on demand, cached)."""
@@ -37,8 +78,20 @@ def get_context(symbol: str) -> Optional[dict]:
             return None
         closes = df["Close"].astype(float)
         vols = df["Volume"].astype(float)
-        last = float(closes.iloc[-1])
-        prev = float(closes.iloc[-2])
+        daily_last = float(closes.iloc[-1])
+        daily_prev = float(closes.iloc[-2])
+        latest_is_today = df.index[-1].date() == now_et().date() and len(closes) > 1
+        # Prefer a REAL-TIME last trade over yfinance's latest daily close (which
+        # is stale/pre-gap the morning after earnings). When live is available,
+        # compare it against the last COMPLETED session (skip a partial today bar)
+        # so change_today is the true move, not 0%. No live price → old behaviour.
+        rt = _live_last_trade(sym)
+        if rt:
+            last = rt
+            prev = daily_prev if latest_is_today else daily_last
+        else:
+            last = daily_last
+            prev = daily_prev
         avg_dollar_vol = float((closes * vols).tail(20).mean())
         # Relative volume: the last COMPLETED session's volume vs its own recent
         # norm — a confirmation/participation fact (is the news being acted on, or
@@ -279,21 +332,19 @@ def latest_prices(symbols: list[str]) -> dict[str, float]:
     syms = sorted({s.upper() for s in symbols if s})
     if not syms:
         return out
-    try:
-        import os
-        from alpaca.data.historical import StockHistoricalDataClient
-        from alpaca.data.requests import StockLatestTradeRequest
-        client = StockHistoricalDataClient(
-            os.environ["ALPACA_API_KEY"], os.environ["ALPACA_SECRET_KEY"])
-        trades = client.get_stock_latest_trade(
-            StockLatestTradeRequest(symbol_or_symbols=syms))
-        for sym, trade in trades.items():
-            try:
-                out[sym] = round(float(trade.price), 4)
-            except (TypeError, ValueError):
-                continue
-    except Exception as exc:
-        log.debug("alpaca latest_prices failed: %s", exc)
+    client = _alpaca_data_client()
+    if client is not None:
+        try:
+            from alpaca.data.requests import StockLatestTradeRequest
+            trades = client.get_stock_latest_trade(
+                StockLatestTradeRequest(symbol_or_symbols=syms))
+            for sym, trade in trades.items():
+                try:
+                    out[sym] = round(float(trade.price), 4)
+                except (TypeError, ValueError):
+                    continue
+        except Exception as exc:
+            log.debug("alpaca latest_prices failed: %s", exc)
     for sym in syms:                       # fill any gaps from the yfinance context
         if sym not in out:
             ctx = get_context(sym)
