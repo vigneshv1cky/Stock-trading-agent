@@ -215,7 +215,11 @@ def grade_skips() -> int:
     never looked at. Reuses the warm _history_cache from grade_due()."""
     import pandas as pd
 
-    from alphadesk.config import SKIP_GRADE_DAYS, SKIP_MISS_ABS_ALPHA
+    from alphadesk.config import (
+        LOW_LIQUIDITY_DOLLAR_VOL,
+        SKIP_GRADE_DAYS,
+        SKIP_MISS_ABS_ALPHA,
+    )
     due = store.due_skips()
     if not due:
         return 0
@@ -256,8 +260,15 @@ def grade_skips() -> int:
                 if len(s_entry_c) > 0:
                     spy_ret = _window_ret(spy, sdays, s_entry_c[0]) or 0.0
             abs_alpha = abs(sym_ret - spy_ret)
-            store.update_skip(row["id"], abs_alpha=round(abs_alpha, 3),
-                              missed=int(abs_alpha >= SKIP_MISS_ABS_ALPHA), graded_at=now_iso)
+            # A big move in an ILLIQUID name is a FALSE miss — an untradeable pump
+            # (the HIHO case), not an opportunity forgone. Keep abs_alpha for the
+            # record but don't flag it as missed, so pumps never inflate the scout's
+            # skip-miss rate (the signal fed back for grounded self-calibration).
+            adv = float((df["Close"].astype(float) * df["Volume"].astype(float)).tail(20).mean())
+            tradeable = adv >= LOW_LIQUIDITY_DOLLAR_VOL
+            store.update_skip(
+                row["id"], abs_alpha=round(abs_alpha, 3),
+                missed=int(abs_alpha >= SKIP_MISS_ABS_ALPHA and tradeable), graded_at=now_iso)
             graded += 1
         except Exception as exc:
             log.warning("Skip grading failed for #%d %s: %s", row["id"], row["symbol"], exc)
