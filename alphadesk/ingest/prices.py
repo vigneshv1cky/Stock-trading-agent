@@ -347,12 +347,13 @@ def moves_since_report(items: list[dict], ttl: int = 300) -> dict[str, Optional[
     return out
 
 
-def fill_opens(items: list[dict]) -> dict[int, float]:
-    """The OPEN price on each pick's fill day — the real Model-A entry once the 9:30
-    open has passed. items: [{id, symbol, fill_date 'YYYY-MM-DD'}]. Returns {id: open}
-    for those whose fill day has traded; one batched daily download, best-effort."""
+def fill_ohlc(items: list[dict]) -> dict[int, tuple]:
+    """The (open, high, low) on each pick's fill day — enough to resolve a Model-A
+    fill (market = open; limit = did price reach the level?). items: [{id, symbol,
+    fill_date 'YYYY-MM-DD'}]. Returns {id: (open, high, low)} for days that traded;
+    one batched daily download, best-effort."""
     syms = sorted({i["symbol"] for i in items})
-    out: dict[int, float] = {}
+    out: dict[int, tuple] = {}
     if not syms:
         return out
     try:
@@ -362,14 +363,16 @@ def fill_opens(items: list[dict]) -> dict[int, float]:
         for i in items:
             try:
                 sub = df[i["symbol"]] if len(syms) > 1 else df
-                opens = sub["Open"].dropna()
-                vals = opens[opens.index.strftime("%Y-%m-%d") == i["fill_date"]]
-                if len(vals):
-                    out[int(i["id"])] = round(float(vals.iloc[0]), 4)
+                row = sub[sub.index.strftime("%Y-%m-%d") == i["fill_date"]].dropna()
+                if len(row):
+                    r = row.iloc[0]
+                    out[int(i["id"])] = (round(float(r["Open"]), 4),
+                                         round(float(r["High"]), 4),
+                                         round(float(r["Low"]), 4))
             except Exception:
                 continue
     except Exception as exc:
-        log.debug("fill_opens download failed: %s", exc)
+        log.debug("fill_ohlc download failed: %s", exc)
     return out
 
 

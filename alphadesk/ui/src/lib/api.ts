@@ -91,6 +91,7 @@ export interface LivePick {
   plan_target: number
   plan_stop: number
   plan_note: string | null
+  order_type: string | null // 'market' (fill at open) | 'limit' (fill only if price reaches entry)
   current: number | null
   pnl_pct: number | null
   alpha_so_far: number | null // interim vs-SPY, net friction — NOT the official grade

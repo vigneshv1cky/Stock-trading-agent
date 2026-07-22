@@ -115,6 +115,7 @@ async def deliberate(sym: str, pick: dict, briefs: list[dict], price_ctx: dict |
         "plan_target": (trade or {}).get("target"),
         "plan_stop": (trade or {}).get("stop"),
         "plan_note": (trade or {}).get("note"),
+        "order_type": (trade or {}).get("order"),
     })
     row = {
         "id": pick_id, "symbol": sym, "direction": booked_dir,

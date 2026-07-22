@@ -68,8 +68,18 @@ def _entry(row: dict, df):
     if len(future) == 0:
         return None
     entry_day = future[0]
-    px = (float(row["entry_price"]) if row["entry_price"] is not None
-          else float(df.loc[df.index.normalize() == entry_day, "Open"].iloc[0]))
+    if row["entry_price"] is not None:
+        return entry_day, float(row["entry_price"])   # already stamped (watcher applied the fill)
+    # not yet stamped → determine the fill from the fill-day OHLC (market fills at the
+    # open; a limit fills at its level only if price reached it, else None = not taken).
+    from alphadesk.config import LIMIT_FILL_BUFFER_PCT
+    from alphadesk.desk.plan import limit_fill
+    bar = df.loc[df.index.normalize() == entry_day]
+    px = limit_fill(row["direction"], row.get("order_type"), row.get("plan_entry"),
+                    float(bar["Open"].iloc[0]), float(bar["High"].iloc[0]),
+                    float(bar["Low"].iloc[0]), LIMIT_FILL_BUFFER_PCT)
+    if px is None:
+        return None      # a limit that never triggered → not taken (not graded)
     return entry_day, px
 
 

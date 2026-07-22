@@ -201,7 +201,8 @@ def init() -> None:
             pass  # already migrated
         for col, decl in (("plan_entry", "REAL"), ("plan_target", "REAL"),
                           ("plan_stop", "REAL"), ("plan_note", "TEXT"),
-                          ("source", "TEXT"), ("decision_id", "TEXT")):
+                          ("source", "TEXT"), ("decision_id", "TEXT"),
+                          ("order_type", "TEXT")):   # 'market' | 'limit' — how the entry fills (Model A)
             try:
                 conn.execute(f"ALTER TABLE picks ADD COLUMN {col} {decl}")
             except sqlite3.OperationalError:
@@ -545,7 +546,7 @@ def picks_for_path(days: int = 20) -> list[dict]:
     with _connect() as conn:
         rows = conn.execute(
             "SELECT id, ts, symbol, direction, horizon_days, session, entry_price,"
-            " low_liquidity, exit_ts, plan_entry, mfe_pct FROM picks"
+            " low_liquidity, exit_ts, plan_entry, order_type, mfe_pct FROM picks"
             " WHERE arm='TEAM' AND plan_entry IS NOT NULL"
             "   AND ts >= datetime('now', ?)"
             "   AND (mfe_pct IS NULL OR (graded_at IS NULL AND exit_ts IS NULL))",
@@ -562,7 +563,7 @@ def live_picks() -> list[dict]:
             "SELECT id, ts, symbol, direction, horizon_days, session, edge, verdict,"
             " approved, adjusted_score, confidence, taken, spy_price, entry_price,"
             " plan_entry, plan_target, plan_stop, plan_note, thesis, triage_reason,"
-            " mfe_pct FROM picks"
+            " order_type, mfe_pct FROM picks"
             " WHERE arm='TEAM' AND plan_entry IS NOT NULL"
             "   AND graded_at IS NULL AND exit_ts IS NULL"
             "   AND datetime(ts, '+' || (horizon_days + 2) || ' days') >= datetime('now')"

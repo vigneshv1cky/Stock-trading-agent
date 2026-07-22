@@ -130,7 +130,10 @@ export function LiveTracker() {
             {p.plan_note && <p className="text-[13px] leading-relaxed text-foreground/80">{p.plan_note}</p>}
 
             <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>entered {etDateTime(p.entry_ts)}</span>
+              <span>
+                {p.order_type === "limit" ? "limit @ $" + p.plan_entry + " · " : ""}
+                entered {etDateTime(p.entry_ts)}
+              </span>
               {p.alpha_so_far != null && (
                 <InfoTip
                   tip="Return vs S&P so far, net of friction — a live mark, not the official grade"

@@ -87,10 +87,15 @@ async def _serve() -> None:
             per position (EXIT_REVIEW_COOLDOWN_S) so it can't spam the model."""
         import time as _time
 
-        from alphadesk.config import EXIT_REVIEW_COOLDOWN_S, entry_fill_time, now_et
+        from alphadesk.config import (
+            EXIT_REVIEW_COOLDOWN_S,
+            LIMIT_FILL_BUFFER_PCT,
+            entry_fill_time,
+            now_et,
+        )
         from alphadesk.config import session as market_session
         from alphadesk.desk import review
-        from alphadesk.desk.plan import exit_signal, level_crossed, realized_exit
+        from alphadesk.desk.plan import exit_signal, level_crossed, limit_fill, realized_exit
         from alphadesk.ingest import prices
         from alphadesk.ledger import store
         loop = asyncio.get_running_loop()
@@ -101,25 +106,39 @@ async def _serve() -> None:
             try:
                 if market_session() == "OPEN":   # Model A: only fill/exit in regular hours (skip thin pre/after-market)
                     open_pos = await loop.run_in_executor(None, store.live_picks)
-                    # Model A backfill: once a closed-market pick's 9:30 open has passed,
-                    # stamp its real fill price (that open) so live P&L / exits measure
-                    # from the fill, not the stale pre-open plan level.
+                    # Model A fill: once a closed-market pick's 9:30 open has passed,
+                    # resolve its entry from the fill-day OHLC. Market → the open; limit
+                    # → its level if price reached it (stamp entry_price so live P&L /
+                    # exits measure from the real fill), else the limit never triggered
+                    # → NOT TAKEN (no fill, no P&L).
                     now = now_et()
                     unfilled = [p for p in open_pos if p.get("entry_price") is None
                                 and (ft := entry_fill_time(p["ts"], p.get("session"))) and ft <= now]
+                    not_taken_ids: set[int] = set()
                     if unfilled:
                         items = [{"id": p["id"], "symbol": p["symbol"],
                                   "fill_date": entry_fill_time(p["ts"], p["session"]).strftime("%Y-%m-%d")}
                                  for p in unfilled]
-                        opens = await loop.run_in_executor(None, prices.fill_opens, items)
-                        for p in open_pos:
-                            if p["id"] in opens:
-                                px = opens[p["id"]]
+                        ohlc = await loop.run_in_executor(None, prices.fill_ohlc, items)
+                        for p in unfilled:
+                            if p["id"] not in ohlc:
+                                continue
+                            o, h, low = ohlc[p["id"]]
+                            px = limit_fill(p["direction"], p.get("order_type"),
+                                            p.get("plan_entry"), o, h, low, LIMIT_FILL_BUFFER_PCT)
+                            if px is not None:
                                 await loop.run_in_executor(
                                     None, lambda i=p["id"], x=px: store.set_entry_price(i, x))
                                 p["entry_price"] = px   # use it this pass too
-                    monitorable = [p for p in open_pos
-                                   if p.get("plan_target") and p.get("plan_stop")]
+                            else:
+                                reason = f"not taken: limit {p.get('plan_entry')} not reached at the open"
+                                await loop.run_in_executor(
+                                    None, lambda i=p["id"], r=reason: store.record_exit(i, r))
+                                not_taken_ids.add(p["id"])
+                                log.info("Not taken #%d %s — limit %s not reached",
+                                         p["id"], p["symbol"], p.get("plan_entry"))
+                    monitorable = [p for p in open_pos if p["id"] not in not_taken_ids
+                                   and p.get("plan_target") and p.get("plan_stop")]
                     live_ids = {p["id"] for p in open_pos}
                     for stale in [i for i in peak_fav if i not in live_ids]:
                         peak_fav.pop(stale, None)

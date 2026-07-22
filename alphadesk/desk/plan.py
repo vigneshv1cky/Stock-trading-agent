@@ -33,10 +33,14 @@ _SYSTEM = (
     "beyond normal daily noise but keep the risk sane (a tighter stop for a "
     "single-day hold, more room for a multi-day one).\n"
     "  • note — ONE plain-English line telling a trader exactly what to do.\n"
+    "  • order — 'market' if the thesis needs you IN immediately (momentum already "
+    "running, a catalyst you must not miss — fill at the open/current price), or "
+    "'limit' if the plan is to wait for a specific entry level (a pullback / better "
+    "price); a limit fills ONLY if price reaches the entry, else the trade is skipped.\n"
     "COHERENCE (required): for LONG, stop < entry < target. For SHORT, "
     "target < entry < stop. Keep entry within a few percent of the current price.\n"
     'Return ONLY JSON: {"entry": <price>, "target": <price>, "stop": <price>, '
-    '"note": "<one line>"}'
+    '"note": "<one line>", "order": "market|limit"}'
 )
 
 _SCHEMA = {
@@ -44,6 +48,7 @@ _SCHEMA = {
     "target": {"type": (int, float), "min": 0},
     "stop": {"type": (int, float), "min": 0},
     "note": {"type": str, "maxlen": 240},
+    "order": {"type": str, "enum": ["market", "limit"], "optional": True},
 }
 
 
@@ -94,6 +99,33 @@ def level_crossed(direction: str, price: float, target: float, stop: float) -> s
         return "target"
     if (price <= stop) if up else (price >= stop):
         return "stop"
+    return None
+
+
+def limit_fill(direction: str, order_type: str | None, entry: float | None,
+               open_px: float | None, high_px: float | None, low_px: float | None,
+               buffer_pct: float) -> float | None:
+    """The Model-A fill PRICE for a pick, given its fill-day OHLC — or None if a
+    LIMIT order never triggered ('not taken'). A fact, not a judgment:
+      • market (or no entry) → fill at the open (you're in immediately).
+      • limit LONG → filled if price traded down to the entry (within buffer): at the
+        open if it gapped at/below the level, else at the level; not filled if it
+        never came down.
+      • limit SHORT → mirror (filled if price traded UP to the entry within buffer).
+    The buffer widens the trigger so a near-miss still fills."""
+    if order_type != "limit" or not entry or open_px is None:
+        return open_px
+    b = max(0.0, buffer_pct) / 100.0
+    if direction == "LONG":
+        if open_px <= entry:                       # gapped at/below the limit → fill at open
+            return round(open_px, 4)
+        if low_px is not None and low_px <= entry * (1 + b):   # dipped into the (buffered) limit
+            return round(entry, 4)
+        return None                                # never reached → not taken
+    if open_px >= entry:                           # SHORT: gapped at/above the limit → fill at open
+        return round(open_px, 4)
+    if high_px is not None and high_px >= entry * (1 - b):
+        return round(entry, 4)
     return None
 
 
@@ -158,5 +190,6 @@ def trade_plan(symbol: str, direction: str, horizon_days: int,
         log.info("Incoherent plan for %s %s (e=%s t=%s s=%s) — dropped",
                  symbol, direction, entry, target, stop)
         return None
+    order = out.get("order") if out.get("order") in ("market", "limit") else "market"
     return {"entry": round(entry, 4), "target": round(target, 4),
-            "stop": round(stop, 4), "note": out["note"], "hold": hold}
+            "stop": round(stop, 4), "note": out["note"], "hold": hold, "order": order}

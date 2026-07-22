@@ -243,14 +243,19 @@ def api_live():
 
 
 @app.get("/api/timelines")
-def _closed_before_fill(exit_ts: str | None, fill) -> bool:
-    """True if a position was closed before it could fill (pre-open) — a cancel,
-    not a held trade. Compares tz-aware datetimes (exit_ts is UTC, fill is ET)."""
-    if not exit_ts or fill is None:
+def _is_not_taken(exit_ts: str | None, exit_reason: str | None, fill) -> bool:
+    """True if a call was never actually held — a CANCEL, not a held-then-exited
+    trade. Two ways: a close stamped BEFORE the fill (pre-open thesis death), or a
+    LIMIT order whose level the market never reached (marked 'not taken')."""
+    if not exit_ts:
+        return False
+    if str(exit_reason or "").startswith("not taken"):
+        return True
+    if fill is None:
         return False
     from datetime import datetime
     try:
-        return datetime.fromisoformat(exit_ts) < fill
+        return datetime.fromisoformat(exit_ts) < fill   # tz-aware (exit UTC, fill ET)
     except (ValueError, TypeError):
         return False
 
@@ -280,7 +285,7 @@ def api_timelines(days: int = 30):
             # not a held-then-exited trade (Model A). Detect by timestamp (catches
             # historical rows too), not just the "not taken:" reason marker.
             fill = entry_fill_time(e["ts"], e.get("session"))   # honest entry (9:30 open if decided off-hours)
-            not_taken = _closed_before_fill(e["exit_ts"], fill)
+            not_taken = _is_not_taken(e["exit_ts"], e.get("exit_reason"), fill)
             state = ("not_taken" if not_taken
                      else "exited" if e["exit_ts"]
                      else "graded" if e["graded_at"] else "open")
@@ -301,8 +306,9 @@ def api_timelines(days: int = 30):
                                     else "working")
             events.append(ev)
         latest = evs[-1]
-        latest_not_taken = _closed_before_fill(
-            latest["exit_ts"], entry_fill_time(latest["ts"], latest.get("session")))
+        latest_not_taken = _is_not_taken(
+            latest["exit_ts"], latest.get("exit_reason"),
+            entry_fill_time(latest["ts"], latest.get("session")))
         current = ("NOT_TAKEN" if latest_not_taken
                    else "EXITED" if latest["exit_ts"]
                    else latest["direction"] if latest["graded_at"] is None else "CLOSED")

@@ -103,6 +103,11 @@ EXIT_GIVEBACK_MIN_PEAK = float(os.environ.get("EXIT_GIVEBACK_MIN_PEAK", "4.0")) 
 EXIT_GIVEBACK_FRAC = float(os.environ.get("EXIT_GIVEBACK_FRAC", "0.40"))         # faded ≥ this fraction of that peak → the MFE-decay flag
 EXIT_REVIEW_COOLDOWN_S = int(os.environ.get("EXIT_REVIEW_COOLDOWN_S", "1800"))   # don't re-review the same open position more often than this
 
+# Limit-order fills: a 'limit' pick fills only if the market reaches the plan entry
+# — with this buffer of tolerance so a near-miss still counts as a fill (else it's
+# "not taken"). 'market' picks always fill at the open. (Model A honesty on the level.)
+LIMIT_FILL_BUFFER_PCT = float(os.environ.get("LIMIT_FILL_BUFFER_PCT", "0.25"))
+
 # ---------------------------------------------------------------------------
 # Market sessions (ET clock math)
 # ---------------------------------------------------------------------------
