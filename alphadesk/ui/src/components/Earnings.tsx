@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react"
-import { ChevronRight } from "lucide-react"
+import { ChevronDown } from "lucide-react"
 import type { EarningsRow } from "@/lib/api"
 
 function Panel({
@@ -23,28 +23,30 @@ function Panel({
     <div className="rounded-lg border border-border bg-card p-4">
       {title &&
         (collapsible ? (
-          <button
-            onClick={() => setOpen((o) => !o)}
-            className="flex w-full items-center gap-2 text-left"
-            aria-expanded={open}
-          >
-            <ChevronRight
-              className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${
-                open ? "rotate-90" : ""
-              }`}
-            />
-            <div className={`min-w-0 flex-1 ${show ? "mb-2" : ""}`}>
-              <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          <div className={show ? "mb-2" : ""}>
+            <button
+              onClick={() => setOpen((o) => !o)}
+              className="group -mx-1 flex w-full items-center gap-2 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-muted/40"
+              aria-expanded={open}
+            >
+              <span className="text-xs font-semibold uppercase tracking-wider text-foreground/75">
                 {title}
-                {count != null && (
-                  <span className="ml-1.5 font-normal normal-case text-muted-foreground">
-                    ({count})
-                  </span>
-                )}
-              </div>
-              {sub && open && <div className="text-[11px] text-muted-foreground">{sub}</div>}
-            </div>
-          </button>
+              </span>
+              {count != null && (
+                <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold tabular-nums text-muted-foreground">
+                  {count}
+                </span>
+              )}
+              <ChevronDown
+                className={`ml-auto h-4 w-4 shrink-0 text-muted-foreground/70 transition-transform group-hover:text-foreground ${
+                  open ? "" : "-rotate-90"
+                }`}
+              />
+            </button>
+            {sub && open && (
+              <div className="mt-1 px-1 text-[11px] text-muted-foreground">{sub}</div>
+            )}
+          </div>
         ) : (
           <div className="mb-2">
             <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -145,7 +147,7 @@ export function Earnings({
       {earnings.reported.length > 0 && (
         <Panel
           title="Just reported"
-          sub="grouped by report day — move since the report (the drift so far)"
+          sub="the drift so far — price move since each report went public"
           collapsible
           defaultOpen={false}
           count={earnings.reported.length}
