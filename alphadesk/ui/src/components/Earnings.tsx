@@ -93,6 +93,62 @@ function groupByDay(rows: EarningsRow[], key: (e: EarningsRow) => string): DayGr
   return groups
 }
 
+// Did the desk act on a reporter? (coverage self-assessment)
+const ENG: Record<string, { label: string; cls: string }> = {
+  TOOK: { label: "Took", cls: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" },
+  DEBATED: { label: "Debated", cls: "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400" },
+  SKIPPED: { label: "Skipped", cls: "bg-amber-500/15 text-amber-600 dark:text-amber-400" },
+}
+
+function EngBadge({ state }: { state?: string }) {
+  const b = state ? ENG[state] : undefined
+  if (!b) return <span className="text-[11px] text-muted-foreground/40">·</span>
+  return <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${b.cls}`}>{b.label}</span>
+}
+
+// One-glance "did we do well?" — how many reporters the desk took / debated /
+// skipped / never saw, plus the biggest drift it didn't act on.
+function CoverageSummary({ reported }: { reported: EarningsRow[] }) {
+  const c = (s: string) => reported.filter((e) => e.engagement === s).length
+  const took = c("TOOK")
+  const debated = c("DEBATED")
+  const skipped = c("SKIPPED")
+  const unseen = reported.length - took - debated - skipped
+  const missed = reported
+    .filter(
+      (e) =>
+        (e.engagement === "SKIPPED" || e.engagement === "UNSEEN") &&
+        e.move_since_report_pct != null,
+    )
+    .sort((a, b) => Math.abs(b.move_since_report_pct!) - Math.abs(a.move_since_report_pct!))[0]
+  return (
+    <div className="mb-2 rounded-md bg-muted/40 px-2.5 py-2 text-[11px]">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="font-medium text-muted-foreground">Desk coverage</span>
+        <span className="text-emerald-500">{took} took</span>
+        <span className="text-indigo-400 dark:text-indigo-300">{debated} debated</span>
+        <span className="text-amber-500">{skipped} skipped</span>
+        <span className="text-muted-foreground">{unseen} not seen</span>
+      </div>
+      {missed && (
+        <div className="mt-1 text-muted-foreground">
+          biggest move we didn&apos;t act on:{" "}
+          <span className="font-semibold text-foreground">{missed.symbol}</span>{" "}
+          <span
+            className={
+              missed.move_since_report_pct! >= 0 ? "text-emerald-500" : "text-red-500"
+            }
+          >
+            {missed.move_since_report_pct! >= 0 ? "+" : ""}
+            {missed.move_since_report_pct}%
+          </span>{" "}
+          ({missed.engagement === "SKIPPED" ? "skipped" : "not seen"})
+        </div>
+      )}
+    </div>
+  )
+}
+
 // One run-day group in "Reporting soon" — shows the biggest 8, with the rest
 // expandable/collapsible via the "+N more / show less" toggle.
 function RunGroup({ g }: { g: DayGroup }) {
@@ -152,10 +208,12 @@ export function Earnings({
           defaultOpen={false}
           count={earnings.reported.length}
         >
+          <CoverageSummary reported={earnings.reported} />
           <div className="mb-2 flex items-center gap-2 border-b border-border pb-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
             <span className="w-16">Symbol</span>
             <span className="w-14">Cap</span>
             <span className="w-10">Session</span>
+            <span className="w-20">Desk</span>
             <span className="ml-auto">Move</span>
           </div>
           <div className="space-y-3">
@@ -182,6 +240,9 @@ export function Earnings({
                           {fmtCap(e.market_cap)}
                         </span>
                         <span className="w-10 text-xs text-muted-foreground">{e.session}</span>
+                        <span className="w-20">
+                          <EngBadge state={e.engagement} />
+                        </span>
                         <span
                           className={`ml-auto font-mono tabular-nums ${
                             has ? (up ? "text-emerald-500" : "text-red-500") : "text-muted-foreground"

@@ -181,6 +181,10 @@ export interface EarningsRow {
   move_since_report_pct?: number | null // % price move since the report went public (the drift so far)
   market_cap?: number | null // for ranking big names first within a run-day
   run_at?: string | null // when to run the desk to catch the drift (9:30 ET, next session)
+  // coverage self-assessment (reported names only): did the desk act on this reporter?
+  engagement?: "TOOK" | "DEBATED" | "SKIPPED" | "UNSEEN"
+  engagement_pick_id?: number | null
+  engagement_dir?: "LONG" | "SHORT" | null
 }
 
 async function get<T>(path: string): Promise<T> {

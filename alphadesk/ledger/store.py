@@ -693,6 +693,38 @@ def recently_reported(days: int = 3) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def earnings_engagement(symbols: list[str], days_back: int = 6) -> dict[str, dict]:
+    """For each symbol, the desk's MOST RECENT engagement in the last `days_back`:
+    a TEAM pick (TOOK if the Head took it, else DEBATED) or a scout/gate SKIP.
+    Used to assess earnings coverage — did the desk act on the reporter, pass on
+    it, or never even see it (no row → UNSEEN, decided by the caller)."""
+    if not symbols:
+        return {}
+    syms = sorted({s.upper() for s in symbols})
+    ph = ",".join("?" for _ in syms)
+    with _connect() as conn:
+        picks = conn.execute(
+            f"SELECT symbol, id, direction, taken, alpha_net, ts FROM picks"
+            f" WHERE arm='TEAM' AND symbol IN ({ph}) AND ts >= datetime('now', ?)"
+            " ORDER BY ts DESC", (*syms, f"-{int(days_back)} days"),
+        ).fetchall()
+        skips = conn.execute(
+            f"SELECT symbol, reason, ts FROM skips WHERE symbol IN ({ph})"
+            " AND ts >= datetime('now', ?) ORDER BY ts DESC",
+            (*syms, f"-{int(days_back)} days"),
+        ).fetchall()
+    out: dict[str, dict] = {}
+    for r in picks:                         # newest pick per symbol wins
+        s = r["symbol"].upper()
+        out.setdefault(s, {
+            "state": "TOOK" if r["taken"] else "DEBATED", "ts": r["ts"],
+            "direction": r["direction"], "pick_id": r["id"], "alpha_net": r["alpha_net"]})
+    for r in skips:                         # only if the desk never debated it
+        s = r["symbol"].upper()
+        out.setdefault(s, {"state": "SKIPPED", "ts": r["ts"], "reason": r["reason"]})
+    return out
+
+
 def earnings_window(days_back: int = 4, days_fwd: int = 14) -> list[dict]:
     """All calendar rows in [today-days_back, today+days_fwd] — reported AND
     upcoming, NOT gated on eps_actual. For the time-aware Calendar view, which

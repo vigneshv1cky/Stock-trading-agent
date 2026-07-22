@@ -163,8 +163,19 @@ def api_earnings():
     # Show the real, verifiable signal: how much the stock has moved SINCE the
     # report went public (the drift itself) — not a maybe-misleading EPS surprise%.
     moves = prices.moves_since_report(reported)
+    # Coverage self-assessment: did the desk act on each reporter? Match the desk's
+    # engagement (pick/skip) that happened ON OR AFTER the report — the post-earnings
+    # decision — so a pre-report pick doesn't count as catching the drift.
+    eng = store.earnings_engagement([e["symbol"] for e in reported])
     for e in reported:
         e["move_since_report_pct"] = moves.get(e["symbol"])
+        m = eng.get(e["symbol"].upper())
+        if m and (m.get("ts") or "")[:10] >= e["report_date"][:10]:
+            e["engagement"] = m["state"]
+            e["engagement_pick_id"] = m.get("pick_id")
+            e["engagement_dir"] = m.get("direction")
+        else:
+            e["engagement"] = "UNSEEN"     # never surfaced (or only picked pre-report)
     return {"upcoming": upcoming, "reported": reported}
 
 
