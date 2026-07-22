@@ -31,8 +31,43 @@ function PerfStrip({ stats }: { stats: Stats | null }) {
   )
 }
 
-// The desk's current stance on a stock — the headline of its timeline card.
-function StanceBadge({ current }: { current: string }) {
+// Classify how a position was closed, from the recorded exit reason + realized
+// alpha. The watcher writes deterministic "target hit …" / "stopped out …"
+// reasons; the review agent writes a free-text thesis close. A target hit is a
+// win (green), a stop a loss (red); a discretionary close is toned by what it
+// actually banked (a small give-back reads red, a locked-in gain green).
+function exitKind(
+  reason: string | null | undefined,
+  realized: number | null | undefined,
+): { label: string; tone: number } {
+  const r = (reason ?? "").toLowerCase()
+  if (r.startsWith("target hit")) return { label: "target hit", tone: 1 }
+  if (r.startsWith("stopped out")) return { label: "stopped out", tone: -1 }
+  return { label: "closed early", tone: realized ?? 0 }
+}
+
+// Green for a gain, red for a loss, amber for a flat/unknown close.
+function toneText(t: number): string {
+  return t > 0
+    ? "text-emerald-600 dark:text-emerald-400"
+    : t < 0
+      ? "text-red-600 dark:text-red-400"
+      : "text-amber-600 dark:text-amber-400"
+}
+function toneChip(t: number): string {
+  return t > 0
+    ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+    : t < 0
+      ? "bg-red-500/15 text-red-600 dark:text-red-400"
+      : "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+}
+
+// The desk's current stance on a stock — the headline of its timeline card. For
+// an exited name the badge says WHY it closed and is colored by the outcome.
+function StanceBadge({ current, exit }: { current: string; exit?: { label: string; tone: number } | null }) {
+  if (current === "EXITED" && exit) {
+    return <Badge className={`text-[11px] font-semibold ${toneChip(exit.tone)}`}>Exited · {exit.label}</Badge>
+  }
   const map: Record<string, { label: string; cls: string }> = {
     LONG: { label: "Buy", cls: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" },
     SHORT: { label: "Short", cls: "bg-red-500/15 text-red-600 dark:text-red-400" },
@@ -54,11 +89,14 @@ function Outcome({ e }: { e: TimelineEvent }) {
   }
   if (e.state === "exited") {
     // realized performance frozen at the exit price (vs S&P, net friction) —
-    // distinct from the horizon grade; fall back to raw return, then bare label
+    // distinct from the horizon grade; fall back to raw return, then bare label.
+    // The tag says WHY it closed and is colored like the outcome: target=green,
+    // stop=red, discretionary=by the alpha it banked.
     const ex = e.exit_alpha ?? e.exit_return_pct
+    const k = exitKind(e.exit_reason, ex)
     return (
       <span className="text-right">
-        <span className="text-xs font-medium text-amber-600 dark:text-amber-400">Exited</span>
+        <span className={`text-xs font-semibold ${toneText(k.tone)}`}>Exited · {k.label}</span>
         {ex != null && (
           <span className={`ml-1.5 font-mono text-sm font-semibold tabular-nums ${ex > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
             {fmtAlpha(ex)}{" "}
@@ -128,11 +166,15 @@ function SymbolCard({ s, onSelect }: { s: SymbolTimeline; onSelect: (id: number)
   const more = events.length - shown.length
   const latest = events[0]
   const exitReason = s.current === "EXITED" ? latest?.exit_reason : null
+  const exit =
+    s.current === "EXITED" && latest
+      ? exitKind(latest.exit_reason, latest.exit_alpha ?? latest.exit_return_pct)
+      : null
   return (
     <Card size="sm">
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-semibold">{s.symbol}</span>
-        <StanceBadge current={s.current} />
+        <StanceBadge current={s.current} exit={exit} />
         {s.changed && (
           <Badge className="gap-1 bg-fuchsia-500/15 font-semibold text-fuchsia-600 dark:text-fuchsia-400">
             <RotateCcw className="h-2.5 w-2.5" /> changed
@@ -142,7 +184,7 @@ function SymbolCard({ s, onSelect }: { s: SymbolTimeline; onSelect: (id: number)
           {events.length} call{events.length > 1 ? "s" : ""}
         </span>
       </div>
-      {exitReason && <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">Exited: {exitReason}</p>}
+      {exitReason && <p className={`mt-1 text-xs ${toneText(exit?.tone ?? 0)}`}>Exited: {exitReason}</p>}
       <div className="mt-1.5 divide-y divide-border/60">
         {shown.map((e) => (
           <EventRow key={e.id} e={e} onSelect={onSelect} />
