@@ -35,8 +35,12 @@ function BySource() {
               {sources.map((s) => (
                 <tr key={s.source} className="border-t border-border/50">
                   <td className="py-1.5 font-medium">{s.source}</td>
-                  <td className="py-1.5 text-right tabular-nums text-muted-foreground">{s.articles}</td>
-                  <td className="py-1.5 text-right tabular-nums text-muted-foreground">{fmtTok(s.tokens)}</td>
+                  <td className="py-1.5 text-right tabular-nums text-muted-foreground">
+                    {s.articles || "—"}
+                  </td>
+                  <td className="py-1.5 text-right tabular-nums text-muted-foreground">
+                    {s.tokens ? fmtTok(s.tokens) : "—"}
+                  </td>
                   <td className="py-1.5 text-right tabular-nums">
                     {s.picks}
                     {s.graded > 0 && <span className="text-muted-foreground"> ({s.graded}g)</span>}
@@ -57,7 +61,8 @@ function BySource() {
             </tbody>
           </table>
           <p className="mt-2 text-[10px] text-muted-foreground">
-            tokens = ingestion + debate for that channel · (Ng) = graded so far
+            tokens = ingestion + debate for that channel · (Ng) = graded so far ·
+            “—” = not tracked (arts count from new runs only)
           </p>
         </div>
       )}
