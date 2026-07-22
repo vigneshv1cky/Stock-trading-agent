@@ -106,6 +106,45 @@ function EngBadge({ state }: { state?: string }) {
   return <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${b.cls}`}>{b.label}</span>
 }
 
+const BIG_MOVE = 6 // % drift that counts as a real move (matches the skip-miss line)
+const THIN_CAP = 100_000_000 // below ~$100M cap: effectively untradeable at size
+
+// Classify a reporter's outcome vs what the desk did. A big drift the desk didn't
+// act on is only a TRUE miss if it was tradeable; in a thin/illiquid name it's a
+// FALSE miss (a pump you couldn't have captured — the HIHO case). For names the
+// desk DID act on, whether the interim drift is going its way (not the official
+// grade, which settles at the horizon).
+function assess(e: EarningsRow): { label: string; cls: string; tip: string } | null {
+  const move = e.move_since_report_pct
+  if (move == null) return { label: "pending", cls: "text-muted-foreground/50", tip: "no post-report session yet" }
+  const eng = e.engagement
+  if (eng === "TOOK" || eng === "DEBATED") {
+    if (!e.engagement_dir || Math.abs(move) < 1)
+      return { label: "flat", cls: "text-muted-foreground/60", tip: "little drift so far" }
+    const favorable = e.engagement_dir === "LONG" ? move > 0 : move < 0
+    return favorable
+      ? { label: "on track", cls: "text-emerald-500", tip: "interim drift is going our way (not the official grade)" }
+      : { label: "adverse", cls: "text-red-500", tip: "interim drift is against our call (not the official grade)" }
+  }
+  // SKIPPED / UNSEEN
+  if (Math.abs(move) < BIG_MOVE)
+    return { label: "fair pass", cls: "text-muted-foreground/60", tip: "small move — nothing forgone" }
+  const thin = (e.market_cap ?? Infinity) < THIN_CAP
+  return thin
+    ? { label: "false miss", cls: "text-amber-500", tip: "big move but too illiquid to trade at size — uncatchable" }
+    : { label: "true miss", cls: "font-semibold text-red-500", tip: "big, tradeable move the desk didn't act on" }
+}
+
+function AssessTag({ e }: { e: EarningsRow }) {
+  const a = assess(e)
+  if (!a) return null
+  return (
+    <span className={`text-[10px] ${a.cls}`} title={a.tip}>
+      {a.label}
+    </span>
+  )
+}
+
 // One-glance "did we do well?" — how many reporters the desk took / debated /
 // skipped / never saw, plus the biggest drift it didn't act on.
 function CoverageSummary({ reported }: { reported: EarningsRow[] }) {
@@ -114,12 +153,10 @@ function CoverageSummary({ reported }: { reported: EarningsRow[] }) {
   const debated = c("DEBATED")
   const skipped = c("SKIPPED")
   const unseen = reported.length - took - debated - skipped
-  const missed = reported
-    .filter(
-      (e) =>
-        (e.engagement === "SKIPPED" || e.engagement === "UNSEEN") &&
-        e.move_since_report_pct != null,
-    )
+  const trueMiss = reported.filter((e) => assess(e)?.label === "true miss").length
+  const falseMiss = reported.filter((e) => assess(e)?.label === "false miss").length
+  const worst = reported
+    .filter((e) => assess(e)?.label === "true miss")
     .sort((a, b) => Math.abs(b.move_since_report_pct!) - Math.abs(a.move_since_report_pct!))[0]
   return (
     <div className="mb-2 rounded-md bg-muted/40 px-2.5 py-2 text-[11px]">
@@ -130,21 +167,21 @@ function CoverageSummary({ reported }: { reported: EarningsRow[] }) {
         <span className="text-amber-500">{skipped} skipped</span>
         <span className="text-muted-foreground">{unseen} not seen</span>
       </div>
-      {missed && (
-        <div className="mt-1 text-muted-foreground">
-          biggest move we didn&apos;t act on:{" "}
-          <span className="font-semibold text-foreground">{missed.symbol}</span>{" "}
-          <span
-            className={
-              missed.move_since_report_pct! >= 0 ? "text-emerald-500" : "text-red-500"
-            }
-          >
-            {missed.move_since_report_pct! >= 0 ? "+" : ""}
-            {missed.move_since_report_pct}%
-          </span>{" "}
-          ({missed.engagement === "SKIPPED" ? "skipped" : "not seen"})
-        </div>
-      )}
+      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className={trueMiss > 0 ? "font-semibold text-red-500" : "text-muted-foreground"}>
+          {trueMiss} true miss{trueMiss === 1 ? "" : "es"}
+        </span>
+        <span className="text-amber-500/80">{falseMiss} false (untradeable)</span>
+        {worst && (
+          <span className="text-muted-foreground">
+            worst: <span className="font-semibold text-foreground">{worst.symbol}</span>{" "}
+            <span className={worst.move_since_report_pct! >= 0 ? "text-emerald-500" : "text-red-500"}>
+              {worst.move_since_report_pct! >= 0 ? "+" : ""}
+              {worst.move_since_report_pct}%
+            </span>
+          </span>
+        )}
+      </div>
     </div>
   )
 }
@@ -175,6 +212,9 @@ function ReportedRow({ e }: { e: EarningsRow }) {
         <span className="w-10 text-xs text-muted-foreground">{e.session}</span>
         <span className="w-20">
           <EngBadge state={e.engagement} />
+        </span>
+        <span className="w-20">
+          <AssessTag e={e} />
         </span>
         <span
           className={`ml-auto font-mono tabular-nums ${
@@ -269,6 +309,7 @@ export function Earnings({
             <span className="w-14">Cap</span>
             <span className="w-10">Session</span>
             <span className="w-20">Desk</span>
+            <span className="w-20">Verdict</span>
             <span className="ml-auto">Move</span>
           </div>
           <div className="space-y-3">
