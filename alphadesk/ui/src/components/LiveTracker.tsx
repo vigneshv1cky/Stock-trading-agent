@@ -49,9 +49,9 @@ function Track({ p }: { p: LivePick }) {
         )}
       </div>
       <div className="mt-1 flex justify-between text-[10px] text-muted-foreground">
-        <span className="text-red-500">stop ${p.plan_stop}</span>
+        <span className="text-red-600 dark:text-red-400">stop ${p.plan_stop}</span>
         <span>entry ${p.plan_entry}</span>
-        <span className="text-emerald-500">target ${p.plan_target}</span>
+        <span className="text-emerald-600 dark:text-emerald-400">target ${p.plan_target}</span>
       </div>
     </div>
   )
@@ -97,7 +97,7 @@ export function LiveTracker() {
         <RefreshCw className="h-3 w-3" />
         <span>
           Live · updates every 15s · market{" "}
-          <span className={market === "OPEN" ? "font-medium text-emerald-500" : ""}>{market}</span>
+          <span className={market === "OPEN" ? "font-medium text-emerald-600 dark:text-emerald-400" : ""}>{market}</span>
         </span>
       </div>
 
@@ -113,11 +113,11 @@ export function LiveTracker() {
           >
             <div className="flex flex-wrap items-center gap-2 text-sm">
               {dirUp(p.direction) ? (
-                <ArrowUp className="h-4 w-4 text-emerald-500" />
+                <ArrowUp className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
               ) : (
-                <ArrowDown className="h-4 w-4 text-red-500" />
+                <ArrowDown className="h-4 w-4 text-red-600 dark:text-red-400" />
               )}
-              <span className={`font-bold ${dirUp(p.direction) ? "text-emerald-500" : "text-red-500"}`}>
+              <span className={`font-bold ${dirUp(p.direction) ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
                 {dirWord(p.direction)}
               </span>
               <span className="font-bold">{p.symbol}</span>
@@ -130,7 +130,7 @@ export function LiveTracker() {
               <span className="ml-auto font-mono text-sm tabular-nums">
                 {p.current != null ? `$${p.current}` : "—"}{" "}
                 {p.pnl_pct != null && (
-                  <span className={pos ? "text-emerald-500" : "text-red-500"}>
+                  <span className={pos ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}>
                     ({pos ? "+" : ""}
                     {p.pnl_pct}%)
                   </span>
@@ -146,7 +146,7 @@ export function LiveTracker() {
               </span>
               {p.alpha_so_far != null && (
                 <span
-                  className={`font-medium ${p.alpha_so_far >= 0 ? "text-emerald-500" : "text-red-500"}`}
+                  className={`font-medium ${p.alpha_so_far >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}
                   title="Return vs S&P so far, net of friction — a live mark, not the official grade (which settles at the horizon)"
                 >
                   vs S&P {p.alpha_so_far >= 0 ? "+" : ""}

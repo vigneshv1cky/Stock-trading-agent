@@ -89,11 +89,11 @@ function PlanLine({ plan, direction }: { plan: Plan; direction?: string }) {
         </span>
         <span className="text-muted-foreground">·</span>
         <span>
-          target <span className="font-medium text-emerald-500">${plan.target}</span>
+          target <span className="font-medium text-emerald-600 dark:text-emerald-400">${plan.target}</span>
         </span>
         <span className="text-muted-foreground">·</span>
         <span>
-          stop <span className="font-medium text-red-500">${plan.stop}</span>
+          stop <span className="font-medium text-red-600 dark:text-red-400">${plan.stop}</span>
         </span>
         <span className="text-muted-foreground">· {plan.hold}</span>
       </div>
@@ -116,16 +116,16 @@ function Line({ ev }: { ev: Ev }) {
     case "exposure_shock":
       return (
         <div className={cls}>
-          <Tag className="text-cyan-500">Looking for companies affected by {ev.symbol}</Tag>
+          <Tag className="text-cyan-600 dark:text-cyan-400">Looking for companies affected by {ev.symbol}</Tag>
         </div>
       )
     case "exposure_candidate":
       return (
         <div className={cls}>
-          <Tag className="text-cyan-500">
+          <Tag className="text-cyan-600 dark:text-cyan-400">
             Knock-on: {ev.shock} → {ev.symbol}
           </Tag>{" "}
-          <span className={dirUp(ev.direction) ? "text-emerald-500" : "text-red-500"}>
+          <span className={dirUp(ev.direction) ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}>
             {dirWord(ev.direction)}
           </span>{" "}
           <Badge variant="secondary">{ev.strength}</Badge>
@@ -135,7 +135,7 @@ function Line({ ev }: { ev: Ev }) {
     case "triage_pick":
       return (
         <div className={cls}>
-          <Tag className="text-yellow-500">Shortlisted {ev.symbol}</Tag>{" "}
+          <Tag className="text-yellow-600 dark:text-yellow-400">Shortlisted {ev.symbol}</Tag>{" "}
           <Badge variant="secondary" className="ml-1">
             {plainEdge(ev.edge)}
           </Badge>
@@ -163,9 +163,9 @@ function Line({ ev }: { ev: Ev }) {
     case "thesis":
       return (
         <div className={cls}>
-          <Tag className="text-blue-500">The case for {ev.symbol}</Tag>
+          <Tag className="text-blue-600 dark:text-blue-400">The case for {ev.symbol}</Tag>
           <p className="mt-1">
-            <b className={dirUp(ev.direction) ? "text-emerald-500" : "text-red-500"}>
+            <b className={dirUp(ev.direction) ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}>
               {dirWord(ev.direction)}
             </b>{" "}
             · hold ~{ev.horizon_days} days · confidence {ev.score}/100
@@ -175,7 +175,7 @@ function Line({ ev }: { ev: Ev }) {
     case "concern":
       return (
         <div className={cls}>
-          <Tag className="text-red-500">The pushback · {ev.symbol}</Tag>
+          <Tag className="text-red-600 dark:text-red-400">The pushback · {ev.symbol}</Tag>
           <p className="mt-1 font-medium">{ev.claim}</p>
           <p className="text-muted-foreground">{ev.evidence}</p>
         </div>
@@ -183,14 +183,14 @@ function Line({ ev }: { ev: Ev }) {
     case "counter":
       return (
         <div className={cls}>
-          <Tag className="text-fuchsia-500">
+          <Tag className="text-fuchsia-600 dark:text-fuchsia-400">
             {ev.stance === "FLIP" ? `Critic reverses the call · ${ev.symbol}` : `Critic: stand aside · ${ev.symbol}`}
           </Tag>
           {ev.stance === "FLIP" && (
             <p className="mt-1">
               <span className="text-muted-foreground line-through">{dirWord(ev.proposed_from)}</span>{" "}
               →{" "}
-              <b className={dirUp(ev.counter_direction) ? "text-emerald-500" : "text-red-500"}>
+              <b className={dirUp(ev.counter_direction) ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}>
                 {dirWord(ev.counter_direction)}
               </b>
             </p>
@@ -201,14 +201,14 @@ function Line({ ev }: { ev: Ev }) {
     case "fact_flag":
       return (
         <div className={cls}>
-          <Tag className="text-orange-500">Fact-check</Tag>
+          <Tag className="text-orange-600 dark:text-orange-400">Fact-check</Tag>
           <p className="mt-1">{ev.text}</p>
         </div>
       )
     case "rebuttal":
       return (
         <div className={cls}>
-          <Tag className="text-blue-500">Researcher's reply · {ev.symbol}</Tag>
+          <Tag className="text-blue-600 dark:text-blue-400">Researcher's reply · {ev.symbol}</Tag>
           <p className="mt-1">
             updated confidence {ev.revised_score}/100 · agreed with the pushback:{" "}
             {ev.concede ? "yes" : "no"}
@@ -218,11 +218,11 @@ function Line({ ev }: { ev: Ev }) {
     case "decision":
       return (
         <div className={cls}>
-          <Tag className="text-emerald-500">Decision · {ev.symbol}</Tag>
+          <Tag className="text-emerald-600 dark:text-emerald-400">Decision · {ev.symbol}</Tag>
           <p className="mt-1">
             {ev.approved ? "✅ Conviction call" : "◦ Thin lean (tracked)"} ·{" "}
             {plainVerdict(ev.verdict)} · confidence {ev.conviction}/100
-            {ev.flipped && <span className="text-fuchsia-500"> · reversed by critic</span>}
+            {ev.flipped && <span className="text-fuchsia-600 dark:text-fuchsia-400"> · reversed by critic</span>}
           </p>
           <p className="text-muted-foreground">{ev.summary}</p>
         </div>
@@ -230,7 +230,7 @@ function Line({ ev }: { ev: Ev }) {
     case "plan":
       return (
         <div className={cls}>
-          <Tag className="text-indigo-500">Trade plan · {ev.symbol}</Tag>
+          <Tag className="text-indigo-600 dark:text-indigo-400">Trade plan · {ev.symbol}</Tag>
           {ev.entry != null && ev.target != null && ev.stop != null && (
             <PlanLine
               plan={{
@@ -314,7 +314,7 @@ export function FindTrades({
             <div className="flex items-center gap-2">
               <h2 className="text-base font-semibold tracking-tight">Find Trades</h2>
               {running && (
-                <span className="flex items-center gap-1 text-[11px] font-medium text-emerald-500">
+                <span className="flex items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
                   <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" /> live
                 </span>
               )}
@@ -396,7 +396,7 @@ export function FindTrades({
                     <Badge className={exit ? "bg-red-600 text-white" : "bg-emerald-600 text-white"}>
                       {exit ? "Sell now" : "Keep"}
                     </Badge>
-                    <span className={dirUp(p.direction) ? "text-emerald-500" : "text-red-500"}>
+                    <span className={dirUp(p.direction) ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}>
                       {dirWord(p.direction)}
                     </span>
                     <span className="font-bold">{p.symbol}</span>
@@ -418,7 +418,7 @@ export function FindTrades({
           <div className="mt-4 space-y-2">
             {chief && (
               <div className="rounded-md border border-l-4 border-l-amber-500 bg-amber-500/5 p-3">
-                <Tag className="text-amber-500">Final call — comparing all the ideas</Tag>
+                <Tag className="text-amber-600 dark:text-amber-400">Final call — comparing all the ideas</Tag>
                 <p className="mt-1 text-sm">{chief}</p>
               </div>
             )}
@@ -438,13 +438,13 @@ export function FindTrades({
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-muted-foreground">#{i + 1}</span>
                   {r.direction === "LONG" ? (
-                    <ArrowUp className="h-4 w-4 text-emerald-500" />
+                    <ArrowUp className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
                   ) : (
-                    <ArrowDown className="h-4 w-4 text-red-500" />
+                    <ArrowDown className="h-4 w-4 text-red-600 dark:text-red-400" />
                   )}
                   <span
                     className={`font-bold ${
-                      dirUp(r.direction) ? "text-emerald-500" : "text-red-500"
+                      dirUp(r.direction) ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"
                     }`}
                   >
                     {dirWord(r.direction)}
@@ -467,7 +467,7 @@ export function FindTrades({
                 <p className="mt-1 text-xs text-muted-foreground">{r.summary}</p>
                 {r.plan && <PlanLine plan={r.plan} direction={r.direction} />}
                 {r.chief_reason && (
-                  <p className="mt-1 text-xs text-amber-600 dark:text-amber-500/90">
+                  <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
                     <span className="font-medium">Final call:</span> {r.chief_reason}
                   </p>
                 )}

@@ -13,7 +13,7 @@ import { RightRail } from "@/components/RightRail"
 import { Moon, Sun } from "lucide-react"
 
 function Kpi({ label, value, tone }: { label: string; value: string; tone?: number | null }) {
-  const color = tone == null ? "" : tone > 0 ? "text-emerald-500" : tone < 0 ? "text-red-500" : ""
+  const color = tone == null ? "" : tone > 0 ? "text-emerald-600 dark:text-emerald-400" : tone < 0 ? "text-red-600 dark:text-red-400" : ""
   return (
     <div className="hidden text-right sm:block">
       <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
@@ -62,7 +62,7 @@ export default function App() {
 
           <div
             className={`ml-2 flex items-center gap-1.5 text-xs font-medium ${
-              live ? "text-emerald-500" : "text-muted-foreground"
+              live ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"
             }`}
           >
             <span

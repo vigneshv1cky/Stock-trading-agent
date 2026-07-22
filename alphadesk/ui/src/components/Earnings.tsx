@@ -123,16 +123,16 @@ function assess(e: EarningsRow): { label: string; cls: string; tip: string } | n
       return { label: "flat", cls: "text-muted-foreground/60", tip: "little drift so far" }
     const favorable = e.engagement_dir === "LONG" ? move > 0 : move < 0
     return favorable
-      ? { label: "on track", cls: "text-emerald-500", tip: "interim drift is going our way (not the official grade)" }
-      : { label: "adverse", cls: "text-red-500", tip: "interim drift is against our call (not the official grade)" }
+      ? { label: "on track", cls: "text-emerald-600 dark:text-emerald-400", tip: "interim drift is going our way (not the official grade)" }
+      : { label: "adverse", cls: "text-red-600 dark:text-red-400", tip: "interim drift is against our call (not the official grade)" }
   }
   // SKIPPED / UNSEEN
   if (Math.abs(move) < BIG_MOVE)
     return { label: "fair pass", cls: "text-muted-foreground/60", tip: "small move — nothing forgone" }
   const thin = (e.market_cap ?? Infinity) < THIN_CAP
   return thin
-    ? { label: "false miss", cls: "text-amber-500", tip: "big move but too illiquid to trade at size — uncatchable" }
-    : { label: "true miss", cls: "font-semibold text-red-500", tip: "big, tradeable move the desk didn't act on" }
+    ? { label: "false miss", cls: "text-amber-600 dark:text-amber-400", tip: "big move but too illiquid to trade at size — uncatchable" }
+    : { label: "true miss", cls: "font-semibold text-red-600 dark:text-red-400", tip: "big, tradeable move the desk didn't act on" }
 }
 
 function AssessTag({ e }: { e: EarningsRow }) {
@@ -162,20 +162,20 @@ function CoverageSummary({ reported }: { reported: EarningsRow[] }) {
     <div className="mb-2 rounded-md bg-muted/40 px-2.5 py-2 text-[11px]">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <span className="font-medium text-muted-foreground">Desk coverage</span>
-        <span className="text-emerald-500">{took} took</span>
-        <span className="text-indigo-400 dark:text-indigo-300">{debated} debated</span>
-        <span className="text-amber-500">{skipped} skipped</span>
+        <span className="text-emerald-600 dark:text-emerald-400">{took} took</span>
+        <span className="text-indigo-600 dark:text-indigo-400">{debated} debated</span>
+        <span className="text-amber-600 dark:text-amber-400">{skipped} skipped</span>
         <span className="text-muted-foreground">{unseen} not seen</span>
       </div>
       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span className={trueMiss > 0 ? "font-semibold text-red-500" : "text-muted-foreground"}>
+        <span className={trueMiss > 0 ? "font-semibold text-red-600 dark:text-red-400" : "text-muted-foreground"}>
           {trueMiss} true miss{trueMiss === 1 ? "" : "es"}
         </span>
-        <span className="text-amber-500/80">{falseMiss} false (untradeable)</span>
+        <span className="text-amber-600 dark:text-amber-400">{falseMiss} false (untradeable)</span>
         {worst && (
           <span className="text-muted-foreground">
             worst: <span className="font-semibold text-foreground">{worst.symbol}</span>{" "}
-            <span className={worst.move_since_report_pct! >= 0 ? "text-emerald-500" : "text-red-500"}>
+            <span className={worst.move_since_report_pct! >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}>
               {worst.move_since_report_pct! >= 0 ? "+" : ""}
               {worst.move_since_report_pct}%
             </span>
@@ -218,7 +218,7 @@ function ReportedRow({ e }: { e: EarningsRow }) {
         </span>
         <span
           className={`ml-auto font-mono tabular-nums ${
-            has ? (up ? "text-emerald-500" : "text-red-500") : "text-muted-foreground"
+            has ? (up ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400") : "text-muted-foreground"
           }`}
         >
           {has ? `${up ? "+" : ""}${move}%` : "—"}
@@ -252,7 +252,7 @@ function RunGroup({ g }: { g: DayGroup }) {
   const more = g.rows.length - 8
   return (
     <div>
-      <div className="mb-1 text-xs font-semibold text-emerald-500">
+      <div className="mb-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
         {g.day === "—" ? "Run time n/a" : `Run ${dayLabel(g.day)} · 9:30 ET`}
       </div>
       <ul className="divide-y divide-border">
@@ -316,7 +316,7 @@ export function Earnings({
             {groupByDay(earnings.reported, (e) => e.report_date.slice(0, 10)).map((g) => (
               <div key={g.day}>
                 <div className="mb-1 flex items-baseline justify-between">
-                  <span className="text-xs font-semibold text-indigo-500">
+                  <span className="text-xs font-semibold text-indigo-600 dark:text-indigo-400">
                     Reported {dayLabel(g.day)}
                   </span>
                   <span className="text-[11px] text-muted-foreground">{g.rows.length} names</span>

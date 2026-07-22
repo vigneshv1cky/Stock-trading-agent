@@ -4,7 +4,7 @@ import { dirUp, dirWord, plainEdge } from "@/lib/plain"
 import { ArrowDown, ArrowUp, RotateCcw } from "lucide-react"
 
 function Stat({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: number | null }) {
-  const color = tone == null ? "" : tone > 0 ? "text-emerald-500" : tone < 0 ? "text-red-500" : ""
+  const color = tone == null ? "" : tone > 0 ? "text-emerald-600 dark:text-emerald-400" : tone < 0 ? "text-red-600 dark:text-red-400" : ""
   return (
     <div className="rounded-lg border border-border bg-card p-3">
       <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
@@ -44,7 +44,7 @@ function StanceBadge({ current }: { current: string }) {
 function Outcome({ e }: { e: TimelineEvent }) {
   if (e.state === "graded" && e.alpha_net != null) {
     return (
-      <span className={`font-mono text-sm font-semibold tabular-nums ${e.alpha_net > 0 ? "text-emerald-500" : "text-red-500"}`}>
+      <span className={`font-mono text-sm font-semibold tabular-nums ${e.alpha_net > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
         {fmtAlpha(e.alpha_net)} <span className="text-[10px] font-normal text-muted-foreground">vs S&P</span>
       </span>
     )
@@ -57,7 +57,7 @@ function Outcome({ e }: { e: TimelineEvent }) {
       <span className="text-right">
         <span className="text-xs font-medium text-amber-600 dark:text-amber-400">Exited</span>
         {ex != null && (
-          <span className={`ml-1.5 font-mono text-sm font-semibold tabular-nums ${ex > 0 ? "text-emerald-500" : "text-red-500"}`}>
+          <span className={`ml-1.5 font-mono text-sm font-semibold tabular-nums ${ex > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
             {fmtAlpha(ex)}{" "}
             <span className="text-[10px] font-normal text-muted-foreground">
               {e.exit_alpha != null ? "vs S&P" : "ret"}
@@ -73,13 +73,13 @@ function Outcome({ e }: { e: TimelineEvent }) {
     return (
       <span className="text-right">
         <span className="font-mono text-sm tabular-nums">${e.current}</span>{" "}
-        <span className={`font-mono text-xs tabular-nums ${pos ? "text-emerald-500" : "text-red-500"}`}>
+        <span className={`font-mono text-xs tabular-nums ${pos ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
           ({pos ? "+" : ""}
           {e.pnl_pct}%)
         </span>
         {e.alpha_so_far != null && (
           <span
-            className={`ml-1 text-[10px] ${aPos ? "text-emerald-500" : "text-red-500"}`}
+            className={`ml-1 text-[10px] ${aPos ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}
             title="How much it's beating the S&P 500 so far, net of friction — a live mark, not the official grade"
           >
             vs S&P {aPos ? "+" : ""}
@@ -99,8 +99,8 @@ function EventRow({ e, onSelect }: { e: TimelineEvent; onSelect: (id: number) =>
       onClick={() => onSelect(e.id)}
       className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-muted/50"
     >
-      {up ? <ArrowUp className="h-3.5 w-3.5 shrink-0 text-emerald-500" /> : <ArrowDown className="h-3.5 w-3.5 shrink-0 text-red-500" />}
-      <span className={`text-xs font-medium ${up ? "text-emerald-500" : "text-red-500"}`}>{dirWord(e.direction)}</span>
+      {up ? <ArrowUp className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" /> : <ArrowDown className="h-3.5 w-3.5 shrink-0 text-red-600 dark:text-red-400" />}
+      <span className={`text-xs font-medium ${up ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>{dirWord(e.direction)}</span>
       <span className="font-mono text-[11px] tabular-nums text-muted-foreground">{etDateTime(e.ts)}</span>
       {e.edge && <span className="hidden rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground sm:inline">{plainEdge(e.edge)}</span>}
       <span className="ml-auto flex shrink-0 items-center gap-2.5">
@@ -109,8 +109,8 @@ function EventRow({ e, onSelect }: { e: TimelineEvent; onSelect: (id: number) =>
             className="hidden font-mono text-[10px] tabular-nums md:inline"
             title="How far it ran / how far underwater while held (max favorable / adverse excursion vs entry)"
           >
-            <span className="text-emerald-500/75">▲{e.mfe_pct >= 0 ? "+" : ""}{e.mfe_pct.toFixed(1)}%</span>{" "}
-            {e.mae_pct != null && <span className="text-red-500/75">▼{e.mae_pct.toFixed(1)}%</span>}
+            <span className="text-emerald-600/80 dark:text-emerald-400/80">▲{e.mfe_pct >= 0 ? "+" : ""}{e.mfe_pct.toFixed(1)}%</span>{" "}
+            {e.mae_pct != null && <span className="text-red-600/80 dark:text-red-400/80">▼{e.mae_pct.toFixed(1)}%</span>}
           </span>
         )}
         <Outcome e={e} />

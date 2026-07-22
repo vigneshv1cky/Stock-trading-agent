@@ -50,8 +50,8 @@ function BySource() {
                       s.avg_alpha == null
                         ? "text-muted-foreground"
                         : s.avg_alpha > 0
-                          ? "text-emerald-500"
-                          : "text-red-500"
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : "text-red-600 dark:text-red-400"
                     }`}
                   >
                     {s.avg_alpha == null ? "—" : fmtAlpha(s.avg_alpha)}

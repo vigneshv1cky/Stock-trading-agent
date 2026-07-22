@@ -43,11 +43,11 @@ function TheCall({ pick }: { pick: Pick }) {
       <CardContent className="space-y-2 pt-4">
         <div className="flex items-center gap-2 text-lg font-bold">
           {long ? (
-            <ArrowUp className="h-5 w-5 text-green-500" />
+            <ArrowUp className="h-5 w-5 text-green-600 dark:text-green-400" />
           ) : (
-            <ArrowDown className="h-5 w-5 text-red-500" />
+            <ArrowDown className="h-5 w-5 text-red-600 dark:text-red-400" />
           )}
-          <span className={long ? "text-green-500" : "text-red-500"}>{dirWord(pick.direction)}</span>
+          <span className={long ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}>{dirWord(pick.direction)}</span>
           <span>{pick.symbol}</span>
           <span className="text-sm font-normal text-muted-foreground">
             hold ~{pick.horizon_days} trading days (≈ until{" "}
@@ -66,11 +66,11 @@ function TheCall({ pick }: { pick: Pick }) {
               </span>
               <span className="text-muted-foreground">·</span>
               <span>
-                target <span className="font-medium text-green-500">${pick.plan_target}</span>
+                target <span className="font-medium text-green-600 dark:text-green-400">${pick.plan_target}</span>
               </span>
               <span className="text-muted-foreground">·</span>
               <span>
-                stop <span className="font-medium text-red-500">${pick.plan_stop}</span>
+                stop <span className="font-medium text-red-600 dark:text-red-400">${pick.plan_stop}</span>
               </span>
             </div>
             {pick.plan_note && <p className="mt-1 text-muted-foreground">{pick.plan_note}</p>}
@@ -83,7 +83,7 @@ function TheCall({ pick }: { pick: Pick }) {
             <Badge variant="secondary">Thin lean (tracked)</Badge>
           )}{" "}
           {pick.alpha_net !== null && (
-            <Badge variant="outline" className={pick.alpha_net > 0 ? "text-green-500" : "text-red-500"}>
+            <Badge variant="outline" className={pick.alpha_net > 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}>
               vs S&P 500 {fmtAlpha(pick.alpha_net)}
             </Badge>
           )}
@@ -215,7 +215,7 @@ export function PickSheet({
                   {pick.debate.critic_stance === "FLIP" ? (
                     <p className="font-medium">
                       Reverse: {dirWord(pick.debate.proposed_direction)} →{" "}
-                      <span className={pick.debate.counter_direction === "LONG" ? "text-green-500" : "text-red-500"}>
+                      <span className={pick.debate.counter_direction === "LONG" ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}>
                         {dirWord(pick.debate.counter_direction)}
                       </span>
                     </p>
