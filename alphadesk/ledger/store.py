@@ -572,6 +572,18 @@ def live_picks() -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def delete_picks(ids: list[int]) -> int:
+    """Hard-delete picks by id — used to roll back an interrupted Find Trades run so
+    a fresh run isn't blocked (or duplicated) by its abandoned in-progress picks."""
+    ids = [int(i) for i in ids if i]
+    if not ids:
+        return 0
+    marks = ",".join("?" for _ in ids)
+    with _lock, _connect() as conn:
+        cur = conn.execute(f"DELETE FROM picks WHERE id IN ({marks})", ids)
+        return cur.rowcount
+
+
 def set_entry_price(pick_id: int, price: float) -> None:
     """Stamp the actual FILL price on a closed-market pick once its 9:30 open has
     passed (Model A). Only fills a still-NULL entry_price, so live P&L / exits and

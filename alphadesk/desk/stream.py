@@ -90,15 +90,28 @@ def _intensity(articles: list[dict]) -> float:
     return abs(_avg_sentiment(articles)) * len(articles)
 
 
+_pending_run_picks: list[int] = []   # picks committed by the in-flight run, not yet finalised
+
+
 async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
                              expose: bool = False, is_disconnected=None):
     """Async generator of deliberation events. Broad news window (default 48h —
     a batch run can afford to look far wider than the old live-tick engine).
     Stops early if the client disconnects (no more wasted LLM spend)."""
     loop = asyncio.get_running_loop()
+    global _pending_run_picks
 
     async def _gone() -> bool:
         return bool(is_disconnected and await is_disconnected())
+
+    # Each run is independent: if the previous run was interrupted (tab refreshed
+    # mid-hunt), roll back its abandoned in-progress picks so this run starts clean
+    # — no half-finished ideas lingering, no cooldown blocking a full re-run.
+    if _pending_run_picks:
+        rolled = await loop.run_in_executor(None, store.delete_picks, list(_pending_run_picks))
+        if rolled:
+            log.info("Previous Find Trades run interrupted — rolled back %d in-progress pick(s)", rolled)
+    _pending_run_picks = []
 
     yield _ev("status", msg="Reading the earnings calendar, then recent financial news…")
     since = datetime.now(timezone.utc).timestamp() - hours * 3600
@@ -448,6 +461,7 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
             continue
         sess = session()   # for the solo arm's entry-price stamp below
         board.append(row)
+        _pending_run_picks.append(row["id"])   # roll-backable if this run is interrupted
         yield _ev("decision", **row)
 
         # Solo control arm — every Nth pick, one strong agent works the SAME
@@ -459,7 +473,7 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
                     None, lambda: loner.loner_analysis(
                         sym, pick["reason"], briefs, history, decision_id + "-solo", calibration))
                 s_model = s.pop("_downgraded_model", MODEL_MAP["loner"])
-                store.record_pick({
+                _pending_run_picks.append(store.record_pick({
                     "symbol": sym, "arm": "LONER", "edge": pick.get("edge_hint"),
                     "trigger_src": "FIND_TRADES", "session": sess,
                     "direction": s["direction"], "horizon_days": s["horizon_days"],
@@ -469,7 +483,7 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
                     "low_liquidity": int(bool(price_ctx and price_ctx.get("low_liquidity"))),
                     "entry_price": (price_ctx or {}).get("last_price") if sess == "OPEN" else None,
                     "spy_price": (prices.get_context("SPY") or {}).get("last_price"),
-                })
+                }))
                 yield _ev("loner", symbol=sym, direction=s["direction"],
                           horizon_days=s["horizon_days"], score=s["score"])
             except LLMError as exc:
@@ -491,6 +505,7 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
             board.sort(key=lambda r: order.get(r["symbol"].upper(), 999))
             store.add_run("FIND_TRADES", board)
             store.mark_taken([r["id"] for r in board if r.get("take")])  # open positions to review next run
+            _pending_run_picks = []   # run finalised — keep its picks
             yield _ev("chief", board=board, summary=chief.get("summary", ""))
             yield _ev("done", board=board)
             return
@@ -503,4 +518,5 @@ async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
         row["chief_reason"] = ""
     board.sort(key=lambda r: (not r["approved"], -abs(r["conviction"] - 50)))
     store.mark_taken([r["id"] for r in board if r.get("take")])
+    _pending_run_picks = []   # run finalised — keep its picks
     yield _ev("done", board=board)
