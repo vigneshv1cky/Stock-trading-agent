@@ -93,6 +93,16 @@ SKIP_MISS_ABS_ALPHA = 6.0       # |symbol return − SPY| above this % = a misse
 EARNINGS_DRIFT_DAYS = 3         # a name reported within this many days → post-earnings-drift candidate
 REPICK_COOLDOWN_HOURS = int(os.environ.get("REPICK_COOLDOWN_HOURS", "24"))  # don't re-debate a name within this window; matches the 24h news window so a catalyst is debated once (anti-double-dip across runs)
 
+# Exit-monitoring escalation SCREENS (not decisions — the opus reviewer decides).
+# Cheap, deliberately generous code triggers that flag an open position for a
+# thesis re-review between Find Trades runs, so a spent move (like a beat that has
+# exceeded its implied move) gets closed before the gain decays. Tunable/removable;
+# the reviewer is the real filter, so err toward escalating.
+EXIT_NEAR_TARGET_FRAC = float(os.environ.get("EXIT_NEAR_TARGET_FRAC", "0.85"))  # ≥ this much of the entry→target move captured → ask "take it now?"
+EXIT_GIVEBACK_MIN_PEAK = float(os.environ.get("EXIT_GIVEBACK_MIN_PEAK", "2.0"))  # only watch give-back once the favorable move peaked above this %
+EXIT_GIVEBACK_FRAC = float(os.environ.get("EXIT_GIVEBACK_FRAC", "0.40"))         # faded ≥ this fraction of that peak → the MFE-decay flag
+EXIT_REVIEW_COOLDOWN_S = int(os.environ.get("EXIT_REVIEW_COOLDOWN_S", "1800"))   # don't re-review the same open position more often than this
+
 # ---------------------------------------------------------------------------
 # Market sessions (ET clock math)
 # ---------------------------------------------------------------------------

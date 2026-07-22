@@ -97,6 +97,35 @@ def level_crossed(direction: str, price: float, target: float, stop: float) -> s
     return None
 
 
+def exit_signal(direction: str, entry: float | None, cur: float | None,
+                target: float | None, stop: float | None,
+                peak_fav_pct: float) -> str | None:
+    """Cheap, pure-code SCREEN that flags an open position for a (costly) opus
+    thesis re-review — it is NOT an exit itself. Returns a short reason string or
+    None. Two triggers, both about a move that has largely played out:
+      • near target — most of the entry→target move is captured (take it before it
+        gives back, rather than waiting for the exact level the watcher keys on).
+      • give-back — the favorable move ran up past a floor then faded a chunk of
+        its peak (the MFE-decay case: a beat that popped and is now leaking).
+    Code owns this cheap watching (physics/rails); the reviewer owns the judgment.
+    Deliberately generous — false flags just cost one review, which HOLDs."""
+    from alphadesk.config import (EXIT_GIVEBACK_FRAC, EXIT_GIVEBACK_MIN_PEAK,
+                                  EXIT_NEAR_TARGET_FRAC)
+    if not (entry and cur and target and stop):
+        return None
+    up = direction == "LONG"
+    span = (target - entry) if up else (entry - target)
+    if span > 0:
+        progress = ((cur - entry) if up else (entry - cur)) / span
+        if progress >= EXIT_NEAR_TARGET_FRAC:
+            return f"near target — {progress:.0%} of the move captured"
+    if peak_fav_pct >= EXIT_GIVEBACK_MIN_PEAK:
+        fav = (cur - entry) / entry * 100 * (1 if up else -1)
+        if fav <= peak_fav_pct * (1 - EXIT_GIVEBACK_FRAC):
+            return f"faded to +{fav:.1f}% from a +{peak_fav_pct:.1f}% peak"
+    return None
+
+
 def trade_plan(symbol: str, direction: str, horizon_days: int,
                price_ctx: dict | None, thesis: str,
                decision_id: str | None = None) -> dict | None:

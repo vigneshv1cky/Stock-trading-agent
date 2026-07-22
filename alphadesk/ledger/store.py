@@ -561,7 +561,8 @@ def live_picks() -> list[dict]:
         rows = conn.execute(
             "SELECT id, ts, symbol, direction, horizon_days, session, edge, verdict,"
             " approved, adjusted_score, confidence, taken, spy_price, entry_price,"
-            " plan_entry, plan_target, plan_stop, plan_note FROM picks"
+            " plan_entry, plan_target, plan_stop, plan_note, thesis, triage_reason"
+            " FROM picks"
             " WHERE arm='TEAM' AND plan_entry IS NOT NULL"
             "   AND graded_at IS NULL AND exit_ts IS NULL"
             "   AND datetime(ts, '+' || (horizon_days + 2) || ' days') >= datetime('now')"

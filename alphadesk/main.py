@@ -76,22 +76,37 @@ async def _serve() -> None:
             await asyncio.sleep(6 * 3600)   # 4×/day keeps upcoming + recent fresh
 
     async def _position_watch_loop():
-        """Paper-close open picks when price crosses their plan target/stop. NOT an
-        order — just a ledger exit stamped at the level (research/paper), so a hit
-        actually closes the position instead of only relabeling it in the live view.
-        Pure code (a crossed level is a fact); no LLM, no token cost."""
+        """Watch open picks between runs. Two layers, both research/paper (a ledger
+        exit stamp, never an order):
+          • level cross (target/stop) → close immediately. Pure code, no token cost.
+          • cheap exit SCREEN (near-target / MFE give-back) → escalate that ONE
+            position to the opus reviewer, which decides HOLD/EXIT. So a spent move
+            (a beat that popped past its implied move) gets closed before the gain
+            decays, instead of waiting for the next Find Trades run. Code owns the
+            cheap watching; the reviewer owns the judgment. Escalation is throttled
+            per position (EXIT_REVIEW_COOLDOWN_S) so it can't spam the model."""
+        import time as _time
+
+        from alphadesk.config import EXIT_REVIEW_COOLDOWN_S
         from alphadesk.config import session as market_session
-        from alphadesk.desk.plan import level_crossed, realized_exit
+        from alphadesk.desk import review
+        from alphadesk.desk.plan import exit_signal, level_crossed, realized_exit
         from alphadesk.ingest import prices
         from alphadesk.ledger import store
         loop = asyncio.get_running_loop()
         log = logging.getLogger("alphadesk.watch")
+        peak_fav: dict[int, float] = {}      # pick_id → best favorable move % seen
+        reviewed_at: dict[int, float] = {}   # pick_id → monotonic ts of last review
         while True:
             try:
                 if market_session() != "CLOSED":   # prices only move in-session
                     open_pos = await loop.run_in_executor(None, store.live_picks)
                     monitorable = [p for p in open_pos
                                    if p.get("plan_target") and p.get("plan_stop")]
+                    live_ids = {p["id"] for p in open_pos}
+                    for stale in [i for i in peak_fav if i not in live_ids]:
+                        peak_fav.pop(stale, None)
+                        reviewed_at.pop(stale, None)
                     if monitorable:
                         quotes = await loop.run_in_executor(
                             None, prices.latest_prices,
@@ -101,6 +116,7 @@ async def _serve() -> None:
                             cur = quotes.get(p["symbol"].upper())
                             if not cur:
                                 continue
+                            entry = p.get("entry_price") or p.get("plan_entry")
                             hit = level_crossed(p["direction"], cur,
                                                 p["plan_target"], p["plan_stop"])
                             if hit:
@@ -108,7 +124,6 @@ async def _serve() -> None:
                                 label = "target hit" if hit == "target" else "stopped out"
                                 reason = f"{label} @ {cur} ({hit} {level})"
                                 # freeze realized performance at the exit price
-                                entry = p.get("entry_price") or p.get("plan_entry")
                                 perf = realized_exit(p["direction"], entry, cur,
                                                      p.get("spy_price"), spy_now)
                                 await loop.run_in_executor(
@@ -116,6 +131,39 @@ async def _serve() -> None:
                                     store.record_exit(pid, r, **pf))
                                 log.info("Auto-exit #%d %s %s — %s (%s%% vs SPY)",
                                          p["id"], p["symbol"], p["direction"], reason,
+                                         perf.get("exit_alpha"))
+                                continue
+                            # track the peak favorable move, then run the cheap screen
+                            if entry:
+                                up = p["direction"] == "LONG"
+                                fav = (cur - entry) / entry * 100 * (1 if up else -1)
+                                peak_fav[p["id"]] = max(peak_fav.get(p["id"], fav), fav)
+                            flag = exit_signal(p["direction"], entry, cur,
+                                               p["plan_target"], p["plan_stop"],
+                                               peak_fav.get(p["id"], 0.0))
+                            if not flag:
+                                continue
+                            last = reviewed_at.get(p["id"], 0.0)
+                            if _time.monotonic() - last < EXIT_REVIEW_COOLDOWN_S:
+                                continue   # throttled — don't spam the reviewer
+                            reviewed_at[p["id"]] = _time.monotonic()
+                            pctx = await loop.run_in_executor(
+                                None, prices.get_context, p["symbol"])
+                            verdict = await loop.run_in_executor(
+                                None, review.review_position, p, pctx, [],
+                                f"watch-{p['id']}")
+                            log.info("Screen flagged #%d %s (%s) → reviewer: %s — %s",
+                                     p["id"], p["symbol"], flag, verdict["decision"],
+                                     verdict["reason"])
+                            if verdict["decision"] == "EXIT":
+                                exit_px = (pctx or {}).get("last_price") or cur
+                                perf = realized_exit(p["direction"], entry, exit_px,
+                                                     p.get("spy_price"), spy_now)
+                                await loop.run_in_executor(
+                                    None, lambda pid=p["id"], r=verdict["reason"], pf=perf:
+                                    store.record_exit(pid, r, **pf))
+                                log.info("Review-exit #%d %s — %s (%s%% vs SPY)",
+                                         p["id"], p["symbol"], verdict["reason"],
                                          perf.get("exit_alpha"))
             except Exception as exc:
                 log.error("position watch error: %s", exc)
