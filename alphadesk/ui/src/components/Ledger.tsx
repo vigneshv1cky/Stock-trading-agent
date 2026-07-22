@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { api, etDateTime, fmtAlpha, groupByDayKey, type SymbolTimeline, type TimelineEvent, type Stats } from "@/lib/api"
-import { dirUp, dirWord, plainEdge } from "@/lib/plain"
+import { dirUp, dirWord } from "@/lib/plain"
 import { ArrowDown, ArrowUp, RotateCcw } from "lucide-react"
 import { InfoTip } from "@/components/InfoTip"
 import { Card } from "@/components/ui/card"
@@ -83,28 +83,22 @@ function Outcome({ e }: { e: TimelineEvent }) {
   if (e.state === "graded" && e.alpha_net != null) {
     return (
       <span className={`font-mono text-sm font-semibold tabular-nums ${e.alpha_net > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
-        {fmtAlpha(e.alpha_net)} <span className="text-[10px] font-normal text-muted-foreground">vs S&P</span>
+        {fmtAlpha(e.alpha_net)} <span className="text-[11px] font-normal text-muted-foreground">vs S&P</span>
       </span>
     )
   }
   if (e.state === "exited") {
-    // realized performance frozen at the exit price (vs S&P, net friction) —
-    // distinct from the horizon grade; fall back to raw return, then bare label.
-    // The tag says WHY it closed and is colored like the outcome: target=green,
-    // stop=red, discretionary=by the alpha it banked.
+    // The header badge ("Exited · stopped out") and the "Exited: …" reason already
+    // say WHY it closed — the row just needs the realized number, colored win/loss.
     const ex = e.exit_alpha ?? e.exit_return_pct
     const k = exitKind(e.exit_reason, ex)
+    if (ex == null) return <span className={`text-xs font-semibold ${toneText(k.tone)}`}>Exited</span>
     return (
-      <span className="text-right">
-        <span className={`text-xs font-semibold ${toneText(k.tone)}`}>Exited · {k.label}</span>
-        {ex != null && (
-          <span className={`ml-1.5 font-mono text-sm font-semibold tabular-nums ${ex > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
-            {fmtAlpha(ex)}{" "}
-            <span className="text-[10px] font-normal text-muted-foreground">
-              {e.exit_alpha != null ? "vs S&P" : "ret"}
-            </span>
-          </span>
-        )}
+      <span className={`font-mono text-sm font-semibold tabular-nums ${ex > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
+        {fmtAlpha(ex)}{" "}
+        <span className="text-[11px] font-normal text-muted-foreground">
+          {e.exit_alpha != null ? "vs S&P" : "ret"}
+        </span>
       </span>
     )
   }
@@ -138,28 +132,15 @@ function EventRow({ e, onSelect }: { e: TimelineEvent; onSelect: (id: number) =>
   return (
     <button
       onClick={() => onSelect(e.id)}
-      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-muted/50"
+      className="flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left transition-colors hover:bg-muted/50"
     >
-      {up ? <ArrowUp className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" /> : <ArrowDown className="h-3.5 w-3.5 shrink-0 text-red-600 dark:text-red-400" />}
-      <span className={`text-xs font-medium ${up ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>{dirWord(e.direction)}</span>
-      <InfoTip
-        tip={e.exit_ts ? "Entered (call time) → exited" : "Call time (entry)"}
-        className="cursor-help font-mono text-[11px] tabular-nums text-muted-foreground"
-      >
+      {up ? <ArrowUp className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" /> : <ArrowDown className="h-4 w-4 shrink-0 text-red-600 dark:text-red-400" />}
+      <span className={`text-sm font-semibold ${up ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>{dirWord(e.direction)}</span>
+      <span className="font-mono text-xs tabular-nums text-muted-foreground">
         {etDateTime(e.ts)}
         {e.exit_ts && <span className="text-muted-foreground/70"> → {etDateTime(e.exit_ts)}</span>}
-      </InfoTip>
-      {e.edge && <Badge className="hidden bg-muted font-normal text-muted-foreground sm:inline-flex">{plainEdge(e.edge)}</Badge>}
-      <span className="ml-auto flex shrink-0 items-center gap-2.5">
-        {e.mfe_pct != null && (
-          <InfoTip
-            tip="How far it ran / how far underwater while held (max favorable / adverse excursion vs entry)"
-            className="hidden cursor-help font-mono text-[10px] tabular-nums md:inline"
-          >
-            <span className="text-emerald-600/80 dark:text-emerald-400/80">▲{e.mfe_pct >= 0 ? "+" : ""}{e.mfe_pct.toFixed(1)}%</span>{" "}
-            {e.mae_pct != null && <span className="text-red-600/80 dark:text-red-400/80">▼{e.mae_pct.toFixed(1)}%</span>}
-          </InfoTip>
-        )}
+      </span>
+      <span className="ml-auto shrink-0">
         <Outcome e={e} />
       </span>
     </button>
@@ -177,26 +158,26 @@ function SymbolCard({ s, onSelect }: { s: SymbolTimeline; onSelect: (id: number)
       ? exitKind(latest.exit_reason, latest.exit_alpha ?? latest.exit_return_pct)
       : null
   return (
-    <Card size="sm">
+    <Card>
       <div className="flex flex-wrap items-center gap-2">
-        <span className="font-semibold">{s.symbol}</span>
+        <span className="text-base font-bold">{s.symbol}</span>
         <StanceBadge current={s.current} exit={exit} />
         {s.changed && s.current !== "EXITED" && (
           <Badge className="gap-1 bg-fuchsia-500/15 font-semibold text-fuchsia-600 dark:text-fuchsia-400">
             <RotateCcw className="h-2.5 w-2.5" /> changed
           </Badge>
         )}
-        <span className="ml-auto text-[11px] text-muted-foreground">
+        <span className="ml-auto text-xs text-muted-foreground">
           {events.length} call{events.length > 1 ? "s" : ""}
         </span>
       </div>
-      {exitReason && <p className={`mt-1 text-xs ${toneText(exit?.tone ?? 0)}`}>Exited: {exitReason}</p>}
-      <div className="mt-1.5 divide-y divide-border/60">
+      {exitReason && <p className={`mt-1.5 text-xs ${toneText(exit?.tone ?? 0)}`}>Exited: {exitReason}</p>}
+      <div className="mt-2 divide-y divide-border/60">
         {shown.map((e) => (
           <EventRow key={e.id} e={e} onSelect={onSelect} />
         ))}
       </div>
-      {more > 0 && <div className="mt-1 px-2 text-[11px] text-muted-foreground">+{more} earlier</div>}
+      {more > 0 && <div className="mt-1.5 px-2 text-xs text-muted-foreground">+{more} earlier</div>}
     </Card>
   )
 }

@@ -1,19 +1,9 @@
 import { useEffect, useState } from "react"
-import { api, etDateTime, exitDate, groupByDayKey, type LivePick } from "@/lib/api"
-import { dirUp, dirWord, plainEdge } from "@/lib/plain"
+import { api, etDateTime, groupByDayKey, type LivePick } from "@/lib/api"
+import { dirUp } from "@/lib/plain"
 import { InfoTip } from "@/components/InfoTip"
 import { Card } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
 import { ArrowDown, ArrowUp, RefreshCw } from "lucide-react"
-
-const STATUS: Record<string, { label: string; cls: string }> = {
-  "target hit": { label: "Target hit", cls: "bg-emerald-600 text-white" },
-  "near target": { label: "Near target", cls: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" },
-  working: { label: "Working", cls: "bg-muted text-muted-foreground" },
-  "near stop": { label: "Near stop", cls: "bg-amber-500/15 text-amber-600 dark:text-amber-400" },
-  "stopped out": { label: "Stopped out", cls: "bg-red-600 text-white" },
-  "no quote": { label: "No quote", cls: "bg-muted text-muted-foreground" },
-}
 
 // Where the price sits on the stop→target track, plus the entry tick.
 function Track({ p }: { p: LivePick }) {
@@ -51,7 +41,7 @@ function Track({ p }: { p: LivePick }) {
           />
         )}
       </div>
-      <div className="mt-1 flex justify-between text-[10px] text-muted-foreground">
+      <div className="mt-1.5 flex justify-between text-[11px] text-muted-foreground">
         <span className="text-red-600 dark:text-red-400">stop ${p.plan_stop}</span>
         <span>entry ${p.plan_entry}</span>
         <span className="text-emerald-600 dark:text-emerald-400">target ${p.plan_target}</span>
@@ -110,34 +100,26 @@ export function LiveTracker() {
             Chosen {g.label}
           </div>
           {g.items.map((p) => {
-            const st = STATUS[p.status] ?? STATUS["no quote"]
             const pos = (p.pnl_pct ?? 0) >= 0
             return (
               <Card
                 key={p.id}
-                size="sm"
-                className={p.approved ? "" : "border-border/60 opacity-80"}
+                className={`space-y-3 ${p.approved ? "" : "border-border/60 opacity-75"}`}
               >
-            <div className="flex flex-wrap items-center gap-2 text-sm">
+            {/* just the money: which stock, how much it's making */}
+            <div className="flex items-center gap-2.5">
               {dirUp(p.direction) ? (
-                <ArrowUp className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                <ArrowUp className="h-5 w-5 shrink-0 text-emerald-600 dark:text-emerald-400" />
               ) : (
-                <ArrowDown className="h-4 w-4 text-red-600 dark:text-red-400" />
+                <ArrowDown className="h-5 w-5 shrink-0 text-red-600 dark:text-red-400" />
               )}
-              <span className={`font-bold ${dirUp(p.direction) ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
-                {dirWord(p.direction)}
-              </span>
-              <span className="font-bold">{p.symbol}</span>
-              <Badge className="bg-muted font-normal text-muted-foreground">
-                {plainEdge(p.edge)}
-              </Badge>
-              <Badge className={`font-semibold ${st.cls}`}>{st.label}</Badge>
-              <span className="ml-auto font-mono text-sm tabular-nums">
-                {p.current != null ? `$${p.current}` : "—"}{" "}
+              <span className="text-lg font-bold">{p.symbol}</span>
+              <span className="ml-auto font-mono text-xl font-semibold tabular-nums">
+                {p.current != null ? `$${p.current}` : "—"}
                 {p.pnl_pct != null && (
-                  <span className={pos ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}>
-                    ({pos ? "+" : ""}
-                    {p.pnl_pct}%)
+                  <span className={`ml-2 ${pos ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
+                    {pos ? "+" : ""}
+                    {p.pnl_pct}%
                   </span>
                 )}
               </span>
@@ -145,22 +127,20 @@ export function LiveTracker() {
 
             <Track p={p} />
 
-            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 text-[11px] text-muted-foreground">
-              <span>
-                entered {etDateTime(p.ts)} · hold ~{p.horizon_days}d · through {exitDate(p.ts, p.session, p.horizon_days)}
-              </span>
+            {p.plan_note && <p className="text-[13px] leading-relaxed text-foreground/80">{p.plan_note}</p>}
+
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>entered {etDateTime(p.ts)}</span>
               {p.alpha_so_far != null && (
                 <InfoTip
-                  tip="Return vs S&P so far, net of friction — a live mark, not the official grade (which settles at the horizon)"
-                  className={`cursor-help font-medium ${p.alpha_so_far >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}
+                  tip="Return vs S&P so far, net of friction — a live mark, not the official grade"
+                  className={`cursor-help font-semibold ${p.alpha_so_far >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}
                 >
                   vs S&P {p.alpha_so_far >= 0 ? "+" : ""}
-                  {p.alpha_so_far}% so far
+                  {p.alpha_so_far}%
                 </InfoTip>
               )}
-              {!p.approved && <span>· thin lean</span>}
             </div>
-            {p.plan_note && <p className="mt-1 text-xs text-muted-foreground">{p.plan_note}</p>}
               </Card>
             )
           })}

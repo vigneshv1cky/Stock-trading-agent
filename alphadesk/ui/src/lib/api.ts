@@ -251,9 +251,9 @@ export function etDateTime(ts: string): string {
     timeZone: ET,
     month: "short",
     day: "numeric",
-    hour: "2-digit",
+    hour: "numeric",
     minute: "2-digit",
-    hour12: false,
+    hour12: true,
   }).format(new Date(ts))
 }
 
