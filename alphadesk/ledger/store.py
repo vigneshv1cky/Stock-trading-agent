@@ -713,12 +713,16 @@ def recently_reported(days: int = 3) -> list[dict]:
     reaction, not the result, so we don't wait for it."""
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT symbol, report_date, session, eps_estimate, eps_actual, surprise_pct"
+            "SELECT symbol, report_date, session, eps_estimate, eps_actual, surprise_pct, market_cap"
             " FROM earnings WHERE report_date >= date('now', ?) AND report_date <= date('now')"
-            # recency of RELEASE: newest day first, then within a day latest-released
-            # first (AMC=evening > DAY > BMO=morning) — also the freshest drift.
-            # NULLS LAST so names with a known surprise lead their day, unknowns follow.
+            # PRIORITY into the scout's capped window: freshest day first, then BIGGEST
+            # by market cap. On a heavy day (~200 reporters) the scout only sees the top
+            # slice, so ordering by size keeps the largest/most-tradeable names (a
+            # mega-cap like GOOGL/TSLA) in view instead of scattering them past the cut
+            # behind random micro-caps; the un-tradeable tail is what gets truncated.
+            # Session/surprise are minor tiebreakers (NULLS LAST — unknown-cap last too).
             " ORDER BY report_date DESC,"
+            "   market_cap IS NULL, market_cap DESC,"
             "   CASE session WHEN 'AMC' THEN 2 WHEN 'DAY' THEN 1 ELSE 0 END DESC,"
             "   surprise_pct IS NULL, surprise_pct DESC",
             (f"-{int(days)} days",),
