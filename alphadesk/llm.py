@@ -91,8 +91,10 @@ class LLMUnavailable(LLMError):
 # ---------------------------------------------------------------------------
 
 def wrap_data(tag: str, text: str) -> str:
-    """Delimit untrusted external text as data. Strips nested delimiters."""
-    clean = text.replace("<data:", "<data_").replace("</data:", "</data_")
+    """Delimit untrusted external text as data. Neutralises any nested delimiter — case-
+    INSENSITIVELY, so a crafted `<DATA:...>`/`</Data:...>` in a headline can't pose as a
+    real block boundary (the plain lowercase replace let other casings through)."""
+    clean = re.sub(r"(?i)(</?data):", r"\1_", text)
     return f"<data:{tag}>\n{clean}\n</data:{tag}>"
 
 

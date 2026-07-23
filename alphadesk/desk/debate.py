@@ -64,7 +64,13 @@ async def deliberate(sym: str, pick: dict, briefs: list[dict], price_ctx: dict |
 
     rebuttal = await loop.run_in_executor(
         None, lambda: team.researcher_reply(sym, thesis, concerns, counter, decision_id))
-    rebuttal.pop("_downgraded_model", None)
+    # The researcher speaks twice (opening thesis + this rebuttal); model_tags["researcher"]
+    # was set from the thesis only and the rebuttal's downgrade was discarded, so a debate
+    # whose rebuttal ran on a downgraded tier was ledgered as full-tier — blinding the
+    # kill-criterion "were weak-model calls worse?" analysis. Reflect a downgraded rebuttal.
+    rb_model = rebuttal.pop("_downgraded_model", None)
+    if rb_model and rb_model != MODEL_MAP["researcher"]:
+        model_tags["researcher"] = rb_model
     yield {"type": "rebuttal", "symbol": sym, **rebuttal}
 
     verdict = await loop.run_in_executor(
@@ -108,7 +114,12 @@ async def deliberate(sym: str, pick: dict, briefs: list[dict], price_ctx: dict |
         "briefs": briefs, "model_tags": model_tags,
         "low_liquidity": int(bool(price_ctx and price_ctx.get("low_liquidity"))),
         "skeptic_moved_score": round(float(rebuttal["revised_score"]) - float(thesis["score"]), 2),
-        "arbiter_overrode": int(bool(verdict["approved"]) != (float(rebuttal["revised_score"]) > 50)),
+        # Overrode = judge APPROVED a pick whose committed direction opposes the
+        # researcher's post-rebuttal lean (revised_score >50 favors LONG). The old XOR
+        # compared approval against that lean directly, so every approved SHORT
+        # (approved=True, revised_score<50) was logged as an override that never happened.
+        "arbiter_overrode": int(bool(verdict["approved"]) and final_dir != (
+            "LONG" if float(rebuttal["revised_score"]) > 50 else "SHORT")),
         "entry_price": (price_ctx or {}).get("last_price") if sess == "OPEN" else None,
         "spy_price": (prices.get_context("SPY") or {}).get("last_price"),
         "plan_entry": (trade or {}).get("entry"),

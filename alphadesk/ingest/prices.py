@@ -337,6 +337,8 @@ def moves_since_report(items: list[dict], ttl: int = 60) -> dict[str, Optional[d
                         if len(on_after) == 0 or idx[-1].normalize() < on_after[0].normalize():
                             continue
                         base = float(opens.loc[on_after[0]])
+                        if base != base:      # NaN open (opens isn't dropna'd) → not measurable
+                            continue
                         post_open, gap = base, 0.0
                     else:
                         # BMO → prior close/report-day open; AMC → report-day close/next open
@@ -346,7 +348,8 @@ def moves_since_report(items: list[dict], ttl: int = 60) -> dict[str, Optional[d
                         base = float(closes.loc[pre[-1]])
                         post = idx[idx > pre[-1]]
                         if len(post):
-                            post_open = float(opens.loc[post[0]]) or None
+                            po = float(opens.loc[post[0]])
+                            post_open = po if (po == po and po) else None   # drop NaN (NaN!=NaN) / zero
                             gap = round((post_open - base) / base * 100, 2) if post_open else None
                         else:   # no regular session yet — reaction is entirely extended-hours
                             post_open, gap = None, None

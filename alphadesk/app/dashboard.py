@@ -123,6 +123,7 @@ def api_stats():
 
 @app.get("/api/tokens")
 def api_tokens(days: int = 1):
+    days = max(1, min(days, 365))   # a negative `days` becomes an invalid SQLite modifier → NULL → misleading data
     return {"days": days, "usage": store.token_summary(days)}
 
 
@@ -130,6 +131,7 @@ def api_tokens(days: int = 1):
 def api_sources(days: int = 30):
     """Per ingestion source: articles in, tokens spent (ingest + debate), and
     value (picks / graded / avg alpha) — which channel earns its tokens."""
+    days = max(1, min(days, 365))
     return {"days": days, "sources": store.source_scorecard(days)}
 
 
@@ -294,6 +296,7 @@ def api_timelines(days: int = 30):
     """Track record grouped BY STOCK: each symbol's ordered calls with outcomes
     (open → live P&L; graded → vs S&P; exited), the desk's current stance, and
     whether that stance changed over time (buy→sell / an exit)."""
+    days = max(1, min(days, 365))
     from alphadesk.config import entry_fill_time
     from alphadesk.config import session as market_session
     from alphadesk.ingest import prices

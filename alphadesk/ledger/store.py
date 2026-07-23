@@ -240,6 +240,25 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _et_date(offset_days: int = 0) -> str:
+    """Today's ET calendar date (± offset) as YYYY-MM-DD. The market clock and every
+    stored report_date are ET, so date-window comparisons must key on the ET day — SQLite
+    date('now') is UTC and shifts the window a day in the evening ET (dropping the oldest
+    drift day / pulling in tomorrow's reporters)."""
+    from datetime import timedelta
+
+    from alphadesk.config import now_et
+    return (now_et().date() + timedelta(days=offset_days)).isoformat()
+
+
+def _et_day_start_utc() -> str:
+    """UTC ISO timestamp of ET midnight today — for comparing full-timestamp columns
+    (picks.ts) against 'start of today' on the ET clock."""
+    from alphadesk.config import now_et
+    return now_et().replace(hour=0, minute=0, second=0, microsecond=0).astimezone(
+        timezone.utc).isoformat()
+
+
 # ---------------------------------------------------------------------------
 # Picks
 # ---------------------------------------------------------------------------
@@ -351,8 +370,8 @@ def reaction_ab_rows() -> list[dict]:
 
 
 def picks_today(arm: str | None = None) -> int:
-    query = "SELECT count(*) FROM picks WHERE ts >= date('now')"
-    args: list[Any] = []
+    query = "SELECT count(*) FROM picks WHERE ts >= ?"
+    args: list[Any] = [_et_day_start_utc()]
     if arm:
         query += " AND arm = ?"
         args.append(arm)
@@ -801,7 +820,7 @@ def recently_reported(days: int = 3) -> list[dict]:
     with _connect() as conn:
         rows = conn.execute(
             "SELECT symbol, report_date, session, eps_estimate, eps_actual, surprise_pct, market_cap"
-            " FROM earnings WHERE report_date >= date('now', ?) AND report_date <= date('now')"
+            " FROM earnings WHERE report_date >= ? AND report_date <= ?"
             # PRIORITY into the scout's capped window: freshest day first, then BIGGEST
             # by market cap. On a heavy day (~200 reporters) the scout only sees the top
             # slice, so ordering by size keeps the largest/most-tradeable names (a
@@ -812,7 +831,7 @@ def recently_reported(days: int = 3) -> list[dict]:
             "   market_cap IS NULL, market_cap DESC,"
             "   CASE session WHEN 'AMC' THEN 2 WHEN 'DAY' THEN 1 ELSE 0 END DESC,"
             "   surprise_pct IS NULL, surprise_pct DESC",
-            (f"-{int(days)} days",),
+            (_et_date(-int(days)), _et_date(0)),
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -867,8 +886,8 @@ def earnings_window(days_back: int = 4, days_fwd: int = 14) -> list[dict]:
         rows = conn.execute(
             "SELECT symbol, report_date, session, eps_estimate, eps_actual, surprise_pct,"
             " market_cap FROM earnings"
-            " WHERE report_date >= date('now', ?) AND report_date <= date('now', ?)"
-            " ORDER BY report_date", (f"-{int(days_back)} days", f"+{int(days_fwd)} days"),
+            " WHERE report_date >= ? AND report_date <= ?"
+            " ORDER BY report_date", (_et_date(-int(days_back)), _et_date(int(days_fwd))),
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -878,8 +897,8 @@ def upcoming_earnings(days: int = 7) -> list[dict]:
     with _connect() as conn:
         rows = conn.execute(
             "SELECT symbol, report_date, session, eps_estimate, market_cap FROM earnings"
-            " WHERE eps_actual IS NULL AND report_date >= date('now')"
-            "   AND report_date <= date('now', ?) ORDER BY report_date", (f"+{int(days)} days",),
+            " WHERE eps_actual IS NULL AND report_date >= ?"
+            "   AND report_date <= ? ORDER BY report_date", (_et_date(0), _et_date(int(days))),
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -891,8 +910,8 @@ def earnings_row(symbol: str, days: int = 4) -> dict | None:
         row = conn.execute(
             "SELECT symbol, report_date, session, eps_estimate, eps_actual, surprise_pct"
             " FROM earnings WHERE symbol=? AND eps_actual IS NOT NULL"
-            "   AND report_date >= date('now', ?) AND report_date <= date('now')"
-            " ORDER BY report_date DESC LIMIT 1", (symbol.upper(), f"-{int(days)} days"),
+            "   AND report_date >= ? AND report_date <= ?"
+            " ORDER BY report_date DESC LIMIT 1", (symbol.upper(), _et_date(-int(days)), _et_date(0)),
         ).fetchone()
     return dict(row) if row else None
 
