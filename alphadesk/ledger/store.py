@@ -188,12 +188,13 @@ CREATE INDEX IF NOT EXISTS idx_reactions_ts ON earnings_reactions (ts);
 -- enrich it once and reuse forever. Kills the biggest recurring token cost —
 -- re-enriching the same overlapping news on every run/restart.
 CREATE TABLE IF NOT EXISTS enrichment_cache (
-    article_id TEXT PRIMARY KEY,
-    sentiment  REAL,
-    label      TEXT,
-    category   TEXT,
-    relations  TEXT,       -- JSON [{a, rel, b}]
-    ts         TEXT
+    article_id       TEXT PRIMARY KEY,
+    sentiment        REAL,     -- article-level (fallback / single-ticker)
+    label            TEXT,
+    category         TEXT,
+    relations        TEXT,     -- JSON [{a, rel, b}]
+    ticker_sentiment TEXT,     -- JSON {TICKER: {sentiment, label}} — per-company overrides
+    ts               TEXT
 );
 """
 
@@ -232,6 +233,10 @@ def init() -> None:
                 pass  # already migrated
         try:
             conn.execute("ALTER TABLE token_usage ADD COLUMN source TEXT")
+        except sqlite3.OperationalError:
+            pass  # already migrated
+        try:
+            conn.execute("ALTER TABLE enrichment_cache ADD COLUMN ticker_sentiment TEXT")
         except sqlite3.OperationalError:
             pass  # already migrated
 
@@ -761,13 +766,13 @@ def false_negative_stats() -> dict:
 
 
 def get_enrichment(article_ids: list[str]) -> dict[str, dict]:
-    """Cached enrichments for these article ids → {id: {sentiment,label,category,relations}}."""
+    """Cached enrichments → {id: {sentiment,label,category,relations,ticker_sentiment}}."""
     if not article_ids:
         return {}
     ph = ",".join("?" * len(article_ids))
     with _connect() as conn:
         rows = conn.execute(
-            f"SELECT article_id, sentiment, label, category, relations"
+            f"SELECT article_id, sentiment, label, category, relations, ticker_sentiment"
             f" FROM enrichment_cache WHERE article_id IN ({ph})", article_ids
         ).fetchall()
     return {r["article_id"]: dict(r) for r in rows}
@@ -775,15 +780,17 @@ def get_enrichment(article_ids: list[str]) -> dict[str, dict]:
 
 def save_enrichment(items: list[dict]) -> None:
     """Persist genuine enrichment results (not failure fallbacks). Each item:
-    {article_id, sentiment, label, category, relations:list}."""
+    {article_id, sentiment, label, category, relations:list, ticker_sentiment:dict}."""
     rows = [(i["article_id"], i["sentiment"], i["label"], i["category"],
-             json.dumps(i["relations"]), _now()) for i in (items or [])]
+             json.dumps(i["relations"]), json.dumps(i.get("ticker_sentiment") or {}), _now())
+            for i in (items or [])]
     if not rows:
         return
     with _lock, _connect() as conn:
         conn.executemany(
             "INSERT OR REPLACE INTO enrichment_cache"
-            " (article_id, sentiment, label, category, relations, ts) VALUES (?,?,?,?,?,?)", rows)
+            " (article_id, sentiment, label, category, relations, ticker_sentiment, ts)"
+            " VALUES (?,?,?,?,?,?,?)", rows)
 
 
 def upsert_earnings(rows: list[dict]) -> None:

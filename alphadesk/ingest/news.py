@@ -40,8 +40,14 @@ _ENRICH_SYSTEM = (
     "('X soared/plunged/hit a high', 'why X stock moved', weekly recaps)\n"
     "  OPINION: listicles, 'top N stocks to buy', 'should you buy X', "
     "evergreen takes with no new information\n"
-    "sentiment: -1.0 (very negative for the mentioned companies) to 1.0 (very "
-    "positive). label: negative|neutral|positive.\n"
+    "sentiment: -1.0 (very negative) to 1.0 (very positive) — the OVERALL tone. "
+    "label: negative|neutral|positive.\n"
+    "ticker_sentiment: when the article names MULTIPLE companies and the news is "
+    "NOT symmetric across them, give the per-company sentiment (e.g. 'X sues Y' is "
+    "negative for Y but neutral/positive for X; 'X wins a contract from Y' is "
+    "positive for X, negative for Y). List ONLY the tickers whose sentiment differs "
+    "from the overall — any ticker you omit inherits the article sentiment. Skip "
+    "this entirely for single-company or uniformly-toned articles.\n"
     "relations: ONLY relations explicitly stated or strongly implied by the "
     "article text itself (e.g. 'X supplies chips to Y', 'X competes with Y', "
     "'X partners with Y'). Use stock tickers. Do NOT add relations from your "
@@ -49,6 +55,7 @@ _ENRICH_SYSTEM = (
     'Return ONLY JSON: {"items": [{"i": <number>, '
     '"category": "BUSINESS_EVENT|SUPPLY_DEMAND|MACRO_POLICY|PRICE_COMMENTARY|OPINION", '
     '"sentiment": <-1..1>, "label": "negative|neutral|positive", '
+    '"ticker_sentiment": [{"t": "<TICKER>", "sentiment": <-1..1>, "label": "negative|neutral|positive"}], '
     '"relations": [{"a": "<TICKER>", "rel": "SUPPLIES|COMPETES|PARTNERS", "b": "<TICKER>"}]}]}'
 )
 
@@ -69,6 +76,14 @@ _ENRICH_SCHEMA = {
             ]},
             "sentiment": {"type": (int, float), "min": -1, "max": 1},
             "label": {"type": str, "enum": ["negative", "neutral", "positive"]},
+            "ticker_sentiment": {
+                "type": list, "optional": True, "maxitems": 8,
+                "items": {
+                    "t": {"type": str, "maxlen": 10},
+                    "sentiment": {"type": (int, float), "min": -1, "max": 1},
+                    "label": {"type": str, "enum": ["negative", "neutral", "positive"]},
+                },
+            },
             "relations": {
                 "type": list, "optional": True, "maxitems": 5,
                 "items": {
@@ -169,6 +184,14 @@ def enrich(articles: list[dict]) -> list[dict]:
                 "category": (item or {}).get("category", "UNCLASSIFIED"),
                 "relations": [{"a": r["a"], "rel": r["rel"], "b": r["b"]}
                               for r in ((item or {}).get("relations") or [])],
+                # per-company overrides for asymmetric multi-ticker articles ('X sues Y')
+                "ticker_sentiment": {
+                    (ts.get("t") or "").upper(): {
+                        "sentiment": float(ts.get("sentiment", 0.0)),
+                        "label": ts.get("label", "neutral"),
+                    }
+                    for ts in ((item or {}).get("ticker_sentiment") or []) if ts.get("t")
+                },
             }
             fresh[art["id"]] = rec
             if item is not None:  # genuine result → safe to cache forever
@@ -182,11 +205,18 @@ def enrich(articles: list[dict]) -> list[dict]:
         rels = e["relations"]
         if isinstance(rels, str):        # from the DB it's a JSON string
             rels = json.loads(rels or "[]")
+        tsent = e.get("ticker_sentiment") or {}
+        if isinstance(tsent, str):       # from the DB it's a JSON string
+            tsent = json.loads(tsent or "{}")
         enriched.append({
             **art,
             "category": e["category"],
+            # per-ticker sentiment where the enricher gave one (asymmetric article),
+            # else the article-level tone — no longer stamps one sign on every company.
             "mentions": [
-                {"symbol": t, "sentiment": e["sentiment"], "label": e["label"],
+                {"symbol": t,
+                 "sentiment": tsent.get(t.upper(), {}).get("sentiment", e["sentiment"]),
+                 "label": tsent.get(t.upper(), {}).get("label", e["label"]),
                  "category": e["category"]}
                 for t in art["tickers"]
             ],
