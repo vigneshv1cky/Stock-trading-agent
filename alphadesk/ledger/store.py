@@ -161,6 +161,29 @@ CREATE TABLE IF NOT EXISTS earnings_reads (
     UNIQUE(symbol, report_date) ON CONFLICT REPLACE
 );
 
+-- Shadow A/B on the material-reaction gate: one row per public reporter (gate-passed
+-- AND gate-dropped), graded forward vs SPY in the reaction direction. Lets us see
+-- whether forward alpha turns on at the gate threshold or the gate cuts winners.
+CREATE TABLE IF NOT EXISTS earnings_reactions (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts              TEXT NOT NULL,      -- first-sighting time (fixes the Model-A entry clock)
+    symbol          TEXT NOT NULL,
+    report_date     TEXT NOT NULL,      -- YYYY-MM-DD, stable event key
+    session         TEXT,               -- BMO|AMC|DAY (drives the entry clock)
+    direction       TEXT,               -- LONG|SHORT, from the reaction sign
+    horizon_days    INTEGER,            -- fixed A/B horizon
+    reaction_total  REAL,               -- reaction % at sighting (the gate input)
+    gate_passed     INTEGER,            -- 1 if |reaction| >= MATERIAL_REACTION_PCT
+    low_liquidity   INTEGER DEFAULT 0,
+    entry_price     REAL,               -- filled forward by the grader (next 9:30 open)
+    ret_horizon     REAL,
+    spy_ret_horizon REAL,
+    alpha_net       REAL,               -- forward alpha vs SPY, reaction direction, net friction
+    graded_at       TEXT,
+    UNIQUE(symbol, report_date) ON CONFLICT IGNORE   -- one row per report event (first sighting wins)
+);
+CREATE INDEX IF NOT EXISTS idx_reactions_ts ON earnings_reactions (ts);
+
 -- Persistent enrichment cache: an article's sentiment/category never changes, so
 -- enrich it once and reuse forever. Kills the biggest recurring token cost —
 -- re-enriching the same overlapping news on every run/restart.
@@ -280,6 +303,51 @@ def get_pick(pick_id: int) -> Optional[dict]:
     with _connect() as conn:
         row = conn.execute("SELECT * FROM picks WHERE id = ?", (pick_id,)).fetchone()
     return _decode(dict(row)) if row else None
+
+
+# ---------------------------------------------------------------------------
+# Reaction-gate shadow A/B (earnings_reactions)
+# ---------------------------------------------------------------------------
+
+def record_reaction(row: dict[str, Any]) -> None:
+    """Log one public reporter's reaction for the gate A/B — passed OR dropped. First
+    sighting wins (ON CONFLICT IGNORE), so ts anchors the Model-A entry; no LLM cost."""
+    row = dict(row)
+    row.setdefault("ts", _now())
+    _check_cols(row)
+    cols = ", ".join(row)
+    marks = ", ".join("?" for _ in row)
+    with _lock, _connect() as conn:
+        conn.execute(
+            f"INSERT OR IGNORE INTO earnings_reactions ({cols}) VALUES ({marks})",
+            list(row.values()))
+
+
+def due_reactions(limit: int = 500) -> list[dict]:
+    """Reactions whose forward horizon has elapsed and aren't graded yet."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM earnings_reactions WHERE graded_at IS NULL"
+            "  AND datetime(ts, '+' || (horizon_days + 2) || ' days') <= datetime('now')"
+            " ORDER BY id LIMIT ?", (limit,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def update_reaction(reaction_id: int, **fields: Any) -> None:
+    _check_cols(fields)
+    sets = ", ".join(f"{k} = ?" for k in fields)
+    with _lock, _connect() as conn:
+        conn.execute(f"UPDATE earnings_reactions SET {sets} WHERE id = ?",
+                     (*fields.values(), reaction_id))
+
+
+def reaction_ab_rows() -> list[dict]:
+    """Every graded reaction (reaction_total, alpha_net, gate_passed) for the A/B report."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT reaction_total, alpha_net, gate_passed FROM earnings_reactions"
+            " WHERE graded_at IS NOT NULL AND alpha_net IS NOT NULL").fetchall()
+    return [dict(r) for r in rows]
 
 
 def picks_today(arm: str | None = None) -> int:

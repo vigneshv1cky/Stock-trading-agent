@@ -43,6 +43,10 @@ python -m alphadesk.main grade
 python -m alphadesk.main status
 python -m alphadesk.main backfill
 
+# Reaction-gate A/B: forward alpha vs SPY bucketed by reaction size (is the gate
+# filtering noise or cutting quiet under-reactions? also reveals the right threshold)
+python -m alphadesk.main abtest
+
 # Legacy autonomous 24/7 scheduler (kept, not the v2 path)
 python -m alphadesk.main run
 
@@ -173,6 +177,8 @@ ADMIN_PASSWORD=...
 ALPHADESK_DATA=~/.alphadesk   # ledger.db, universe.json, relationship cache
 SOLO_ARM_EVERY_N=0            # 0=off (lean default); set e.g. 6 to measure committee-vs-solo
 WORLD_MAX_CATEGORIES=0        # GDELT world news in Find Trades: 0=off (default); 4=full sweep every ~3 runs; 11=every run (slow)
+MATERIAL_REACTION_PCT=1.5     # earnings drift needs a visible reaction to be a directional candidate; below this % (live vs pre-report close) = skip
+REACTION_AB_HORIZON_DAYS=3    # shadow A/B: forward-grade EVERY reporter's reaction (passed AND dropped) over this horizon → `abtest` shows if the gate cuts winners
 # Exit-monitoring screens (tunable; the opus reviewer is the real filter — defaults escalate generously):
 EXIT_NEAR_TARGET_FRAC=0.85    # ≥ this much of the entry→target move captured → escalate to review
 EXIT_GIVEBACK_MIN_PEAK=4.0    # watch give-back only after the favorable move peaks above this % (below = noise)
@@ -196,6 +202,16 @@ EXIT_REVIEW_COOLDOWN_S=1800   # min seconds between reviews of the same open pos
   gated, removable, tagged as an experiment.
 - **Miss diagnosis is conversational** — ask Claude "why did we miss X?"; it traces
   `store.symbol_traces` / `symbol_skips` and fixes data/prompt/bug. No UI tool for it.
+- **The material-reaction gate is A/B-tested, not assumed** — the gate that drops
+  earnings reporters with a sub-`MATERIAL_REACTION_PCT` reaction could be filtering noise
+  OR discarding the quiet under-reactions that ARE the drift edge. So `earnings.
+  drift_candidates` logs EVERY public reporter's reaction (passed AND dropped) to
+  `earnings_reactions`, and `grader.grade_reactions()` forward-grades both arms vs SPY in
+  the reaction direction (same Model-A entry + benchmark + friction as booked picks) over
+  `REACTION_AB_HORIZON_DAYS`. `abtest` buckets the graded rows by reaction size: if
+  forward alpha turns on at the threshold the gate is justified (and shows the right
+  threshold); if the dropped arm pays as well, the gate is cutting winners. No LLM cost —
+  a simultaneous, same-tape shadow A/B, dormant as evidence until the sample is real.
 - **Spent-move symmetry** — "how much of the expected move is left?" is asked at BOTH
   ends. At ENTRY the market note gets an explicit realized-vs-implied ratio (today/5d
   move ÷ options-implied move) plus the earnings since-report move, so a fully-repriced

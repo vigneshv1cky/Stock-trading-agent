@@ -208,7 +208,43 @@ def grade_due() -> int:
         except Exception as exc:
             log.warning("Grading failed for #%d %s: %s", row["id"], row["symbol"], exc)
     grade_paths()   # refresh MFE/MAE (open + closed); a routine update, not a "grade"
+    grade_reactions()   # forward-grade the gate A/B shadow cohort
     return graded + grade_skips()
+
+
+def grade_reactions() -> int:
+    """Grade the reaction-gate A/B shadow cohort: forward alpha vs SPY in the reaction
+    direction over the fixed horizon, for EVERY logged reporter (gate-passed and gate-
+    dropped). Reuses the exact same entry clock + benchmark as booked picks (Model-A
+    open fill, session-matched SPY bar, friction) so the two arms are apples-to-apples.
+    The bucketed comparison (`abtest`) then shows whether forward alpha actually turns
+    on at MATERIAL_REACTION_PCT or the gate is discarding quiet under-reactions."""
+    spy = _daily_history("SPY")
+    graded = 0
+    for r in store.due_reactions():
+        try:
+            df = _daily_history(r["symbol"])
+            if df is None:
+                continue
+            # shape a pick-like row so _entry_and_outcomes can grade it unchanged
+            row = {"session": r["session"], "ts": r["ts"], "entry_price": None,
+                   "direction": r["direction"], "horizon_days": r["horizon_days"],
+                   "low_liquidity": r["low_liquidity"], "exit_ts": None,
+                   "order_type": None, "plan_entry": None, "plan_stop": None}
+            out = _entry_and_outcomes(row, df, spy)
+            if not out or "alpha_net" not in out:
+                continue   # horizon/benchmark not resolvable yet — retry next pass
+            store.update_reaction(
+                r["id"], entry_price=out.get("entry_price"),
+                ret_horizon=out.get("ret_horizon"),
+                spy_ret_horizon=out.get("spy_ret_horizon"),
+                alpha_net=out["alpha_net"], graded_at=out["graded_at"])
+            graded += 1
+        except Exception as exc:
+            log.warning("Reaction grading failed for %s: %s", r["symbol"], exc)
+    if graded:
+        log.info("Graded %d reaction-gate A/B rows", graded)
+    return graded
 
 
 def grade_paths() -> int:

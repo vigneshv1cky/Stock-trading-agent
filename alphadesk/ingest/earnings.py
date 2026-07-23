@@ -191,6 +191,19 @@ def drift_candidates(days: int) -> dict[str, list[dict]]:
         surp = e.get("surprise_pct")
         mv = moved.get(esym)   # {"total","gap","drift"} or None
         total = mv["total"] if mv else None   # full reaction so far (extended-hours aware)
+        # Shadow A/B: log EVERY measurable reporter (gate-passed AND gate-dropped) so the
+        # grader can forward-score both arms and reveal whether the gate cuts winners.
+        # First sighting wins (ON CONFLICT IGNORE); no LLM cost. Recorded BEFORE the gate.
+        if total is not None:
+            from alphadesk.config import REACTION_AB_HORIZON_DAYS
+            store.record_reaction({
+                "symbol": esym, "report_date": e["report_date"][:10],
+                "session": e.get("session"),
+                "direction": "LONG" if total >= 0 else "SHORT",
+                "horizon_days": REACTION_AB_HORIZON_DAYS,
+                "reaction_total": round(total, 3),
+                "gate_passed": int(abs(total) >= MATERIAL_REACTION_PCT),
+            })
         # GATE: the drift edge rides a VISIBLE reaction. No material move since the
         # report = no reaction to continue — a pre-print / no-reaction earnings binary is
         # a coin flip, not drift, so don't emit a directional candidate. total is

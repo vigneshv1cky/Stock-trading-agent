@@ -242,6 +242,7 @@ def main() -> None:
                          help="send exposure candidates to the team")
     sub.add_parser("grade")
     sub.add_parser("status")
+    sub.add_parser("abtest", help="reaction-gate A/B: forward alpha bucketed by reaction size")
     sub.add_parser("earnings", help="refresh the earnings calendar and show upcoming / recent")
     args = parser.parse_args()
 
@@ -305,6 +306,45 @@ def main() -> None:
         from alphadesk.ledger import store
         print("ledger:", store.stats()["total"])
         print("tokens:", store.token_summary(days=1))
+    elif args.cmd == "abtest":
+        from alphadesk.config import MATERIAL_REACTION_PCT
+        from alphadesk.ledger import store
+        rows = store.reaction_ab_rows()
+        # bucket by |reaction|; the gate keeps everything at/above MATERIAL_REACTION_PCT
+        edges = [0.0, 1.0, MATERIAL_REACTION_PCT, 3.0, 6.0, float("inf")]
+        labels = [f"<{edges[1]:g}%", f"{edges[1]:g}-{edges[2]:g}%",
+                  f"{edges[2]:g}-3%", "3-6%", ">6%"]
+        buckets: list[list[float]] = [[] for _ in labels]
+        for r in rows:
+            mag = abs(r["reaction_total"])
+            for i in range(len(labels)):
+                if edges[i] <= mag < edges[i + 1]:
+                    buckets[i].append(r["alpha_net"])
+                    break
+        print(f"\n=== reaction-gate A/B — forward alpha vs SPY by reaction size "
+              f"(gate keeps ≥ {MATERIAL_REACTION_PCT:g}%) ===")
+        print(f"  {'bucket':10} {'gate':5} {'n':>4} {'mean α':>9} {'median α':>9} {'win%':>6}")
+        for lab, vals in zip(labels, buckets):
+            kept = "keep" if edges[labels.index(lab)] >= MATERIAL_REACTION_PCT else "drop"
+            if vals:
+                vals_sorted = sorted(vals)
+                mean = sum(vals) / len(vals)
+                median = vals_sorted[len(vals) // 2]
+                win = 100.0 * sum(1 for v in vals if v > 0) / len(vals)
+                print(f"  {lab:10} {kept:5} {len(vals):>4} {mean:>8.2f}% {median:>8.2f}% {win:>5.0f}%")
+            else:
+                print(f"  {lab:10} {kept:5} {0:>4} {'—':>9} {'—':>9} {'—':>6}")
+        n = len(rows)
+        if n < 20:
+            print(f"\n  ({n} graded — too few to read yet; let it accumulate).")
+        else:
+            drop = [r["alpha_net"] for r in rows if not r["gate_passed"]]
+            keep = [r["alpha_net"] for r in rows if r["gate_passed"]]
+            dm = sum(drop) / len(drop) if drop else 0.0
+            km = sum(keep) / len(keep) if keep else 0.0
+            print(f"\n  dropped arm: n={len(drop)} mean α={dm:+.2f}%   "
+                  f"kept arm: n={len(keep)} mean α={km:+.2f}%")
+            print("  → dropped arm α ≥ kept arm α means the gate is cutting winners.")
     elif args.cmd == "earnings":
         from alphadesk.ingest import earnings
         from alphadesk.ledger import store

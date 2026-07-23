@@ -96,6 +96,12 @@ EARNINGS_DRIFT_DAYS = 3         # a name reported within this many days → post
 # (live price vs pre-report close, extended-hours-aware) to be a directional candidate;
 # below this = no drift setup yet, skip it (don't guess the print).
 MATERIAL_REACTION_PCT = float(os.environ.get("MATERIAL_REACTION_PCT", "1.5"))
+# Shadow A/B on the gate above: EVERY public reporter's reaction is logged (passed AND
+# dropped) and graded forward vs SPY in the reaction direction over this fixed horizon,
+# so we can see whether forward alpha actually turns on at MATERIAL_REACTION_PCT — i.e.
+# whether the gate is filtering noise or throwing away quiet under-reactions. Fixed
+# (not the per-pick horizon) so all reactions are compared on one clock. `abtest` CLI.
+REACTION_AB_HORIZON_DAYS = int(os.environ.get("REACTION_AB_HORIZON_DAYS", "3"))
 REPICK_COOLDOWN_HOURS = int(os.environ.get("REPICK_COOLDOWN_HOURS", "24"))  # don't re-debate a name within this window; matches the 24h news window so a catalyst is debated once (anti-double-dip across runs)
 
 # Exit-monitoring escalation SCREENS (not decisions — the opus reviewer decides).
