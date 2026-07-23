@@ -107,6 +107,11 @@ EXIT_REVIEW_COOLDOWN_S = int(os.environ.get("EXIT_REVIEW_COOLDOWN_S", "1800"))  
 # — with this buffer of tolerance so a near-miss still counts as a fill (else it's
 # "not taken"). 'market' picks always fill at the open. (Model A honesty on the level.)
 LIMIT_FILL_BUFFER_PCT = float(os.environ.get("LIMIT_FILL_BUFFER_PCT", "0.25"))
+# A limit that fills already most of the way from the planned entry to the STOP has
+# had the reaction move against the thesis before entry (you'd fill one nudge from
+# invalidation — the SLG case). Require the fill to keep at least this fraction of the
+# planned entry→stop cushion, else it's NOT TAKEN.
+LIMIT_FILL_MIN_CUSHION_FRAC = float(os.environ.get("LIMIT_FILL_MIN_CUSHION_FRAC", "0.4"))
 
 # ---------------------------------------------------------------------------
 # Market sessions (ET clock math)

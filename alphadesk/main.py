@@ -90,6 +90,7 @@ async def _serve() -> None:
         from alphadesk.config import (
             EXIT_REVIEW_COOLDOWN_S,
             LIMIT_FILL_BUFFER_PCT,
+            LIMIT_FILL_MIN_CUSHION_FRAC,
             entry_fill_time,
             now_et,
         )
@@ -125,13 +126,16 @@ async def _serve() -> None:
                                 continue
                             o, h, low = ohlc[p["id"]]
                             px = limit_fill(p["direction"], p.get("order_type"),
-                                            p.get("plan_entry"), o, h, low, LIMIT_FILL_BUFFER_PCT)
+                                            p.get("plan_entry"), o, h, low, LIMIT_FILL_BUFFER_PCT,
+                                            stop=p.get("plan_stop"),
+                                            min_cushion_frac=LIMIT_FILL_MIN_CUSHION_FRAC)
                             if px is not None:
                                 await loop.run_in_executor(
                                     None, lambda i=p["id"], x=px: store.set_entry_price(i, x))
                                 p["entry_price"] = px   # use it this pass too
                             else:
-                                reason = f"not taken: limit {p.get('plan_entry')} not reached at the open"
+                                reason = (f"not taken: limit {p.get('plan_entry')} not filled — price never "
+                                          "reached it, or gapped against the thesis too close to the stop")
                                 await loop.run_in_executor(
                                     None, lambda i=p["id"], r=reason: store.record_exit(i, r))
                                 not_taken_ids.add(p["id"])

@@ -104,29 +104,46 @@ def level_crossed(direction: str, price: float, target: float, stop: float) -> s
 
 def limit_fill(direction: str, order_type: str | None, entry: float | None,
                open_px: float | None, high_px: float | None, low_px: float | None,
-               buffer_pct: float) -> float | None:
+               buffer_pct: float, stop: float | None = None,
+               min_cushion_frac: float = 0.0) -> float | None:
     """The Model-A fill PRICE for a pick, given its fill-day OHLC — or None if a
-    LIMIT order never triggered ('not taken'). A fact, not a judgment:
+    LIMIT order didn't fill ('not taken'). A fact, not a judgment:
       • market (or no entry) → fill at the open (you're in immediately).
       • limit LONG → filled if price traded down to the entry (within buffer): at the
         open if it gapped at/below the level, else at the level; not filled if it
         never came down.
       • limit SHORT → mirror (filled if price traded UP to the entry within buffer).
-    The buffer widens the trigger so a near-miss still fills."""
-    if order_type != "limit" or not entry or open_px is None:
-        return open_px
+    The buffer widens the trigger so a near-miss still fills.
+
+    Gap-toward-invalidation guard (limit only): the stop is the plan's invalidation.
+    If the fill already sits most of the way from the planned entry TO the stop — i.e.
+    the reaction gapped against the thesis before you'd enter — the edge is gone and
+    you'd fill one nudge from being stopped, so it's NOT TAKEN. Keeps ≥
+    min_cushion_frac of the planned entry→stop cushion."""
     b = max(0.0, buffer_pct) / 100.0
-    if direction == "LONG":
+    if order_type != "limit" or not entry or open_px is None:
+        px: float | None = open_px
+    elif direction == "LONG":
         if open_px <= entry:                       # gapped at/below the limit → fill at open
-            return round(open_px, 4)
-        if low_px is not None and low_px <= entry * (1 + b):   # dipped into the (buffered) limit
-            return round(entry, 4)
-        return None                                # never reached → not taken
-    if open_px >= entry:                           # SHORT: gapped at/above the limit → fill at open
-        return round(open_px, 4)
-    if high_px is not None and high_px >= entry * (1 - b):
-        return round(entry, 4)
-    return None
+            px = round(open_px, 4)
+        elif low_px is not None and low_px <= entry * (1 + b):   # dipped into the (buffered) limit
+            px = round(entry, 4)
+        else:
+            px = None                              # never reached → not taken
+    elif open_px >= entry:                         # SHORT: gapped at/above the limit → fill at open
+        px = round(open_px, 4)
+    elif high_px is not None and high_px >= entry * (1 - b):
+        px = round(entry, 4)
+    else:
+        px = None
+    if px is None:
+        return None
+    if order_type == "limit" and stop and entry and min_cushion_frac > 0:
+        planned = abs(entry - stop)                # planned distance to invalidation
+        cushion = (stop - px) if direction == "SHORT" else (px - stop)   # actual room left
+        if planned > 0 and cushion < min_cushion_frac * planned:
+            return None                            # gapped against the thesis → not taken
+    return px
 
 
 def exit_signal(direction: str, entry: float | None, cur: float | None,
