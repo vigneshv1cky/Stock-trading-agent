@@ -47,6 +47,10 @@ python -m alphadesk.main backfill
 # filtering noise or cutting quiet under-reactions? also reveals the right threshold)
 python -m alphadesk.main abtest
 
+# Honest alpha: SPY-relative alpha_net vs beta-adjusted + borrow-aware alpha_adj
+# (how much apparent edge was really beta exposure / unpriced short borrow)
+python -m alphadesk.main alpha
+
 # Legacy autonomous 24/7 scheduler (kept, not the v2 path)
 python -m alphadesk.main run
 
@@ -180,6 +184,8 @@ SOLO_ARM_EVERY_N=0            # 0=off (lean default); set e.g. 6 to measure comm
 WORLD_MAX_CATEGORIES=0        # GDELT world news in Find Trades: 0=off (default); 4=full sweep every ~3 runs; 11=every run (slow)
 MATERIAL_REACTION_PCT=1.5     # earnings drift needs a visible reaction to be a directional candidate; below this % (live vs pre-report close) = skip
 REACTION_AB_HORIZON_DAYS=3    # shadow A/B: forward-grade EVERY reporter's reaction (passed AND dropped) over this horizon → `abtest` shows if the gate cuts winners
+SHORT_BORROW_APR=2.0          # honest-alpha prototype: annual % borrow charged to SHORTs over the hold (easy-to-borrow baseline)
+SHORT_BORROW_APR_ILLIQUID=30.0 # higher borrow for low-liquidity shorts (hard-to-borrow proxy until a real borrow feed exists)
 # Exit-monitoring screens (tunable; the opus reviewer is the real filter — defaults escalate generously):
 EXIT_NEAR_TARGET_FRAC=0.85    # ≥ this much of the entry→target move captured → escalate to review
 EXIT_GIVEBACK_MIN_PEAK=4.0    # watch give-back only after the favorable move peaks above this % (below = noise)
@@ -203,6 +209,15 @@ EXIT_REVIEW_COOLDOWN_S=1800   # min seconds between reviews of the same open pos
   gated, removable, tagged as an experiment.
 - **Miss diagnosis is conversational** — ask Claude "why did we miss X?"; it traces
   `store.symbol_traces` / `symbol_skips` and fixes data/prompt/bug. No UI tool for it.
+- **Honest-alpha prototype (beta + borrow)** — the grader books `alpha_net` (SPY-relative,
+  net friction) AND, alongside it, `alpha_adj`: the same but with the benchmark BETA-adjusted
+  (`ret − beta·spy_ret`, beta from trailing daily returns, clamped [0,3]) and a SHORT BORROW
+  charge (annualized `SHORT_BORROW_APR[_ILLIQUID]` prorated over the hold; low-liquidity =
+  hard-to-borrow proxy). Non-destructive — beta=1 and no borrow makes `alpha_adj == alpha_net`.
+  `alpha` CLI shows the "beta drag" (how much apparent edge was really beta/borrow). It exists
+  because the SPY-only benchmark booked beta as alpha and shorts were graded as freely
+  borrowable — both inflating the read. A real borrow-rate feed and a shortability GATE (drop
+  non-shortable shorts) are the follow-ups; this is the measurement, not yet an execution rail.
 - **The material-reaction gate is A/B-tested, not assumed** — the gate that drops
   earnings reporters with a sub-`MATERIAL_REACTION_PCT` reaction could be filtering noise
   OR discarding the quiet under-reactions that ARE the drift edge. So `earnings.

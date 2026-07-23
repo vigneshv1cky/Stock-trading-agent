@@ -86,6 +86,12 @@ LLM_TOOL_BUDGET_USD = float(os.environ.get("LLM_TOOL_BUDGET_USD", "0.50"))  # ha
 MAX_RUNS_PER_DAY = int(os.environ.get("MAX_RUNS_PER_DAY", "50"))  # Find Trades runaway guard
 FRICTION_BPS_PER_SIDE = 15      # grading haircut; doubled for LOW_LIQUIDITY
 LOW_LIQUIDITY_DOLLAR_VOL = 10_000_000  # avg daily dollar volume below this → tag
+# Honest-alpha prototype (computed ALONGSIDE alpha_net, never replacing it): a SHORT
+# pays borrow, which SPY-relative alpha_net ignored. Annualized % borrow rate, charged
+# over the holding period — tiered by liquidity (low_liquidity is the hard-to-borrow
+# proxy until a real borrow-rate feed exists). LONGs pay nothing here.
+SHORT_BORROW_APR = float(os.environ.get("SHORT_BORROW_APR", "2.0"))            # easy-to-borrow baseline
+SHORT_BORROW_APR_ILLIQUID = float(os.environ.get("SHORT_BORROW_APR_ILLIQUID", "30.0"))  # hard-to-borrow proxy
 # Anti-survivorship: grade scout SKIPS too. A skip has no direction, so a "miss"
 # is a large move in EITHER direction vs SPY within a short window we ignored.
 SKIP_GRADE_DAYS = 3             # trading days to judge a skipped name's forward move

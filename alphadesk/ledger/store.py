@@ -239,6 +239,11 @@ def init() -> None:
             conn.execute("ALTER TABLE enrichment_cache ADD COLUMN ticker_sentiment TEXT")
         except sqlite3.OperationalError:
             pass  # already migrated
+        for col in ("beta", "alpha_adj"):   # honest-alpha prototype (beta-adjusted, borrow-aware)
+            try:
+                conn.execute(f"ALTER TABLE picks ADD COLUMN {col} REAL")
+            except sqlite3.OperationalError:
+                pass  # already migrated
 
 
 def _now() -> str:
@@ -363,6 +368,18 @@ def update_reaction(reaction_id: int, **fields: Any) -> None:
     with _lock, _connect() as conn:
         conn.execute(f"UPDATE earnings_reactions SET {sets} WHERE id = ?",
                      (*fields.values(), reaction_id))
+
+
+def alpha_comparison() -> list[dict]:
+    """Graded TEAM picks with both the SPY-relative alpha_net and the honest
+    (beta-adjusted, borrow-aware) alpha_adj — for the `alpha` prototype report that
+    shows how much apparent alpha was really beta exposure / unpriced short borrow."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT direction, alpha_net, alpha_adj, beta, low_liquidity FROM picks"
+            " WHERE arm='TEAM' AND graded_at IS NOT NULL"
+            "   AND alpha_net IS NOT NULL AND alpha_adj IS NOT NULL").fetchall()
+    return [dict(r) for r in rows]
 
 
 def reaction_ab_rows() -> list[dict]:

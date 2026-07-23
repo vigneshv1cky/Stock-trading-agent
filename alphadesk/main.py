@@ -272,6 +272,7 @@ def main() -> None:
     sub.add_parser("grade")
     sub.add_parser("status")
     sub.add_parser("abtest", help="reaction-gate A/B: forward alpha bucketed by reaction size")
+    sub.add_parser("alpha", help="honest alpha: SPY-relative alpha_net vs beta-adjusted, borrow-aware alpha_adj")
     sub.add_parser("earnings", help="refresh the earnings calendar and show upcoming / recent")
     args = parser.parse_args()
 
@@ -374,6 +375,36 @@ def main() -> None:
             print(f"\n  dropped arm: n={len(drop)} mean α={dm:+.2f}%   "
                   f"kept arm: n={len(keep)} mean α={km:+.2f}%")
             print("  → dropped arm α ≥ kept arm α means the gate is cutting winners.")
+    elif args.cmd == "alpha":
+        from alphadesk.ledger import store
+        rows = store.alpha_comparison()
+
+        def _agg(rs):
+            if not rs:
+                return (0, None, None, None)
+            net = sum(r["alpha_net"] for r in rs) / len(rs)
+            adj = sum(r["alpha_adj"] for r in rs) / len(rs)
+            beta = sum(r["beta"] for r in rs if r["beta"] is not None)
+            nb = sum(1 for r in rs if r["beta"] is not None)
+            return (len(rs), net, adj, (beta / nb) if nb else None)
+
+        longs = [r for r in rows if r["direction"] == "LONG"]
+        shorts = [r for r in rows if r["direction"] == "SHORT"]
+        print("\n=== honest alpha — SPY-relative (alpha_net) vs beta-adjusted + borrow-aware (alpha_adj) ===")
+        print(f"  {'cohort':7} {'n':>4} {'mean net':>10} {'mean adj':>10} {'β drag':>8} {'mean β':>7}")
+        for name, rs in (("all", rows), ("longs", longs), ("shorts", shorts)):
+            n, net, adj, beta = _agg(rs)
+            if n:
+                drag = net - adj
+                bstr = f"{beta:.2f}" if beta is not None else "—"
+                print(f"  {name:7} {n:>4} {net:>9.2f}% {adj:>9.2f}% {drag:>7.2f}% {bstr:>7}")
+            else:
+                print(f"  {name:7} {0:>4} {'—':>10} {'—':>10} {'—':>8} {'—':>7}")
+        if not rows:
+            print("\n  (no picks graded with both metrics yet — grade forward, then re-check).")
+        else:
+            print("\n  β drag = how much alpha_net OVERSTATED vs the beta-adjusted number "
+                  "(positive = booked beta/borrow as alpha).")
     elif args.cmd == "earnings":
         from alphadesk.ingest import earnings
         from alphadesk.ledger import store

@@ -40,6 +40,38 @@ def _daily_history(symbol: str):
     return df
 
 
+def _beta(df, spy, lookback: int = 60) -> float:
+    """Beta of the stock vs SPY from trailing daily returns (cov/var, population
+    moments), clamped to [0, 3]. Defaults to 1.0 on thin/degenerate data — so
+    alpha_adj with beta=1 and no borrow equals the SPY-relative alpha_net."""
+    try:
+        if spy is None:
+            return 1.0
+        sr = df["Close"].astype(float).pct_change().dropna()
+        mr = spy["Close"].astype(float).pct_change().dropna()
+        idx = sr.index.intersection(mr.index)
+        if len(idx) < 20:
+            return 1.0
+        sr, mr = sr.loc[idx].tail(lookback), mr.loc[idx].tail(lookback)
+        mmean = float(mr.mean())
+        var = float(((mr - mmean) ** 2).mean())
+        if var <= 0:
+            return 1.0
+        cov = float(((sr - float(sr.mean())) * (mr - mmean)).mean())
+        return round(max(0.0, min(cov / var, 3.0)), 3)
+    except Exception:
+        return 1.0
+
+
+def _borrow_cost(low_liquidity: bool, horizon_days: int) -> float:
+    """Estimated SHORT borrow cost over the holding period, as a % of notional: the
+    annualized rate (tiered by liquidity as a hard-to-borrow proxy) prorated over
+    horizon trading days. Applied only to shorts in alpha_adj."""
+    from alphadesk.config import SHORT_BORROW_APR, SHORT_BORROW_APR_ILLIQUID
+    apr = SHORT_BORROW_APR_ILLIQUID if low_liquidity else SHORT_BORROW_APR
+    return round(apr * horizon_days / 252.0, 3)
+
+
 def _entry(row: dict, df):
     """(entry_day, entry_price) for a pick, or None if not determinable yet. Shared
     by the horizon grade and the MFE/MAE path so both anchor identically. Uses the
@@ -176,6 +208,15 @@ def _entry_and_outcomes(row: dict, df, spy) -> dict | None:
                 if row.get("low_liquidity"):
                     friction *= 2
                 out["alpha_net"] = round(ret_h - benchmark - friction, 3)
+                # Honest-alpha prototype, computed ALONGSIDE alpha_net (not replacing it):
+                # (1) beta-adjust the benchmark, so a high-beta name up with the tape
+                #     doesn't book its beta exposure as alpha; (2) charge SHORT borrow,
+                #     which SPY-relative alpha_net ignored. beta=1 + no borrow ⇒ ==alpha_net.
+                beta = _beta(df, spy)
+                out["beta"] = beta
+                borrow = (_borrow_cost(bool(row.get("low_liquidity")), horizon)
+                          if row["direction"] == "SHORT" else 0.0)
+                out["alpha_adj"] = round(ret_h - beta * benchmark - friction - borrow, 3)
 
     out["graded_at"] = datetime.now(timezone.utc).isoformat()
     if row["entry_price"] is None:
