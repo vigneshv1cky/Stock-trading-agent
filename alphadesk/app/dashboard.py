@@ -252,7 +252,6 @@ def api_live():
     return {"live": out, "market": market_session()}
 
 
-@app.get("/api/timelines")
 def _is_not_taken(exit_ts: str | None, exit_reason: str | None, fill) -> bool:
     """True if a call was never actually held — a CANCEL, not a held-then-exited
     trade. Two ways: a close stamped BEFORE the fill (pre-open thesis death), or a
@@ -270,6 +269,7 @@ def _is_not_taken(exit_ts: str | None, exit_reason: str | None, fill) -> bool:
         return False
 
 
+@app.get("/api/timelines")
 def api_timelines(days: int = 30):
     """Track record grouped BY STOCK: each symbol's ordered calls with outcomes
     (open → live P&L; graded → vs S&P; exited), the desk's current stance, and
