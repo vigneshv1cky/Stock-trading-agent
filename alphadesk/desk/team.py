@@ -144,12 +144,13 @@ _ARBITER_SYSTEM = (
     "COHERENCE RULE: adjusted_score must agree with final_direction — ABOVE 50 for "
     "LONG, BELOW 50 for SHORT. NEVER sit exactly at 50; commit to a side. A "
     "weak-but-real long is 52-58, a thin short 44-49.\n"
-    "adjusted_horizon_days: you own the horizon too — if the surviving edge is "
-    "shorter or longer than the researcher's proposal, SAY SO; the book records "
-    "YOUR horizon.\n"
+    "HORIZON is PRE-COMMITTED by the edge (fixed in advance) — you do NOT choose it. Judge "
+    "whether the surviving edge actually plays out WITHIN that fixed window: if the thesis "
+    "needs far longer than the edge's horizon to work, that's a reason to PASS, not to "
+    "stretch the clock.\n"
     'Return ONLY JSON: {"approved": <true|false>, "final_direction": '
     '"LONG|SHORT", "adjusted_score": <0-100>, "adjusted_confidence": <0-100>, '
-    '"adjusted_horizon_days": <1-10>, "verdict": "STRONG|SOFT|PASS", '
+    '"verdict": "STRONG|SOFT|PASS", '
     '"summary": "<3 sentences max; if you flipped the call, say so and why>"}'
 )
 

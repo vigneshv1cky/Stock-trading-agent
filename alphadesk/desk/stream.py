@@ -33,6 +33,7 @@ from alphadesk.config import (
     WORLD_MAX_CATEGORIES,
     entry_fill_time,
     now_et,
+    pinned_horizon,
     session,
 )
 from alphadesk.desk import (
@@ -492,10 +493,11 @@ async def _stream_find_trades_inner(hours: float = 48.0, max_debates: int = 6,
                     None, lambda: loner.loner_analysis(
                         sym, pick["reason"], briefs, history, decision_id + "-solo", calibration))
                 s_model = s.pop("_downgraded_model", MODEL_MAP["loner"])
+                loner_horizon = pinned_horizon(pick.get("edge_hint"))   # same pinned horizon as the team → apples-to-apples
                 _pending_run_picks.append(store.record_pick({
                     "symbol": sym, "arm": "LONER", "edge": pick.get("edge_hint"),
                     "trigger_src": "FIND_TRADES", "session": sess,
-                    "direction": s["direction"], "horizon_days": s["horizon_days"],
+                    "direction": s["direction"], "horizon_days": loner_horizon,
                     "score": s["score"], "confidence": s["confidence"],
                     "approved": int(bool(s["approved"])), "triage_reason": pick["reason"],
                     "thesis": s["thesis"], "briefs": briefs, "model_tags": {"loner": s_model},

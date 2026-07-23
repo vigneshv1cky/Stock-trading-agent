@@ -96,6 +96,23 @@ SHORT_BORROW_APR_ILLIQUID = float(os.environ.get("SHORT_BORROW_APR_ILLIQUID", "3
 # per day. Stops the desk booking 5 same-sector same-direction names on one driver — which is
 # 5x the intended risk AND makes the ledger count one bet as many independent wins.
 CONCENTRATION_MAX_PER_CLUSTER = int(os.environ.get("CONCENTRATION_MAX_PER_CLUSTER", "2"))
+# Pre-committed horizon: the grading horizon is FIXED per edge, decided in advance — NOT
+# chosen by the judge after seeing the setup. Removes the garden-of-forking-paths (the same
+# catalyst bookable as a 1d or 10d call grades differently and only the chosen spec is logged),
+# so alpha_net is an honest out-of-sample number. Grounded in each edge's mechanism (the
+# continuation/drift plays out over days). Env-overridable per edge.
+EDGE_HORIZON_DAYS = {
+    "MOMENTUM": int(os.environ.get("EDGE_HORIZON_MOMENTUM", "3")),    # a running move continues a few days
+    "SPILLOVER": int(os.environ.get("EDGE_HORIZON_SPILLOVER", "5")),  # connected names drift over days
+    "THEME": int(os.environ.get("EDGE_HORIZON_THEME", "5")),          # themes build over days
+    "WORLD": int(os.environ.get("EDGE_HORIZON_WORLD", "5")),          # world-event repricing over days
+}
+DEFAULT_EDGE_HORIZON_DAYS = int(os.environ.get("DEFAULT_EDGE_HORIZON_DAYS", "3"))
+
+
+def pinned_horizon(edge: str | None) -> int:
+    """The PRE-COMMITTED grading horizon for an edge (fixed in advance, not judge-chosen)."""
+    return EDGE_HORIZON_DAYS.get((edge or "").upper(), DEFAULT_EDGE_HORIZON_DAYS)
 # Anti-survivorship: grade scout SKIPS too. A skip has no direction, so a "miss"
 # is a large move in EITHER direction vs SPY within a short window we ignored.
 SKIP_GRADE_DAYS = 3             # trading days to judge a skipped name's forward move

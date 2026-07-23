@@ -17,7 +17,7 @@ funnel). Those stay in stream.py / workflow.py.
 import asyncio
 import logging
 
-from alphadesk.config import MODEL_MAP, session
+from alphadesk.config import MODEL_MAP, pinned_horizon, session
 from alphadesk.desk import plan, team
 from alphadesk.ingest import prices
 from alphadesk.ledger import store
@@ -85,7 +85,11 @@ async def deliberate(sym: str, pick: dict, briefs: list[dict], price_ctx: dict |
     flipped = booked_dir != thesis["direction"]
 
     sess = session()
-    horizon = int(verdict.get("adjusted_horizon_days") or thesis["horizon_days"])
+    # Horizon is PRE-COMMITTED per edge — the grade settles at a horizon fixed in advance,
+    # NOT one the judge picked after seeing the setup (that was a garden-of-forking-paths: the
+    # same catalyst bookable as a 1d or 10d call, only the chosen spec logged). The plan (and
+    # thus the trade) sizes to this pinned horizon too, so entry and grade stay consistent.
+    horizon = pinned_horizon(pick.get("edge_hint"))
 
     # Execution desk: turn the committed call into an actionable trade plan
     # (entry/target/stop/note). Fail-open — a missing plan never blocks the pick.

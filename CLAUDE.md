@@ -187,6 +187,8 @@ REACTION_AB_HORIZON_DAYS=3    # shadow A/B: forward-grade EVERY reporter's react
 SHORT_BORROW_APR=2.0          # honest-alpha prototype: annual % borrow charged to SHORTs over the hold (easy-to-borrow baseline)
 SHORT_BORROW_APR_ILLIQUID=30.0 # higher borrow for low-liquidity shorts (hard-to-borrow proxy until a real borrow feed exists)
 CONCENTRATION_MAX_PER_CLUSTER=2 # max TAKEN picks per correlation cluster (sector+direction) per day; excess correlated picks recorded but not booked
+EDGE_HORIZON_MOMENTUM=3        # PRE-COMMITTED grading horizon per edge (fixed in advance, not judge-chosen) — MOMENTUM
+EDGE_HORIZON_SPILLOVER=5       # SPILLOVER / THEME / WORLD default to 5; DEFAULT_EDGE_HORIZON_DAYS=3 for anything unmapped
 # Exit-monitoring screens (tunable; the opus reviewer is the real filter — defaults escalate generously):
 EXIT_NEAR_TARGET_FRAC=0.85    # ≥ this much of the entry→target move captured → escalate to review
 EXIT_GIVEBACK_MIN_PEAK=4.0    # watch give-back only after the favorable move peaks above this % (below = noise)
@@ -210,6 +212,15 @@ EXIT_REVIEW_COOLDOWN_S=1800   # min seconds between reviews of the same open pos
   gated, removable, tagged as an experiment.
 - **Miss diagnosis is conversational** — ask Claude "why did we miss X?"; it traces
   `store.symbol_traces` / `symbol_skips` and fixes data/prompt/bug. No UI tool for it.
+- **Pre-committed horizon** — the grading horizon is FIXED per edge in advance
+  (`config.pinned_horizon`, `EDGE_HORIZON_DAYS`: MOMENTUM 3, SPILLOVER/THEME/WORLD 5), NOT
+  chosen by the judge after seeing the setup. `debate.deliberate` sets `horizon =
+  pinned_horizon(edge_hint)` (the trade PLAN sizes to it too, so entry and grade stay
+  consistent); the loner control arm is pinned to the SAME horizon for an apples-to-apples
+  comparison; the judge prompt now judges whether the edge plays out WITHIN the fixed window
+  (a thesis needing longer → PASS, not a stretched clock). Removes the garden-of-forking-paths
+  (a catalyst bookable as a 1d or 10d call, only the chosen spec logged) so alpha_net is an
+  honest out-of-sample number — and neutralises the horizon-shop the calibration buckets fed.
 - **Concentration cap** — `team.apply_concentration_cap` (run in `stream.py` after the Head
   ranks, before `mark_taken`) tags every pick with a correlation CLUSTER (sector|direction)
   and caps TAKEs at `CONCENTRATION_MAX_PER_CLUSTER` per cluster per day (counting earlier runs
