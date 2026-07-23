@@ -380,12 +380,18 @@ def fill_ohlc(items: list[dict]) -> dict[int, tuple]:
     if not syms:
         return out
     try:
+        import pandas as pd
         import yfinance as yf
         df = yf.download(syms, period="12d", interval="1d", group_by="ticker",
                          progress=False, threads=True, auto_adjust=True)
         for i in items:
             try:
-                sub = df[i["symbol"]] if len(syms) > 1 else df
+                # group_by="ticker" yields per-symbol MultiIndex columns even for a
+                # SINGLE symbol, so key by symbol whenever the level exists (the old
+                # len>1 heuristic broke single-pick fills — df["Open"] KeyError'd → {} →
+                # the watcher couldn't fill a lone open pick).
+                sub = (df[i["symbol"]] if isinstance(df.columns, pd.MultiIndex)
+                       and i["symbol"] in df.columns.get_level_values(0) else df)
                 # First bar ON OR AFTER the fill date (not an exact match): a fill_date
                 # that lands on a market HOLIDAY has no bar, and an exact match left the
                 # position stranded forever (never filled, never marked not-taken) while
