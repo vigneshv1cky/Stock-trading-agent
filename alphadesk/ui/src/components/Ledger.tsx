@@ -168,7 +168,21 @@ function EventRow({ e, onSelect }: { e: TimelineEvent; onSelect: (id: number) =>
           <span className="text-muted-foreground/70"> → {etDateTime(e.exit_ts)}</span>
         )}
       </span>
-      <span className="ml-auto shrink-0">
+      <span className="ml-auto flex shrink-0 items-center gap-2.5">
+        {e.mfe_pct != null && (
+          <InfoTip
+            tip="How far it ran / how far underwater while held — the highest and lowest it reached vs entry (max favorable / adverse excursion)"
+            className="hidden cursor-help font-mono text-[10px] tabular-nums sm:inline"
+          >
+            <span className="text-emerald-600/80 dark:text-emerald-400/80">
+              ▲{e.mfe_pct >= 0 ? "+" : ""}
+              {e.mfe_pct.toFixed(1)}%
+            </span>{" "}
+            {e.mae_pct != null && (
+              <span className="text-red-600/80 dark:text-red-400/80">▼{e.mae_pct.toFixed(1)}%</span>
+            )}
+          </InfoTip>
+        )}
         <Outcome e={e} />
       </span>
     </button>
