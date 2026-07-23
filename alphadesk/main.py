@@ -141,7 +141,14 @@ async def _serve() -> None:
                                 not_taken_ids.add(p["id"])
                                 log.info("Not taken #%d %s — limit %s not reached",
                                          p["id"], p["symbol"], p.get("plan_entry"))
+                    # Only auto-exit positions that were actually TAKEN and FILLED —
+                    # live_picks also carries counterfactuals the Head passed on and
+                    # not-yet-filled limits (entry_price is NULL); exiting those would
+                    # stamp realized P&L off plan_entry as a phantom fill. (The run-level
+                    # review uses open_taken_picks, which already filters taken=1; the
+                    # between-run watcher must match it.)
                     monitorable = [p for p in open_pos if p["id"] not in not_taken_ids
+                                   and p.get("taken") and p.get("entry_price") is not None
                                    and p.get("plan_target") and p.get("plan_stop")]
                     live_ids = {p["id"] for p in open_pos}
                     for stale in [i for i in peak_fav if i not in live_ids]:

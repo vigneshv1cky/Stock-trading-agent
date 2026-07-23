@@ -91,13 +91,32 @@ def _intensity(articles: list[dict]) -> float:
 
 
 _pending_run_picks: list[int] = []   # picks committed by the in-flight run, not yet finalised
+_run_lock = asyncio.Lock()           # serialise runs: only one Find Trades at a time
 
 
 async def stream_find_trades(hours: float = 48.0, max_debates: int = 6,
                              expose: bool = False, is_disconnected=None):
+    """Public entry: serialise Find Trades runs so two can never overlap. Concurrent
+    runs (two browser tabs, a reconnect) previously shared the module-global
+    _pending_run_picks and one run could hard-delete the other's already-committed,
+    already-streamed picks. A second run while one is in flight is now rejected rather
+    than corrupting the first."""
+    if _run_lock.locked():
+        yield _ev("status", msg="A Find Trades run is already in progress — wait for it to finish.")
+        yield _ev("done", board=[])
+        return
+    async with _run_lock:
+        async for ev in _stream_find_trades_inner(hours, max_debates, expose, is_disconnected):
+            yield ev
+
+
+async def _stream_find_trades_inner(hours: float = 48.0, max_debates: int = 6,
+                                    expose: bool = False, is_disconnected=None):
     """Async generator of deliberation events. Broad news window (default 48h —
     a batch run can afford to look far wider than the old live-tick engine).
-    Stops early if the client disconnects (no more wasted LLM spend)."""
+    Stops early if the client disconnects (no more wasted LLM spend). Runs under
+    _run_lock (see stream_find_trades), so its access to the module-global
+    _pending_run_picks rollback list is single-file and race-free."""
     loop = asyncio.get_running_loop()
     global _pending_run_picks
 

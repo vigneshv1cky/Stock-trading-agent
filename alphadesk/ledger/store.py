@@ -224,12 +224,23 @@ def _now() -> str:
 _JSON_FIELDS = ("debate", "briefs", "model_tags")
 
 
+def _check_cols(keys) -> None:
+    """Column names are interpolated into SQL (values are always bound), so every key
+    MUST be a bare identifier. All callers pass literal keys today; this guard stops a
+    future caller that lets a model-derived string become a column key from opening an
+    injection hole (str.isidentifier() admits only [A-Za-z_][A-Za-z0-9_]*)."""
+    for k in keys:
+        if not isinstance(k, str) or not k.isidentifier():
+            raise ValueError(f"invalid column name: {k!r}")
+
+
 def record_pick(row: dict[str, Any]) -> int:
     row = dict(row)
     row.setdefault("ts", _now())
     for field in _JSON_FIELDS:
         if field in row and not isinstance(row[field], (str, type(None))):
             row[field] = json.dumps(row[field])
+    _check_cols(row)
     cols = ", ".join(row)
     marks = ", ".join("?" for _ in row)
     with _lock, _connect() as conn:
@@ -241,6 +252,7 @@ def update_pick(pick_id: int, **fields: Any) -> None:
     for field in _JSON_FIELDS:
         if field in fields and not isinstance(fields[field], (str, type(None))):
             fields[field] = json.dumps(fields[field])
+    _check_cols(fields)
     sets = ", ".join(f"{k} = ?" for k in fields)
     with _lock, _connect() as conn:
         conn.execute(f"UPDATE picks SET {sets} WHERE id = ?", (*fields.values(), pick_id))
@@ -596,15 +608,22 @@ def set_entry_price(pick_id: int, price: float) -> None:
 
 def record_exit(pick_id: int, reason: str, exit_price: float | None = None,
                 exit_return_pct: float | None = None,
-                exit_alpha: float | None = None) -> None:
+                exit_alpha: float | None = None) -> bool:
     """Stamp an early exit (a target/stop hit or a review) WITH its realized
     performance at the exit price. Distinct from the horizon grade (alpha_net),
-    which still settles at the declared horizon and measures the call's edge."""
+    which still settles at the declared horizon and measures the call's edge.
+
+    Idempotent: the `exit_ts IS NULL` guard means only the FIRST close wins — three
+    writers (watcher level-cross, run review, watcher escalation) can race the same
+    open position, and the guard stops a second one overwriting the realized price/
+    reason (or, with real orders, sending a second close). Returns True if this call
+    closed it, False if it was already closed."""
     with _lock, _connect() as conn:
-        conn.execute(
+        cur = conn.execute(
             "UPDATE picks SET exit_ts=?, exit_reason=?, exit_price=?,"
-            " exit_return_pct=?, exit_alpha=? WHERE id=?",
+            " exit_return_pct=?, exit_alpha=? WHERE id=? AND exit_ts IS NULL",
             (_now(), reason, exit_price, exit_return_pct, exit_alpha, int(pick_id)))
+        return cur.rowcount > 0
 
 
 def record_skips(skips: list[dict], cap: int = 30) -> None:

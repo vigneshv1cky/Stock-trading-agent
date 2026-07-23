@@ -27,7 +27,11 @@ def _daily_history(symbol: str):
     if symbol in _history_cache:
         return _history_cache[symbol]
     import yfinance as yf
-    df = yf.Ticker(symbol).history(period="60d", interval="1d")
+    # auto_adjust=False → RAW OHLC. The stored entry_price is a raw fill; grading it
+    # against a dividend-adjusted series (the yfinance default) made every dividend
+    # payer book a fabricated loss over the hold. Raw-vs-raw on BOTH legs (stock + SPY)
+    # is a consistent price-return; splits are handled explicitly at grade time.
+    df = yf.Ticker(symbol).history(period="60d", interval="1d", auto_adjust=False)
     if df is None or df.empty:
         _history_cache[symbol] = None
         return None
@@ -121,13 +125,25 @@ def _entry_and_outcomes(row: dict, df, spy) -> dict | None:
         return float(df.loc[df.index.normalize() == day, "Close"].iloc[0])
 
     sign = 1.0 if row["direction"] == "LONG" else -1.0
+    horizon = int(row["horizon_days"])
     out: dict = {}
+
+    # Split-adjust the fixed raw entry onto the post-split basis of the raw close
+    # series, so a split inside the hold window isn't read as a ~50%/100% fake move.
+    # Dividends are intentionally left unadjusted (consistent price-return on both legs).
+    if entry_price and "Stock Splits" in df.columns and len(after) >= 1:
+        end_day = after[min(horizon, len(after)) - 1]
+        sp = df.loc[(df.index.normalize() > entry_day)
+                    & (df.index.normalize() <= end_day), "Stock Splits"]
+        if (sp != 0).any():
+            factor = float(sp[sp != 0].prod())
+            if factor and factor != 1.0:
+                entry_price = entry_price / factor
 
     close_1d = _close_after(1)
     if close_1d is not None and entry_price:
         out["ret_1d"] = round(sign * (close_1d - entry_price) / entry_price * 100, 3)
 
-    horizon = int(row["horizon_days"])
     close_h = _close_after(horizon)
     if close_h is None or not entry_price:
         # horizon not reached yet — partial grade only if 1d is available
@@ -144,9 +160,14 @@ def _entry_and_outcomes(row: dict, df, spy) -> dict | None:
             s_entry_day = s_entry_c[0]
             s_after = sdays[sdays > s_entry_day]
             if len(s_after) >= horizon:
-                s_entry = float(spy.loc[spy.index.normalize() == s_entry_day, "Open"].iloc[0]) \
-                    if row["entry_price"] is None else \
-                    float(spy.loc[spy.index.normalize() == s_entry_day, "Close"].iloc[0])
+                # Match SPY's entry bar to the stock's fill: OPEN-session picks fill
+                # intraday at a live price → benchmark from the entry-day CLOSE; closed-
+                # market picks fill at the next 9:30 OPEN → benchmark from that OPEN.
+                # (Keying on entry_price-is-None was the bug: the watcher stamps
+                # entry_price on closed picks too, flipping them to CLOSE and silently
+                # dropping SPY's day-0 open→close move from every closed-market grade.)
+                spy_leg = "Close" if row["session"] == "OPEN" else "Open"
+                s_entry = float(spy.loc[spy.index.normalize() == s_entry_day, spy_leg].iloc[0])
                 s_exit = float(spy.loc[spy.index.normalize() == s_after[horizon - 1], "Close"].iloc[0])
                 spy_ret = (s_exit - s_entry) / s_entry * 100
                 out["spy_ret_horizon"] = round(spy_ret, 3)

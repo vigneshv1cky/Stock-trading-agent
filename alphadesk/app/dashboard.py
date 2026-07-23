@@ -12,6 +12,7 @@ import logging
 import os
 import secrets
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
@@ -29,6 +30,25 @@ def _auth_required() -> bool:
     exposed, so it needs no password: no auth wall while we're not live."""
     host = os.environ.get("DASHBOARD_HOST", "127.0.0.1").strip().lower()
     return host not in ("", "127.0.0.1", "localhost", "::1")
+
+
+def _cross_origin(request: Request) -> bool:
+    """True if the request carries an Origin/Referer from a DIFFERENT host than the
+    dashboard — a cross-site drive-by. Guards the side-effecting run endpoint: since
+    it's a GET (SSE/EventSource is GET-only), an unauth'd localhost dashboard is
+    otherwise triggerable by ANY page the operator visits (a bare `<img>`/`fetch`/
+    `EventSource` to 127.0.0.1 fires a real LLM run + ledger writes). Browser drive-bys
+    always carry an Origin or a Referer pointing at the attacker's host; we reject those.
+    Same-origin (the real dashboard) and header-less clients (curl) are allowed."""
+    host = request.headers.get("host", "")
+    for h in ("origin", "referer"):
+        v = request.headers.get(h)
+        if not v:
+            continue
+        netloc = urlsplit(v).netloc
+        if netloc and netloc != host:
+            return True
+    return False
 
 
 @app.middleware("http")
@@ -444,6 +464,10 @@ async def api_find_trades(request: Request, hours: float = 24.0,
     from alphadesk.desk.stream import stream_find_trades
 
     async def gen():
+        if _cross_origin(request):
+            yield f"data: {_json.dumps({'type': 'status', 'msg': 'cross-origin request refused'})}\n\n"
+            yield f"data: {_json.dumps({'type': 'done', 'board': []})}\n\n"
+            return
         if not _within_daily_cap():
             from alphadesk.config import MAX_RUNS_PER_DAY
             yield f"data: {_json.dumps({'type': 'status', 'msg': f'daily run cap reached ({MAX_RUNS_PER_DAY}/day) — try again tomorrow'})}\n\n"
@@ -458,8 +482,8 @@ async def api_find_trades(request: Request, hours: float = 24.0,
                 _log_run_event(event)
                 yield f"data: {_json.dumps(event)}\n\n"
         except Exception as exc:  # never leave the client hanging
-            _run_log.error("run error: %s", exc)
-            yield f"data: {_json.dumps({'type': 'status', 'msg': f'run error: {exc}'})}\n\n"
+            _run_log.error("run error: %s", exc)   # full detail to the server log only
+            yield f"data: {_json.dumps({'type': 'status', 'msg': 'run error — see server logs'})}\n\n"
             yield f"data: {_json.dumps({'type': 'done', 'board': []})}\n\n"
 
     return StreamingResponse(

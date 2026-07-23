@@ -268,7 +268,7 @@ def get_options_context(symbol: str) -> Optional[dict]:
 _earn_move_cache: dict[str, Any] = {"ts": 0.0, "key": None, "data": {}}
 
 
-def moves_since_report(items: list[dict], ttl: int = 300) -> dict[str, Optional[dict]]:
+def moves_since_report(items: list[dict], ttl: int = 60) -> dict[str, Optional[dict]]:
     """Price move since each name's earnings went public. Uses the REAL-TIME price
     (extended-hours aware) for 'current', so an after-hours / pre-market reaction is
     visible even before any regular session has traded — the exact window an AMC print
@@ -315,7 +315,20 @@ def moves_since_report(items: list[dict], ttl: int = 300) -> dict[str, Optional[
                     idx = closes.index
                     days = idx.normalize()
                     rdts = pd.Timestamp(rd).normalize()
-                    cur = live.get(sym.upper()) or float(closes.iloc[-1])   # live, fallback close
+                    # Current price for the reaction leg: the live (extended-hours) price.
+                    # Fall back to the daily close ONLY if it is TODAY's bar — never a
+                    # stale prior-session close. The morning after an earnings gap the
+                    # last daily close is the PRE-gap price; letting it stand in for
+                    # "current" reads the reaction as ~0% and silently drops a real mover
+                    # through the material-reaction gate (the July stale-anchor bug, on
+                    # the direction path). No trustworthy current price → not measurable.
+                    cur_live = live.get(sym.upper())
+                    if cur_live:
+                        cur = cur_live
+                    elif idx[-1].date() == now_et().date():
+                        cur = float(closes.iloc[-1])
+                    else:
+                        continue
                     post_open: float | None
                     gap: float | None
                     if sess == "DAY":
