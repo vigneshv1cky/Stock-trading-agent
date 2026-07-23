@@ -22,11 +22,17 @@ function PerfStrip({ stats }: { stats: Stats | null }) {
   const wins = stats?.total.wins ?? 0
   const winRate = graded > 0 ? Math.round((wins / graded) * 100) : null
   const avg = stats?.total.avg_alpha_net ?? null
+  const adj = stats?.total.avg_alpha_adj ?? null
   return (
     <div className="grid grid-cols-3 gap-2">
       <Stat label="Ideas logged" value={String(stats?.total.picks ?? 0)} />
       <Stat label="Scored" value={String(graded)} sub={winRate != null ? `${winRate}% beat S&P` : "grading forward"} />
-      <Stat label="Avg vs S&P" value={avg != null ? fmtAlpha(avg) : "—"} tone={avg} />
+      <Stat
+        label="Avg vs S&P"
+        value={avg != null ? fmtAlpha(avg) : "—"}
+        tone={avg}
+        sub={adj != null ? `${fmtAlpha(adj)} β-adj` : undefined}
+      />
     </div>
   )
 }
@@ -92,8 +98,18 @@ function Outcome({ e }: { e: TimelineEvent }) {
   }
   if (e.state === "graded" && e.alpha_net != null) {
     return (
-      <span className={`font-mono text-sm font-semibold tabular-nums ${e.alpha_net > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
-        {fmtAlpha(e.alpha_net)} <span className="text-[11px] font-normal text-muted-foreground">vs S&P</span>
+      <span className="inline-flex flex-col items-end leading-tight">
+        <span className={`font-mono text-sm font-semibold tabular-nums ${e.alpha_net > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
+          {fmtAlpha(e.alpha_net)} <span className="text-[11px] font-normal text-muted-foreground">vs S&P</span>
+        </span>
+        {e.alpha_adj != null && (
+          <InfoTip
+            tip="Beta-adjusted and borrow-aware alpha — strips market-beta exposure (and short-borrow cost) out of the vs-S&P number. The honest read."
+            className={`cursor-help font-mono text-[10px] tabular-nums ${e.alpha_adj > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}
+          >
+            {fmtAlpha(e.alpha_adj)} β-adj
+          </InfoTip>
+        )}
       </span>
     )
   }

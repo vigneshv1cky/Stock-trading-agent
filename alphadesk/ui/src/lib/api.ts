@@ -71,6 +71,8 @@ export interface Pick {
   ret_horizon: number | null
   spy_ret_horizon: number | null
   alpha_net: number | null
+  alpha_adj: number | null // beta-adjusted + borrow-aware alpha (the honest number, alongside alpha_net)
+  beta: number | null // stock's beta vs SPY (trailing daily returns, clamped 0–3)
   graded_at: string | null
 }
 
@@ -115,6 +117,8 @@ export interface TimelineEvent {
   plan_stop: number | null
   entry_price: number | null
   alpha_net: number | null
+  alpha_adj: number | null // beta-adjusted + borrow-aware alpha (honest counterpart to alpha_net)
+  beta: number | null // stock's beta vs SPY
   graded_at: string | null
   exit_ts: string | null
   exit_reason: string | null
@@ -144,6 +148,7 @@ export interface Stats {
     picks: number
     graded: number
     avg_alpha_net: number | null
+    avg_alpha_adj: number | null // beta-adjusted + borrow-aware mean alpha
     wins: number | null
   }
   by: Record<

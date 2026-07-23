@@ -86,6 +86,12 @@ function TheCall({ pick }: { pick: Pick }) {
             <Badge variant="outline" className={pick.alpha_net > 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}>
               vs S&P 500 {fmtAlpha(pick.alpha_net)}
             </Badge>
+          )}{" "}
+          {pick.alpha_adj !== null && (
+            <Badge variant="outline" className={pick.alpha_adj > 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}>
+              β-adj {fmtAlpha(pick.alpha_adj)}
+              {pick.beta != null ? ` (β ${pick.beta.toFixed(2)})` : ""}
+            </Badge>
           )}
         </div>
       </CardContent>

@@ -456,6 +456,7 @@ def stats() -> dict:
         total = dict(conn.execute(
             "SELECT count(*) AS picks, count(graded_at) AS graded,"
             " round(avg(alpha_net), 3) AS avg_alpha_net,"
+            " round(avg(alpha_adj), 3) AS avg_alpha_adj,"   # beta-adjusted + borrow-aware (honest)
             " sum(CASE WHEN alpha_net > 0 THEN 1 ELSE 0 END) AS wins"
             " FROM picks"
         ).fetchone())
@@ -652,7 +653,7 @@ def recent_team_picks(days: int = 30) -> list[dict]:
         rows = conn.execute(
             "SELECT id, ts, symbol, direction, horizon_days, edge, verdict, approved,"
             " adjusted_score, confidence, session, plan_entry, plan_target, plan_stop, plan_note,"
-            " entry_price, spy_price, alpha_net, ret_horizon, graded_at, exit_ts, exit_reason,"
+            " entry_price, spy_price, alpha_net, alpha_adj, beta, ret_horizon, graded_at, exit_ts, exit_reason,"
             " exit_price, exit_return_pct, exit_alpha, mfe_pct, mae_pct"
             " FROM picks WHERE arm='TEAM' AND ts >= datetime('now', ?)"
             " ORDER BY symbol, id", (f"-{int(days)} days",),
