@@ -511,7 +511,7 @@ async def _stream_find_trades_inner(hours: float = 48.0, max_debates: int = 6,
     # Chief — genuine head-to-head comparison across every debated idea
     # (not just sorting isolated conviction numbers). One Opus call.
     if len(board) >= 1:
-        yield _ev("status", msg="Chief comparing all opportunities head-to-head…")
+        yield _ev("status", msg="Head comparing all opportunities head-to-head…")
         try:
             chief = await loop.run_in_executor(
                 None, lambda: team.head_ranking(board, "chief"))

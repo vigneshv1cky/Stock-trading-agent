@@ -150,7 +150,7 @@ export function PickSheet({
             </div>
             {pick && (
               <div className="mt-1.5 flex flex-wrap gap-1.5">
-                <Badge variant="secondary">{pick.arm === "LONER" ? "Solo" : "Team"}</Badge>
+                <Badge variant="secondary">{pick.arm === "LONER" ? "Loner" : "Team"}</Badge>
                 {pick.edge && <Badge variant="secondary">{plainEdge(pick.edge)}</Badge>}
                 <Badge variant="secondary">{etDateTime(pick.ts)} ET</Badge>
               </div>
