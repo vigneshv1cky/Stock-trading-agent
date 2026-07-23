@@ -71,6 +71,13 @@ _INJECTION_GUARD = (
 _RATE_LIMIT_MARKERS = ("rate limit", "usage limit", "429", "overloaded", "rate_limit")
 
 
+def _is_rate_limit(exc: Exception) -> bool:
+    """True if an SDK exception is a rate/usage limit — checked on EVERY attempt (the
+    initial call AND every retry), so a limit that surfaces mid-retry still steps the
+    downgrade ladder / trips the breaker instead of being swallowed as a transient error."""
+    return any(marker in str(exc).lower() for marker in _RATE_LIMIT_MARKERS)
+
+
 class LLMError(Exception):
     """Terminal failure for one call — caller applies its safe default."""
 
@@ -223,9 +230,12 @@ def _extract_json(text: str) -> Any:
 
 def _one_shot(model: str, system: str, user: str,
               tools: list[str] | None = None, max_turns: int = 5,
-              timeout: float | None = None) -> tuple[str, int, int]:
-    """Single Agent SDK completion. Returns (text, input_tokens, output_tokens).
-    tools/max_turns enable grounded (e.g. web-search) agents."""
+              timeout: float | None = None,
+              budget_usd: float | None = None) -> tuple[str, int, int, float]:
+    """Single Agent SDK completion. Returns (text, input_tokens, output_tokens, cost_usd).
+    tools/max_turns enable grounded (e.g. web-search) agents. budget_usd overrides the
+    per-call dollar ceiling (the caller passes the budget REMAINING under the per-decision
+    cap so retries can't stack N× the ceiling)."""
     from claude_agent_sdk import ClaudeAgentOptions, query
 
     timeout = timeout or (LLM_TOOL_TIMEOUT_S if tools else LLM_TIMEOUT_S)
@@ -236,9 +246,9 @@ def _one_shot(model: str, system: str, user: str,
 
     opt_kwargs: dict = {}
     if tools:  # hard dollar ceiling on runaway web-search loops
-        opt_kwargs["max_budget_usd"] = LLM_TOOL_BUDGET_USD
+        opt_kwargs["max_budget_usd"] = budget_usd if budget_usd is not None else LLM_TOOL_BUDGET_USD
 
-    async def _run() -> tuple[str, int, int]:
+    async def _run() -> tuple[str, int, int, float]:
         options = ClaudeAgentOptions(
             system_prompt=system + _INJECTION_GUARD,
             model=model,
@@ -246,7 +256,7 @@ def _one_shot(model: str, system: str, user: str,
             allowed_tools=tools or [],
             **opt_kwargs,
         )
-        text, tin, tout = "", 0, 0
+        text, tin, tout, cost = "", 0, 0, 0.0
         async for msg in query(prompt=user, options=options):
             if type(msg).__name__ == "ResultMessage":
                 if getattr(msg, "is_error", False):
@@ -261,7 +271,8 @@ def _one_shot(model: str, system: str, user: str,
                     + int(usage.get("cache_creation_input_tokens", 0) or 0)
                 )
                 tout = int(usage.get("output_tokens", 0) or 0)
-        return text, tin, tout
+                cost = float(getattr(msg, "total_cost_usd", 0.0) or 0.0)
+        return text, tin, tout, cost
 
     # Run on the shared persistent loop — never a per-call asyncio.run(), which
     # corrupts the SDK's subprocess async generators across calls. Works whether
@@ -297,14 +308,25 @@ def call_role(
 
     model, downgraded = _resolve_model(role)
     attempts_user = user
+    spent_usd = 0.0   # cumulative tool cost across ALL attempts of this one decision
+
+    def _shot() -> tuple[str, int, int]:
+        # Each attempt gets only the budget REMAINING under the per-decision ceiling, so a
+        # web-grounded role that retries can't spend N× LLM_TOOL_BUDGET_USD (the ceiling
+        # was previously attached per _one_shot — once per attempt, up to ~5×).
+        nonlocal spent_usd
+        budget = max(0.05, LLM_TOOL_BUDGET_USD - spent_usd) if tools else None
+        text, tin, tout, cost = _one_shot(model, system, attempts_user, tools=tools,
+                                          max_turns=max_turns, budget_usd=budget)
+        spent_usd += cost
+        return text, tin, tout
 
     transient_retried = False
     for attempt in (1, 2):  # one validation re-ask, then fail
         try:
-            text, tin, tout = _one_shot(model, system, attempts_user, tools=tools, max_turns=max_turns)
+            text, tin, tout = _shot()
         except Exception as exc:
-            err = str(exc).lower()
-            if any(marker in err for marker in _RATE_LIMIT_MARKERS):
+            if _is_rate_limit(exc):
                 _note_rate_limit(role, model)
                 raise LLMError(f"rate-limited ({role}/{model})") from exc
             if not transient_retried:  # a few backoff retries for transient/opaque SDK errors
@@ -314,10 +336,16 @@ def call_role(
                     log.info("Transient LLM error for %s/%s (%s) — retry in %.1fs",
                              role, model, last, delay)
                     time.sleep(delay)
+                    if breaker_open():   # another thread hit the bottom-tier limit mid-retry → stop
+                        raise LLMUnavailable("breaker open") from last
                     try:
-                        text, tin, tout = _one_shot(model, system, attempts_user, tools=tools, max_turns=max_turns)
+                        text, tin, tout = _shot()
                         break
                     except Exception as exc2:
+                        if _is_rate_limit(exc2):   # a rate limit DURING retry must step the
+                            _note_rate_limit(role, model)   # ladder / trip the breaker too —
+                            raise LLMError(       # not be swallowed as just another transient
+                                f"rate-limited ({role}/{model})") from exc2
                         last = exc2
                 else:   # single point of failure, so don't let one flaky call kill the run
                     raise LLMError(f"{role}/{model} call failed after retries: {last}") from last
