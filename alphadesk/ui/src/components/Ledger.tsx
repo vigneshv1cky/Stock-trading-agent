@@ -23,10 +23,14 @@ function PerfStrip({ stats }: { stats: Stats | null }) {
   const winRate = graded > 0 ? Math.round((wins / graded) * 100) : null
   const avg = stats?.total.avg_alpha_net ?? null
   const adj = stats?.total.avg_alpha_adj ?? null
+  const eff = stats?.total.effective_graded ?? null
+  const scoredSub =
+    (winRate != null ? `${winRate}% beat S&P` : "grading forward") +
+    (eff != null && eff < graded ? ` · ${eff} independent` : "") // correlated picks deduped
   return (
     <div className="grid grid-cols-3 gap-2">
       <Stat label="Ideas logged" value={String(stats?.total.picks ?? 0)} />
-      <Stat label="Scored" value={String(graded)} sub={winRate != null ? `${winRate}% beat S&P` : "grading forward"} />
+      <Stat label="Scored" value={String(graded)} sub={scoredSub} />
       <Stat
         label="Avg vs S&P"
         value={avg != null ? fmtAlpha(avg) : "—"}

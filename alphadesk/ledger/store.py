@@ -244,6 +244,11 @@ def init() -> None:
                 conn.execute(f"ALTER TABLE picks ADD COLUMN {col} REAL")
             except sqlite3.OperationalError:
                 pass  # already migrated
+        for col in ("sector", "cluster"):   # concentration cap / correlation clustering
+            try:
+                conn.execute(f"ALTER TABLE picks ADD COLUMN {col} TEXT")
+            except sqlite3.OperationalError:
+                pass  # already migrated
 
 
 def _now() -> str:
@@ -460,6 +465,14 @@ def stats() -> dict:
             " sum(CASE WHEN alpha_net > 0 THEN 1 ELSE 0 END) AS wins"
             " FROM picks"
         ).fetchone())
+        # Effective (cluster-deduped) graded sample: correlated picks (same sector+direction+
+        # day cluster) count ONCE, so N isn't inflated by one bet booked as many. Unclustered
+        # graded picks each count as themselves.
+        eff = conn.execute(
+            "SELECT count(DISTINCT cluster) AS clusters,"
+            " sum(CASE WHEN cluster IS NULL THEN 1 ELSE 0 END) AS solo"
+            " FROM picks WHERE graded_at IS NOT NULL").fetchone()
+        total["effective_graded"] = int(eff["clusters"] or 0) + int(eff["solo"] or 0)
         by = {}
         for dim, expr in (
             ("edge", "edge"),
@@ -630,6 +643,17 @@ def mark_taken(pick_ids: list[int]) -> None:
         return
     with _lock, _connect() as conn:
         conn.executemany("UPDATE picks SET taken=1 WHERE id=?", [(int(i),) for i in pick_ids])
+
+
+def taken_cluster_counts_today() -> dict[str, int]:
+    """{cluster: count} of TAKEN picks booked so far today (ET), for the concentration
+    cap — so a later run in the same day counts what earlier runs already booked."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT cluster, count(*) AS n FROM picks"
+            " WHERE taken=1 AND cluster IS NOT NULL AND ts >= ?"
+            " GROUP BY cluster", (_et_day_start_utc(),)).fetchall()
+    return {r["cluster"]: int(r["n"]) for r in rows}
 
 
 def open_taken_picks() -> list[dict]:

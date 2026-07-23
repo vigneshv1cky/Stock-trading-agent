@@ -149,6 +149,7 @@ export interface Stats {
     graded: number
     avg_alpha_net: number | null
     avg_alpha_adj: number | null // beta-adjusted + borrow-aware mean alpha
+    effective_graded: number | null // graded, cluster-deduped (correlated picks count once)
     wins: number | null
   }
   by: Record<

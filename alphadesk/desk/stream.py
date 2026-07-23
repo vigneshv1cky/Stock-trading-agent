@@ -527,9 +527,16 @@ async def _stream_find_trades_inner(hours: float = 48.0, max_debates: int = 6,
                     row["take"] = row["approved"]
                 row["chief_reason"] = cr["reason"] if cr else ""
             board.sort(key=lambda r: order.get(r["symbol"].upper(), 999))
+            capped = await loop.run_in_executor(None, team.apply_concentration_cap, board)
+            for row in board:                 # persist sector/cluster for risk + evidence dedup
+                if row.get("sector"):
+                    store.update_pick(row["id"], sector=row["sector"], cluster=row["cluster"])
             store.add_run("FIND_TRADES", board)
             store.mark_taken([r["id"] for r in board if r.get("take")])  # open positions to review next run
             _pending_run_picks = []   # run finalised — keep its picks
+            if capped:
+                yield _ev("status", msg="Concentration cap — held back "
+                          + ", ".join(f"{r['symbol']} ({r['cap_reason']})" for r in capped))
             yield _ev("chief", board=board, summary=chief.get("summary", ""))
             yield _ev("done", board=board)
             return
@@ -541,6 +548,13 @@ async def _stream_find_trades_inner(hours: float = 48.0, max_debates: int = 6,
         row["take"] = row["approved"]
         row["chief_reason"] = ""
     board.sort(key=lambda r: (not r["approved"], -abs(r["conviction"] - 50)))
+    capped = await loop.run_in_executor(None, team.apply_concentration_cap, board)
+    for row in board:
+        if row.get("sector"):
+            store.update_pick(row["id"], sector=row["sector"], cluster=row["cluster"])
     store.mark_taken([r["id"] for r in board if r.get("take")])
     _pending_run_picks = []   # run finalised — keep its picks
+    if capped:
+        yield _ev("status", msg="Concentration cap — held back "
+                  + ", ".join(f"{r['symbol']} ({r['cap_reason']})" for r in capped))
     yield _ev("done", board=board)

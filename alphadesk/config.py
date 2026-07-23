@@ -92,6 +92,10 @@ LOW_LIQUIDITY_DOLLAR_VOL = 10_000_000  # avg daily dollar volume below this → 
 # proxy until a real borrow-rate feed exists). LONGs pay nothing here.
 SHORT_BORROW_APR = float(os.environ.get("SHORT_BORROW_APR", "2.0"))            # easy-to-borrow baseline
 SHORT_BORROW_APR_ILLIQUID = float(os.environ.get("SHORT_BORROW_APR_ILLIQUID", "30.0"))  # hard-to-borrow proxy
+# Concentration cap: at most this many TAKEN picks per correlation cluster (sector+direction)
+# per day. Stops the desk booking 5 same-sector same-direction names on one driver — which is
+# 5x the intended risk AND makes the ledger count one bet as many independent wins.
+CONCENTRATION_MAX_PER_CLUSTER = int(os.environ.get("CONCENTRATION_MAX_PER_CLUSTER", "2"))
 # Anti-survivorship: grade scout SKIPS too. A skip has no direction, so a "miss"
 # is a large move in EITHER direction vs SPY within a short window we ignored.
 SKIP_GRADE_DAYS = 3             # trading days to judge a skipped name's forward move

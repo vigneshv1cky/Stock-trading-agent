@@ -339,6 +339,37 @@ def judge_verdict(symbol: str, thesis: dict, concerns: list[dict], counter: dict
                      decision_id=decision_id)
 
 
+def apply_concentration_cap(board: list[dict]) -> list[dict]:
+    """Tag every pick with its correlation CLUSTER (sector|direction) and cap correlated
+    TAKEs at CONCENTRATION_MAX_PER_CLUSTER per cluster per day. Excess correlated takes are
+    un-taken (row['take']=False) — still recorded and graded for direction (anti-
+    survivorship), just NOT booked as a live position. Fixes concentrated real risk (5
+    same-sector same-direction names on one driver = 5x the intended exposure) AND the
+    ledger counting one clustered bet as many independent wins (the cluster tag lets stats
+    dedup to an effective sample). Board must arrive in Head-rank order (best first) so the
+    cap keeps the STRONGEST of a cluster. Returns the rows it capped. Pure-ish code (a
+    cached sector lookup); the desk's judgment already ran — this is a risk rail."""
+    from alphadesk.config import CONCENTRATION_MAX_PER_CLUSTER
+    from alphadesk.ingest import prices
+    from alphadesk.ledger import store
+    counts = store.taken_cluster_counts_today()   # what earlier runs already booked today
+    capped: list[dict] = []
+    for row in board:
+        sector = (prices.get_fundamentals(row["symbol"]) or {}).get("sector")
+        cluster = f"{sector}|{row['direction']}" if sector else None
+        row["sector"], row["cluster"] = sector, cluster
+        if not (row.get("take") and cluster):
+            continue                          # not a take, or no sector → can't cluster → don't cap
+        if counts.get(cluster, 0) >= CONCENTRATION_MAX_PER_CLUSTER:
+            row["take"] = False
+            row["cap_reason"] = (f"concentration cap — {CONCENTRATION_MAX_PER_CLUSTER} "
+                                 f"{sector}/{row['direction']} already booked today")
+            capped.append(row)
+        else:
+            counts[cluster] = counts.get(cluster, 0) + 1
+    return capped
+
+
 # ---------------------------------------------------------------------------
 # Fact-check helper — numeric % claims vs actual price context (pure code)
 # ---------------------------------------------------------------------------

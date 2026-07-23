@@ -186,6 +186,7 @@ MATERIAL_REACTION_PCT=1.5     # earnings drift needs a visible reaction to be a 
 REACTION_AB_HORIZON_DAYS=3    # shadow A/B: forward-grade EVERY reporter's reaction (passed AND dropped) over this horizon → `abtest` shows if the gate cuts winners
 SHORT_BORROW_APR=2.0          # honest-alpha prototype: annual % borrow charged to SHORTs over the hold (easy-to-borrow baseline)
 SHORT_BORROW_APR_ILLIQUID=30.0 # higher borrow for low-liquidity shorts (hard-to-borrow proxy until a real borrow feed exists)
+CONCENTRATION_MAX_PER_CLUSTER=2 # max TAKEN picks per correlation cluster (sector+direction) per day; excess correlated picks recorded but not booked
 # Exit-monitoring screens (tunable; the opus reviewer is the real filter — defaults escalate generously):
 EXIT_NEAR_TARGET_FRAC=0.85    # ≥ this much of the entry→target move captured → escalate to review
 EXIT_GIVEBACK_MIN_PEAK=4.0    # watch give-back only after the favorable move peaks above this % (below = noise)
@@ -209,6 +210,15 @@ EXIT_REVIEW_COOLDOWN_S=1800   # min seconds between reviews of the same open pos
   gated, removable, tagged as an experiment.
 - **Miss diagnosis is conversational** — ask Claude "why did we miss X?"; it traces
   `store.symbol_traces` / `symbol_skips` and fixes data/prompt/bug. No UI tool for it.
+- **Concentration cap** — `team.apply_concentration_cap` (run in `stream.py` after the Head
+  ranks, before `mark_taken`) tags every pick with a correlation CLUSTER (sector|direction)
+  and caps TAKEs at `CONCENTRATION_MAX_PER_CLUSTER` per cluster per day (counting earlier runs
+  today). Excess correlated picks are un-taken — still recorded and direction-graded (anti-
+  survivorship), just not booked as a live position. Fixes BOTH the concentrated real risk (5
+  same-sector same-direction names on one driver = 5× exposure) and the ledger counting one
+  clustered bet as many independent wins: `stats.effective_graded` dedups the graded sample to
+  distinct clusters (shown as "N independent" in the Track record; keeps the Head-ranked best
+  of a cluster). Sector from `get_fundamentals` (cached); unknown-sector picks aren't clustered.
 - **Honest-alpha prototype (beta + borrow)** — the grader books `alpha_net` (SPY-relative,
   net friction) AND, alongside it, `alpha_adj`: the same but with the benchmark BETA-adjusted
   (`ret − beta·spy_ret`, beta from trailing daily returns, clamped [0,3]) and a SHORT BORROW
