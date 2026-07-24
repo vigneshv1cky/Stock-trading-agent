@@ -13,13 +13,15 @@ function Track({ p }: { p: LivePick }) {
     span === 0 ? 0 : Math.max(0, Math.min(1, up ? (v - p.plan_stop) / span : (p.plan_stop - v) / span))
   const curF = p.progress ?? (p.current != null ? frac(p.current) : 0)
   const entryF = frac(p.plan_entry)
+  const pending = p.status === "pending"
   const pos = (p.pnl_pct ?? 0) >= 0
   return (
     <div>
       <div className="relative mt-2 h-1.5 rounded-full bg-muted">
         {p.current != null && (
           <div
-            className={`absolute top-0 h-1.5 ${pos ? "bg-emerald-500" : "bg-red-500"}`}
+            // pending = not filled yet, so no P&L → neutral bar, never green/red
+            className={`absolute top-0 h-1.5 ${pending ? "bg-muted-foreground/30" : pos ? "bg-emerald-500" : "bg-red-500"}`}
             style={{
               left: `${Math.min(entryF, curF) * 100}%`,
               width: `${Math.abs(curF - entryF) * 100}%`,
