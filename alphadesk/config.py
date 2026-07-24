@@ -100,17 +100,19 @@ CONCENTRATION_MAX_PER_CLUSTER = int(os.environ.get("CONCENTRATION_MAX_PER_CLUSTE
 # chosen by the judge after seeing the setup. Removes the garden-of-forking-paths (the same
 # catalyst bookable as a 1d or 10d call grades differently and only the chosen spec is logged),
 # so alpha_net is an honest out-of-sample number. Env-overridable per edge.
-# SHORT-HORIZON daily-run mode (2026-07-24): the desk runs every day, so calls are graded
-# "today→tomorrow". MOMENTUM/earnings drift peak in the first 1-2 days → 1-2d fits. SPILLOVER/
-# THEME are multi-day by mechanism, so a short window will UNDERSTATE them — expect them weak
-# here (that's the window, not necessarily a dead edge). Bump any edge back up via env.
+# SHORT-HORIZON daily-run mode (2026-07-24): the desk runs every day, so the forward CALL is
+# STRICTLY today→tomorrow (horizon 1) for EVERY edge — fill at the open, grade at the next
+# session's close. The multi-day nature of SPILLOVER/THEME/WORLD is handled on the INPUT side
+# (look back as many days as needed to DETECT the buildup — price 5d/20d/90d is already baked
+# into every candidate; THEME mention-velocity keys on the news window), NOT on the horizon.
+# So: read the slow signal, bet the next 1-2 days. Env-overridable per edge if you change your mind.
 EDGE_HORIZON_DAYS = {
     "MOMENTUM": int(os.environ.get("EDGE_HORIZON_MOMENTUM", "1")),    # today → tomorrow
-    "SPILLOVER": int(os.environ.get("EDGE_HORIZON_SPILLOVER", "2")),  # kept short (multi-day by nature)
-    "THEME": int(os.environ.get("EDGE_HORIZON_THEME", "2")),          # kept short (multi-day by nature)
-    "WORLD": int(os.environ.get("EDGE_HORIZON_WORLD", "2")),          # kept short
+    "SPILLOVER": int(os.environ.get("EDGE_HORIZON_SPILLOVER", "1")),  # detect over days, bet tomorrow
+    "THEME": int(os.environ.get("EDGE_HORIZON_THEME", "1")),          # detect over days, bet tomorrow
+    "WORLD": int(os.environ.get("EDGE_HORIZON_WORLD", "1")),          # detect over days, bet tomorrow
 }
-DEFAULT_EDGE_HORIZON_DAYS = int(os.environ.get("DEFAULT_EDGE_HORIZON_DAYS", "2"))
+DEFAULT_EDGE_HORIZON_DAYS = int(os.environ.get("DEFAULT_EDGE_HORIZON_DAYS", "1"))
 
 
 def pinned_horizon(edge: str | None) -> int:
