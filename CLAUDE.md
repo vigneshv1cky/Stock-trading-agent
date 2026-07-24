@@ -106,7 +106,8 @@ Polygon (financial news) + earnings drift (+ since-report move) + Alpaca real-ti
    RESEARCHER (sonnet) → CRITIC (opus) → fact-check (code) → RESEARCHER rebuttal → JUDGE (opus)
    every 3rd pick → LONER (opus) control arm (kill-criterion: does the team beat one agent?)
         │
-   HEAD (opus) → head-to-head ranking, TAKE/pass
+   HEAD (opus) → head-to-head ranking (TAKE-ALL mode 2026-07-24: EVERY debated pick is booked as
+     a position; `approved`/ranking kept as metadata to test if selection adds value; cap still trims correlated)
         │
    LEDGER (SQLite/WAL) → GRADER (hourly, alpha_net vs SPY at own horizon)
         │

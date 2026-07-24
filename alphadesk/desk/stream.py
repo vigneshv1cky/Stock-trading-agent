@@ -521,13 +521,13 @@ async def _stream_find_trades_inner(hours: float = 48.0, max_debates: int = 6,
             order = {r["symbol"].upper(): i for i, r in enumerate(chief.get("ranked", []))}
             for row in board:
                 cr = ranking.get(row["symbol"].upper())
-                if cr:
-                    row["take"] = bool(cr["take"])
-                elif ranking:              # Chief ranked others but OMITTED this one →
-                    row["take"] = False    # a deliberate drop (dedup); don't book it on its own approval
-                else:                      # Chief returned nothing rankable → fall back to own approval
-                    row["take"] = row["approved"]
                 row["chief_reason"] = cr["reason"] if cr else ""
+                # TAKE EVERY debated pick — book every call the desk surfaces as a real
+                # position, not just the Head's conviction picks. The judge's `approved`
+                # flag and the Head's ranking are KEPT as metadata, so you can still test
+                # later whether that selection would have added value. Also makes Live
+                # all-real-positions (no tracked/booked split).
+                row["take"] = True
             board.sort(key=lambda r: order.get(r["symbol"].upper(), 999))
             capped = await loop.run_in_executor(None, team.apply_concentration_cap, board)
             for row in board:                 # persist sector/cluster for risk + evidence dedup
@@ -547,7 +547,7 @@ async def _stream_find_trades_inner(hours: float = 48.0, max_debates: int = 6,
 
     # fallback: no Chief → sort isolated scores
     for row in board:
-        row["take"] = row["approved"]
+        row["take"] = True   # take every pick (see Head path)
         row["chief_reason"] = ""
     board.sort(key=lambda r: (not r["approved"], -abs(r["conviction"] - 50)))
     capped = await loop.run_in_executor(None, team.apply_concentration_cap, board)
