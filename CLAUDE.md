@@ -157,7 +157,7 @@ alphadesk/
     connections.py     the Connections desk (web-grounded spillover mapping; was exposure.py)
     team.py            Researcher ⇄ Critic → Judge, + calibration_block, + head_ranking (was committee.py)
     loner.py           single-agent control arm (was solo.py)
-    plan.py            trade plan (entry/target/stop, agent) + level_crossed / exit_signal / realized_exit (pure-code exit physics)
+    plan.py            trade plan (entry/target/stop, agent) — entry ALWAYS a market fill at the current price (no resting limits); + level_crossed / exit_signal / realized_exit (pure-code exit physics) + the closed-market GAP-SKIP guard
     review.py          position review — HOLD/EXIT on open TAKEs, per run + between-run watcher escalations (was reeval.py)
     news_check.py      same-story vs new-catalyst check on a recently-debated name
     earnings_reader.py web-grounded read of an actual earnings report
@@ -189,6 +189,7 @@ SHORT_BORROW_APR_ILLIQUID=30.0 # higher borrow for low-liquidity shorts (hard-to
 CONCENTRATION_MAX_PER_CLUSTER=2 # max TAKEN picks per correlation cluster (sector+direction) per day; excess correlated picks recorded but not booked
 EDGE_HORIZON_MOMENTUM=1        # PRE-COMMITTED grading horizon (fixed in advance, not judge-chosen). SHORT-HORIZON daily mode: ALL edges = 1 (strictly today→tomorrow)
 EDGE_HORIZON_SPILLOVER=1       # SPILLOVER/THEME/WORLD also 1: multi-day nature handled on the INPUT (lookback) side, not the forward horizon; DEFAULT_EDGE_HORIZON_DAYS=1
+ENTRY_GAP_SKIP_PCT=2.0         # always enter at the current price (market); a CLOSED-market call whose open gapped >this% from the planned price is NOT taken (stale). 0=off
 # Exit-monitoring screens (tunable; the opus reviewer is the real filter — defaults escalate generously):
 EXIT_NEAR_TARGET_FRAC=0.85    # ≥ this much of the entry→target move captured → escalate to review
 EXIT_GIVEBACK_MIN_PEAK=4.0    # watch give-back only after the favorable move peaks above this % (below = noise)

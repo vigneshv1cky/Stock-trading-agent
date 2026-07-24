@@ -113,6 +113,11 @@ EDGE_HORIZON_DAYS = {
     "WORLD": int(os.environ.get("EDGE_HORIZON_WORLD", "1")),          # detect over days, bet tomorrow
 }
 DEFAULT_EDGE_HORIZON_DAYS = int(os.environ.get("DEFAULT_EDGE_HORIZON_DAYS", "1"))
+# Always enter at the CURRENT price (market fill), never a far-off AI-chosen level. And if a
+# CLOSED-market decision's open has GAPPED away from the price the AI planned around by more
+# than this %, the setup rested on a stale price → NOT TAKEN (re-evaluate live next run). This
+# is the WAB failure mode (planned on a pre-gap price, market opened elsewhere). 0 disables.
+ENTRY_GAP_SKIP_PCT = float(os.environ.get("ENTRY_GAP_SKIP_PCT", "2.0"))
 
 
 def pinned_horizon(edge: str | None) -> int:

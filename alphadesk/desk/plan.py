@@ -24,8 +24,10 @@ _SYSTEM = (
     "ALREADY committed to a directional call — you do NOT re-decide the direction "
     "or horizon. Turn that call into a concrete, actionable trade plan from the "
     "stock's recent price behaviour:\n"
-    "  • entry — the price to get in, at or near the current price (a swing entry "
-    "you'd act on now or on a minor pullback), NOT a far-off limit.\n"
+    "  • entry — the stock's CURRENT price right now. Entry is ALWAYS a market fill at the "
+    "current price (there are no resting limit entries), so quote the real current price — "
+    "NOT a hoped-for pullback level. If the market is closed and it gaps far from this at the "
+    "open, the trade is skipped as stale, so this MUST be the true current quote.\n"
     "  • target — a realistic objective for THIS horizon, sized to the stock's "
     "recent range/volatility. Do not invent a move far larger than it typically "
     "makes over that many days.\n"
@@ -33,14 +35,10 @@ _SYSTEM = (
     "beyond normal daily noise but keep the risk sane (a tighter stop for a "
     "single-day hold, more room for a multi-day one).\n"
     "  • note — ONE plain-English line telling a trader exactly what to do.\n"
-    "  • order — 'market' if the thesis needs you IN immediately (momentum already "
-    "running, a catalyst you must not miss — fill at the open/current price), or "
-    "'limit' if the plan is to wait for a specific entry level (a pullback / better "
-    "price); a limit fills ONLY if price reaches the entry, else the trade is skipped.\n"
     "COHERENCE (required): for LONG, stop < entry < target. For SHORT, "
-    "target < entry < stop. Keep entry within a few percent of the current price.\n"
+    "target < entry < stop. Entry MUST equal the current price.\n"
     'Return ONLY JSON: {"entry": <price>, "target": <price>, "stop": <price>, '
-    '"note": "<one line>", "order": "market|limit"}'
+    '"note": "<one line>"}'
 )
 
 _SCHEMA = {
@@ -164,6 +162,14 @@ def limit_fill(direction: str, order_type: str | None, entry: float | None,
     b = max(0.0, buffer_pct) / 100.0
     if order_type != "limit" or not entry or open_px is None:
         px: float | None = open_px
+        # ALWAYS-MARKET entry: fill at the CURRENT price (the fill-day open). GAP GUARD — a
+        # CLOSED-market decision whose open gapped away from the price the AI planned around
+        # (`entry` ≈ the decision-time price) by more than ENTRY_GAP_SKIP_PCT rested on a stale
+        # price that no longer holds → NOT TAKEN (re-evaluate live next run). The WAB failure.
+        if px is not None and entry:
+            from alphadesk.config import ENTRY_GAP_SKIP_PCT
+            if ENTRY_GAP_SKIP_PCT > 0 and abs(px - entry) / entry > ENTRY_GAP_SKIP_PCT / 100.0:
+                return None
     elif direction == "LONG":
         if open_px <= entry:                       # gapped at/below the limit → fill at open
             px = round(open_px, 4)
@@ -252,6 +258,6 @@ def trade_plan(symbol: str, direction: str, horizon_days: int,
         log.info("Incoherent plan for %s %s (e=%s t=%s s=%s) — dropped",
                  symbol, direction, entry, target, stop)
         return None
-    order = out.get("order") if out.get("order") in ("market", "limit") else "market"
     return {"entry": round(entry, 4), "target": round(target, 4),
-            "stop": round(stop, 4), "note": out["note"], "hold": hold, "order": order}
+            "stop": round(stop, 4), "note": out["note"], "hold": hold,
+            "order": "market"}   # ALWAYS market — enter at the current price, never a resting limit
