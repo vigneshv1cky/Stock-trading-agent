@@ -118,6 +118,11 @@ DEFAULT_EDGE_HORIZON_DAYS = int(os.environ.get("DEFAULT_EDGE_HORIZON_DAYS", "1")
 # than this %, the setup rested on a stale price → NOT TAKEN (re-evaluate live next run). This
 # is the WAB failure mode (planned on a pre-gap price, market opened elsewhere). 0 disables.
 ENTRY_GAP_SKIP_PCT = float(os.environ.get("ENTRY_GAP_SKIP_PCT", "2.0"))
+# Scout coverage: how many candidates reach the scout (and get a price-context fetch). The
+# window is now ranked by MATERIALITY (earnings reaction size, else news intensity), NOT
+# market cap — so the biggest movers are seen first instead of being truncated behind
+# mega-caps (the THRM +22.7% miss). Raise to see more per run (more scout tokens + fetches).
+SCOUT_MAX_CANDIDATES = int(os.environ.get("SCOUT_MAX_CANDIDATES", "60"))
 
 
 def pinned_horizon(edge: str | None) -> int:

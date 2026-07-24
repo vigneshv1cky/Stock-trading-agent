@@ -71,11 +71,13 @@ def run_scout(window: dict[str, dict], movers: list[dict]) -> dict:
     if not window:
         return {"picks": [], "skips": []}
 
-    if len(window) > 40:
-        log.info("scout window truncated: %d candidates → 40 shown, %d dropped UNSEEN "
-                 "(prioritisation is a known gap)", len(window), len(window) - 40)
+    from alphadesk.config import SCOUT_MAX_CANDIDATES
+    if len(window) > SCOUT_MAX_CANDIDATES:
+        log.info("scout window truncated: %d candidates → %d shown, %d dropped (window is "
+                 "materiality-ranked, so the drops are the least-material)",
+                 len(window), SCOUT_MAX_CANDIDATES, len(window) - SCOUT_MAX_CANDIDATES)
     lines = []
-    for sym, info in list(window.items())[:40]:
+    for sym, info in list(window.items())[:SCOUT_MAX_CANDIDATES]:
         price = info.get("price") or {}
         lines.append(json.dumps({
             "symbol": sym,

@@ -29,6 +29,7 @@ from alphadesk.config import (
     EXPOSURE_MAX_SHOCKS,
     MODEL_MAP,
     REPICK_COOLDOWN_HOURS,
+    SCOUT_MAX_CANDIDATES,
     SOLO_ARM_EVERY_N,
     WORLD_MAX_CATEGORIES,
     entry_fill_time,
@@ -89,6 +90,15 @@ def _avg_sentiment(articles: list[dict]) -> float:
 def _intensity(articles: list[dict]) -> float:
     """Shock materiality proxy: |avg sentiment| × coverage."""
     return abs(_avg_sentiment(articles)) * len(articles)
+
+
+def _materiality(articles: list[dict]) -> float:
+    """Scout-window RANK signal: the biggest earnings REACTION across the articles (post-
+    earnings drift is the favored edge and the reaction is its cleanest predictor), else the
+    news intensity. Ranking the window by this — instead of market cap — is what surfaces the
+    biggest movers to the scout rather than truncating them behind mega-caps (the THRM miss)."""
+    reactions = [abs(a["reaction_pct"]) for a in articles if a.get("reaction_pct") is not None]
+    return max(reactions) if reactions else _intensity(articles)
 
 
 _pending_run_picks: list[int] = []   # picks committed by the in-flight run, not yet finalised
@@ -358,20 +368,25 @@ async def _stream_find_trades_inner(hours: float = 48.0, max_debates: int = 6,
 
     yield _ev("status", msg="Triaging…")
 
-    # Build the scout window (price context per symbol). Reported names go FIRST
-    # (post-earnings drift is the most-favored signal — never let the window cap
-    # starve it), then ripple candidates (so the Connections desk's web-grounded
-    # work is never truncated out), then everything else.
+    # Build the scout window (price context per symbol). Reported names go FIRST (post-
+    # earnings drift is the most-favored signal), then ripple/world candidates, then the rest
+    # — but WITHIN each group ranked by MATERIALITY (earnings reaction size / news intensity),
+    # NOT market cap, so the biggest movers reach the scout instead of being truncated behind
+    # mega-caps (the THRM +22.7% miss). The window cap is SCOUT_MAX_CANDIDATES (raise for more
+    # coverage at more scout tokens + price fetches).
     prioritized = ripple_syms | world_syms   # web-grounded / geopolitical hypotheses
     ordered = (
-        [kv for kv in candidates.items() if kv[0] in earnings_syms]
-        + [kv for kv in candidates.items()
-           if kv[0] in prioritized and kv[0] not in earnings_syms]
-        + [kv for kv in candidates.items()
-           if kv[0] not in prioritized and kv[0] not in earnings_syms]
+        sorted((kv for kv in candidates.items() if kv[0] in earnings_syms),
+               key=lambda kv: -_materiality(kv[1]))
+        + sorted((kv for kv in candidates.items()
+                  if kv[0] in prioritized and kv[0] not in earnings_syms),
+                 key=lambda kv: -_intensity(kv[1]))
+        + sorted((kv for kv in candidates.items()
+                  if kv[0] not in prioritized and kv[0] not in earnings_syms),
+                 key=lambda kv: -_intensity(kv[1]))
     )
     window: dict[str, dict] = {}
-    for sym, arts in ordered[:80]:
+    for sym, arts in ordered[:SCOUT_MAX_CANDIDATES]:
         ctx = await loop.run_in_executor(None, prices.get_context, sym)
         window[sym] = {
             "headlines": _headlines(arts),

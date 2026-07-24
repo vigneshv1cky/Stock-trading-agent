@@ -238,6 +238,7 @@ def drift_candidates(days: int) -> dict[str, list[dict]]:
             "summary": f"Post-earnings-drift setup: {esym} — {verdict}.{mv_note}",
             "source": "EarningsCalendar", "url": "", "published_at": e["report_date"],
             "category": "EARNINGS", "tickers": [esym],
+            "reaction_pct": round(total, 2),   # the raw reaction size — the scout-window rank signal
             "mentions": [{"symbol": esym, "sentiment": sent,
                           "label": ("positive" if sent > 0 else "negative" if sent < 0 else "neutral"),
                           "category": "EARNINGS"}],

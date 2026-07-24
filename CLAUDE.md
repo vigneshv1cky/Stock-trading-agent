@@ -273,8 +273,13 @@ EXIT_REVIEW_COOLDOWN_S=1800   # min seconds between reviews of the same open pos
   gated on `eps_actual` (Nasdaq backfills it ~a day late, which hid every same-day
   reporter); a reporter becomes a candidate the moment it's PUBLIC (time-aware, past its
   9:30/16:00 boundary) and its direction comes from the price reaction. Run Find Trades
-  just AFTER 9:30 so BMO reporters are public. (Prioritization — the scout still picks ≤5
-  of ~150 — is a separate, unbuilt lever.)
+  just AFTER 9:30 so BMO reporters are public.
+- **Scout coverage is MATERIALITY-ranked** (2026-07-24) — the scout can't see every reporter
+  on a heavy day, so which ones reach it matters. The candidate window is ranked by
+  `stream._materiality` (biggest earnings REACTION, else news intensity), NOT market cap, then
+  capped at `SCOUT_MAX_CANDIDATES` (60). Fixes the THRM +22.7% miss: a small-cap mover no longer
+  gets truncated behind mega-caps with tiny reactions. `earnings.drift_candidates` exposes
+  `reaction_pct` per candidate for the rank. Raise the cap for more coverage (more tokens/fetches).
 - **Position review (exits)** — the team only opens positions; three things close them
   early, all research/paper (a ledger `exit_ts`/`exit_reason` stamp, never an order):
   (1) each Find Trades run, BEFORE hunting new trades, the opus `review` agent re-checks
