@@ -143,6 +143,15 @@ SCOUT_MAX_CANDIDATES = int(os.environ.get("SCOUT_MAX_CANDIDATES", "60"))
 AUTORUN_INTERVAL_HOURS = float(os.environ.get("AUTORUN_INTERVAL_HOURS", "1"))
 AUTORUN_START_ET = os.environ.get("AUTORUN_START_ET", "09:35").strip()
 AUTORUN_END_ET = os.environ.get("AUTORUN_END_ET", "16:00").strip()
+# Paper portfolio manager — route booked picks to an Alpaca PAPER account (real fills/slippage
+# as an honest scoreboard). OPT-IN: nothing trades until PAPER_TRADING=1. Conviction-weighted
+# sizing: $PM_BASE_USD for a conviction-50 pick, scaled by adjusted_score, capped at
+# PM_MAX_POSITION_USD; at most PM_MAX_POSITIONS open (best conviction first). Reconciliation loop
+# (desk.portfolio.reconcile) makes Alpaca match the ledger's open-taken positions — idempotent.
+PAPER_TRADING = os.environ.get("PAPER_TRADING", "0") not in ("0", "", "false", "False", "no")
+PM_BASE_USD = float(os.environ.get("PM_BASE_USD", "1000"))            # $ for a conviction-50 position
+PM_MAX_POSITION_USD = float(os.environ.get("PM_MAX_POSITION_USD", "2500"))
+PM_MAX_POSITIONS = int(os.environ.get("PM_MAX_POSITIONS", "20"))
 
 
 def pinned_horizon(edge: str | None) -> int:

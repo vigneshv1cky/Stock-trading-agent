@@ -308,8 +308,28 @@ async def _serve() -> None:
                 log.error("auto-run error: %s", exc)
             await asyncio.sleep(60)   # check each minute
 
+    async def _portfolio_loop():
+        """Reconcile the Alpaca PAPER account with the ledger's open-taken positions (open
+        missing, close exited), conviction-weighted. OPT-IN (PAPER_TRADING); idempotent."""
+        from alphadesk.config import PAPER_TRADING
+        log = logging.getLogger("alphadesk.portfolio")
+        if not PAPER_TRADING:
+            log.info("Paper trading OFF (set PAPER_TRADING=1 to route booked picks to Alpaca)")
+            return
+        from alphadesk.desk import portfolio
+        loop = asyncio.get_running_loop()
+        log.info("Paper trading ON — reconciling Alpaca paper account every 120s")
+        while True:
+            try:
+                summary = await loop.run_in_executor(None, portfolio.reconcile)
+                if summary.get("opened") or summary.get("closed") or summary.get("error"):
+                    log.info("PM reconcile: %s", summary)
+            except Exception as exc:
+                log.error("portfolio loop error: %s", exc)
+            await asyncio.sleep(120)
+
     await asyncio.gather(_grader_loop(), _earnings_loop(), _autorun_loop(),
-                         _position_watch_loop(), _web_server().serve())
+                         _position_watch_loop(), _portfolio_loop(), _web_server().serve())
 
 
 def main() -> None:

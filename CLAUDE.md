@@ -168,6 +168,7 @@ alphadesk/
     loner.py           single-agent control arm (was solo.py)
     plan.py            trade plan (entry/target/stop, agent) — entry ALWAYS a market fill at the current price (no resting limits); + level_crossed / exit_signal / realized_exit (pure-code exit physics) + the closed-market GAP-SKIP guard
     review.py          position review — HOLD/EXIT on open TAKEs, per run + between-run watcher escalations (was reeval.py)
+    portfolio.py       paper portfolio manager — OPT-IN (PAPER_TRADING) reconciliation loop that routes booked picks to an Alpaca PAPER account (conviction-weighted, idempotent)
     news_check.py      same-story vs new-catalyst check on a recently-debated name
     earnings_reader.py web-grounded read of an actual earnings report
   ledger/
@@ -191,6 +192,10 @@ ADMIN_PASSWORD=...
 ALPHADESK_DATA=~/.alphadesk   # ledger.db, universe.json, relationship cache
 SOLO_ARM_EVERY_N=0            # 0=off (lean default); set e.g. 6 to measure committee-vs-solo
 CHEAP_MODELS=1               # 1=downgrade the opus judgment roles (critic/judge/head/review/loner/connections) to sonnet — no opus, cheap hourly runs. 0=opus defaults. Per-role MODEL_<ROLE> overrides win
+PAPER_TRADING=0              # 1=route booked picks to an Alpaca PAPER account (desk.portfolio reconciliation loop). OFF by default — nothing trades until you opt in
+PM_BASE_USD=1000             # conviction-weighted sizing: $ for a conviction-50 pick, scaled by adjusted_score
+PM_MAX_POSITION_USD=2500     # cap per position
+PM_MAX_POSITIONS=20          # max concurrent Alpaca positions (best conviction first)
 WORLD_MAX_CATEGORIES=0        # GDELT world news in Find Trades: 0=off (default); 4=full sweep every ~3 runs; 11=every run (slow)
 MATERIAL_REACTION_PCT=1.5     # earnings drift needs a visible reaction to be a directional candidate; below this % (live vs pre-report close) = skip
 REACTION_AB_HORIZON_DAYS=3    # shadow A/B: forward-grade EVERY reporter's reaction (passed AND dropped) over this horizon → `abtest` shows if the gate cuts winners

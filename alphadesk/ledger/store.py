@@ -249,6 +249,12 @@ def init() -> None:
                 conn.execute(f"ALTER TABLE picks ADD COLUMN {col} TEXT")
             except sqlite3.OperationalError:
                 pass  # already migrated
+        for col, decl in (("broker_order_id", "TEXT"), ("broker_status", "TEXT"),
+                          ("broker_qty", "REAL")):   # paper portfolio manager (Alpaca)
+            try:
+                conn.execute(f"ALTER TABLE picks ADD COLUMN {col} {decl}")
+            except sqlite3.OperationalError:
+                pass  # already migrated
 
 
 def _now() -> str:
@@ -662,12 +668,23 @@ def open_taken_picks() -> list[dict]:
     with _connect() as conn:
         rows = conn.execute(
             "SELECT id, ts, symbol, direction, horizon_days, adjusted_score, confidence,"
-            " edge, thesis, session, entry_price, spy_price, plan_entry, triage_reason FROM picks"
+            " edge, thesis, session, entry_price, spy_price, plan_entry, triage_reason,"
+            " broker_order_id, broker_status FROM picks"
             " WHERE taken=1 AND exit_ts IS NULL AND graded_at IS NULL"
             "   AND datetime(ts, '+' || (horizon_days + 3) || ' days') >= datetime('now')"
             " ORDER BY id DESC",
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def set_broker_order(pick_id: int, order_id: str | None, status: str,
+                     qty: float = 0.0) -> None:
+    """Stamp the paper-broker (Alpaca) order state on a pick — so the reconciler knows what
+    it has already routed and never double-submits."""
+    with _lock, _connect() as conn:
+        conn.execute(
+            "UPDATE picks SET broker_order_id=?, broker_status=?, broker_qty=? WHERE id=?",
+            (order_id, status[:200], float(qty), int(pick_id)))
 
 
 def recent_team_picks(days: int = 30) -> list[dict]:
