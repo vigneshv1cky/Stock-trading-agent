@@ -123,6 +123,10 @@ ENTRY_GAP_SKIP_PCT = float(os.environ.get("ENTRY_GAP_SKIP_PCT", "2.0"))
 # market cap — so the biggest movers are seen first instead of being truncated behind
 # mega-caps (the THRM +22.7% miss). Raise to see more per run (more scout tokens + fetches).
 SCOUT_MAX_CANDIDATES = int(os.environ.get("SCOUT_MAX_CANDIDATES", "60"))
+# Daily auto-run: in `dashboard` mode, fire Find Trades once per trading day at this ET time
+# (HH:MM) — no button click. Timed a few minutes AFTER 9:30 so BMO reporters are public,
+# pricing is live, and the entry gap-guard doesn't refuse everything. Empty string disables it.
+AUTORUN_ET = os.environ.get("AUTORUN_ET", "09:35").strip()
 
 
 def pinned_horizon(edge: str | None) -> int:

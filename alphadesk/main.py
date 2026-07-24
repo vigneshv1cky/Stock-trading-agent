@@ -250,7 +250,42 @@ async def _serve() -> None:
             scheduler.beat()   # 180s liveness for /healthz (grader's hourly beat is too coarse)
             await asyncio.sleep(180)   # ~3 min; a hit closes the paper position
 
-    await asyncio.gather(_grader_loop(), _earnings_loop(),
+    async def _daily_run_loop():
+        """Auto-fire Find Trades once per trading day at AUTORUN_ET — the SAME pipeline as
+        the dashboard button (drains the SSE flow, so take-all / cap / gap-guard all apply).
+        Skips if a run already happened today (manual or a prior process), so it survives
+        restarts and never double-runs; if the process starts LATE it catches up. Disabled
+        when AUTORUN_ET is empty."""
+        from alphadesk.config import AUTORUN_ET, now_et
+        from alphadesk.ledger import store
+        log = logging.getLogger("alphadesk.autorun")
+        if not AUTORUN_ET:
+            log.info("Daily auto-run disabled (AUTORUN_ET empty)")
+            return
+        try:
+            hh, mm = (int(x) for x in AUTORUN_ET.split(":"))
+        except Exception:
+            log.error("Bad AUTORUN_ET %r (want HH:MM) — auto-run disabled", AUTORUN_ET)
+            return
+        log.info("Daily auto-run scheduled for %s ET", AUTORUN_ET)
+        last_attempt_day = None
+        while True:
+            try:
+                now = now_et()
+                if (now.weekday() < 5 and (now.hour, now.minute) >= (hh, mm)
+                        and last_attempt_day != now.date()
+                        and store.runs_today("FIND_TRADES") == 0):
+                    last_attempt_day = now.date()   # one attempt/day, even if it errors
+                    log.info("Daily auto-run: firing Find Trades (%s ET)", AUTORUN_ET)
+                    from alphadesk.desk.stream import stream_find_trades
+                    async for _ev in stream_find_trades(hours=24.0):
+                        pass
+                    log.info("Daily auto-run complete")
+            except Exception as exc:
+                log.error("daily auto-run error: %s", exc)
+            await asyncio.sleep(60)   # check each minute
+
+    await asyncio.gather(_grader_loop(), _earnings_loop(), _daily_run_loop(),
                          _position_watch_loop(), _web_server().serve())
 
 

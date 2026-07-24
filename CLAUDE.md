@@ -29,7 +29,8 @@ bundled Claude Code CLI). There is no Bedrock, no API key, no local model files.
 ```bash
 pip install -r requirements.txt
 
-# Web dashboard + hourly grader (v2 primary mode — trades run on button click)
+# Web dashboard + hourly grader (v2 primary mode — trades run on button click,
+# AND auto-fire once/day at AUTORUN_ET, default 09:35 ET)
 python -m alphadesk.main dashboard        # then open http://localhost:8000
 
 # Convene the team NOW on recent news (headless, writes to ledger)
@@ -191,6 +192,8 @@ CONCENTRATION_MAX_PER_CLUSTER=2 # max TAKEN picks per correlation cluster (secto
 EDGE_HORIZON_MOMENTUM=1        # PRE-COMMITTED grading horizon (fixed in advance, not judge-chosen). SHORT-HORIZON daily mode: ALL edges = 1 (strictly today→tomorrow)
 EDGE_HORIZON_SPILLOVER=1       # SPILLOVER/THEME/WORLD also 1: multi-day nature handled on the INPUT (lookback) side, not the forward horizon; DEFAULT_EDGE_HORIZON_DAYS=1
 ENTRY_GAP_SKIP_PCT=2.0         # always enter at the current price (market); a CLOSED-market call whose open gapped >this% from the planned price is NOT taken (stale). 0=off
+SCOUT_MAX_CANDIDATES=60        # how many (materiality-ranked) candidates reach the scout per run; raise for wider coverage (more tokens/fetches)
+AUTORUN_ET=09:35              # dashboard mode auto-fires Find Trades once/trading-day at this ET time (HH:MM); one run/day, restart-safe. Empty=off
 # Exit-monitoring screens (tunable; the opus reviewer is the real filter — defaults escalate generously):
 EXIT_NEAR_TARGET_FRAC=0.85    # ≥ this much of the entry→target move captured → escalate to review
 EXIT_GIVEBACK_MIN_PEAK=4.0    # watch give-back only after the favorable move peaks above this % (below = noise)
