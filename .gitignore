@@ -39,3 +39,6 @@ docker-compose.override.yml
 *.sqlite
 *.log
 logs/
+
+# Claude Security scan artifacts
+CLAUDE-SECURITY-*/

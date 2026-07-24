@@ -187,8 +187,8 @@ REACTION_AB_HORIZON_DAYS=3    # shadow A/B: forward-grade EVERY reporter's react
 SHORT_BORROW_APR=2.0          # honest-alpha prototype: annual % borrow charged to SHORTs over the hold (easy-to-borrow baseline)
 SHORT_BORROW_APR_ILLIQUID=30.0 # higher borrow for low-liquidity shorts (hard-to-borrow proxy until a real borrow feed exists)
 CONCENTRATION_MAX_PER_CLUSTER=2 # max TAKEN picks per correlation cluster (sector+direction) per day; excess correlated picks recorded but not booked
-EDGE_HORIZON_MOMENTUM=3        # PRE-COMMITTED grading horizon per edge (fixed in advance, not judge-chosen) — MOMENTUM
-EDGE_HORIZON_SPILLOVER=5       # SPILLOVER / THEME / WORLD default to 5; DEFAULT_EDGE_HORIZON_DAYS=3 for anything unmapped
+EDGE_HORIZON_MOMENTUM=1        # PRE-COMMITTED grading horizon per edge (fixed in advance, not judge-chosen). SHORT-HORIZON daily mode: MOMENTUM 1 (today→tomorrow)
+EDGE_HORIZON_SPILLOVER=2       # SPILLOVER / THEME / WORLD default to 2 (multi-day by nature → weak at short horizons); DEFAULT_EDGE_HORIZON_DAYS=2 for anything unmapped
 # Exit-monitoring screens (tunable; the opus reviewer is the real filter — defaults escalate generously):
 EXIT_NEAR_TARGET_FRAC=0.85    # ≥ this much of the entry→target move captured → escalate to review
 EXIT_GIVEBACK_MIN_PEAK=4.0    # watch give-back only after the favorable move peaks above this % (below = noise)
@@ -213,8 +213,11 @@ EXIT_REVIEW_COOLDOWN_S=1800   # min seconds between reviews of the same open pos
 - **Miss diagnosis is conversational** — ask Claude "why did we miss X?"; it traces
   `store.symbol_traces` / `symbol_skips` and fixes data/prompt/bug. No UI tool for it.
 - **Pre-committed horizon** — the grading horizon is FIXED per edge in advance
-  (`config.pinned_horizon`, `EDGE_HORIZON_DAYS`: MOMENTUM 3, SPILLOVER/THEME/WORLD 5), NOT
-  chosen by the judge after seeing the setup. `debate.deliberate` sets `horizon =
+  (`config.pinned_horizon`, `EDGE_HORIZON_DAYS`), NOT chosen by the judge after seeing the
+  setup. SHORT-HORIZON daily-run mode (2026-07-24): MOMENTUM 1 (today→tomorrow),
+  SPILLOVER/THEME/WORLD 2 — the desk runs every day, and momentum/earnings-drift peak in the
+  first 1-2 days; SPILLOVER/THEME are multi-day by mechanism so a short window UNDERSTATES them
+  (expect them weak here — that's the window, not a dead edge). Bump any edge via env. `debate.deliberate` sets `horizon =
   pinned_horizon(edge_hint)` (the trade PLAN sizes to it too, so entry and grade stay
   consistent); the loner control arm is pinned to the SAME horizon for an apples-to-apples
   comparison; the judge prompt now judges whether the edge plays out WITHIN the fixed window
