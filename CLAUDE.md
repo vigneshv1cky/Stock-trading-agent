@@ -30,7 +30,7 @@ bundled Claude Code CLI). There is no Bedrock, no API key, no local model files.
 pip install -r requirements.txt
 
 # Web dashboard + hourly grader (v2 primary mode — trades run on button click,
-# AND auto-fire once/day at AUTORUN_ET, default 09:35 ET)
+# AND auto-fire every AUTORUN_INTERVAL_HOURS in the AUTORUN_START/END_ET window; default hourly 09:35–16:00 ET)
 python -m alphadesk.main dashboard        # then open http://localhost:8000
 
 # Convene the team NOW on recent news (headless, writes to ledger)
@@ -193,7 +193,9 @@ EDGE_HORIZON_MOMENTUM=1        # PRE-COMMITTED grading horizon (fixed in advance
 EDGE_HORIZON_SPILLOVER=1       # SPILLOVER/THEME/WORLD also 1: multi-day nature handled on the INPUT (lookback) side, not the forward horizon; DEFAULT_EDGE_HORIZON_DAYS=1
 ENTRY_GAP_SKIP_PCT=2.0         # always enter at the current price (market); a CLOSED-market call whose open gapped >this% from the planned price is NOT taken (stale). 0=off
 SCOUT_MAX_CANDIDATES=60        # how many (materiality-ranked) candidates reach the scout per run; raise for wider coverage (more tokens/fetches)
-AUTORUN_ET=09:35              # dashboard mode auto-fires Find Trades once/trading-day at this ET time (HH:MM); one run/day, restart-safe. Empty=off
+AUTORUN_INTERVAL_HOURS=1       # dashboard mode auto-fires Find Trades every N hours within the window below (trading days); restart-safe (interval off the ledger's last run). <=0 = off
+AUTORUN_START_ET=09:35        # window start (a few min after 9:30 so BMO reporters are public + live pricing for the gap-guard)
+AUTORUN_END_ET=16:00         # window end; widen (e.g. 23:59) for around-the-clock. Hourly is cheap: the 24h repick cooldown means each run debates only NEW catalysts
 # Exit-monitoring screens (tunable; the opus reviewer is the real filter — defaults escalate generously):
 EXIT_NEAR_TARGET_FRAC=0.85    # ≥ this much of the entry→target move captured → escalate to review
 EXIT_GIVEBACK_MIN_PEAK=4.0    # watch give-back only after the favorable move peaks above this % (below = noise)

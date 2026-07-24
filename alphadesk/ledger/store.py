@@ -988,6 +988,15 @@ def add_run(kind: str, top_picks: list[dict]) -> None:
                      (_now(), kind, json.dumps(top_picks)))
 
 
+def last_run_time(kind: str = "FIND_TRADES") -> str | None:
+    """ISO ts of the most recent run of `kind`, or None — so the auto-run's interval gate
+    survives restarts (won't re-fire inside the interval after a crash/deploy)."""
+    with _connect() as conn:
+        row = conn.execute("SELECT ts FROM runs WHERE kind = ? ORDER BY id DESC LIMIT 1",
+                           (kind,)).fetchone()
+    return row["ts"] if row else None
+
+
 def runs_today(kind: str = "FIND_TRADES") -> int:
     """Count of runs of `kind` recorded so far today (ET) — the durable half of the
     daily runaway cap, so a restart can't zero an in-memory counter and bypass it."""

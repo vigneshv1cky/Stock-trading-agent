@@ -250,42 +250,65 @@ async def _serve() -> None:
             scheduler.beat()   # 180s liveness for /healthz (grader's hourly beat is too coarse)
             await asyncio.sleep(180)   # ~3 min; a hit closes the paper position
 
-    async def _daily_run_loop():
-        """Auto-fire Find Trades once per trading day at AUTORUN_ET — the SAME pipeline as
-        the dashboard button (drains the SSE flow, so take-all / cap / gap-guard all apply).
-        Skips if a run already happened today (manual or a prior process), so it survives
-        restarts and never double-runs; if the process starts LATE it catches up. Disabled
-        when AUTORUN_ET is empty."""
-        from alphadesk.config import AUTORUN_ET, now_et
+    async def _autorun_loop():
+        """Auto-fire Find Trades every AUTORUN_INTERVAL_HOURS within [START, END] ET on
+        trading days — the SAME pipeline as the button (drains the SSE flow, so take-all /
+        cap / gap-guard all apply). Interval-gated off the LEDGER's last run (manual or auto),
+        so it's restart-safe and respects the interval regardless of source. The 24h repick
+        cooldown makes each run only debate NEW catalysts, so hourly polling stays cheap and
+        information-driven. Disabled if the interval is <=0 or START is empty."""
+        from datetime import datetime, timedelta
+
+        from alphadesk.config import (
+            AUTORUN_END_ET,
+            AUTORUN_INTERVAL_HOURS,
+            AUTORUN_START_ET,
+            ET,
+            now_et,
+        )
         from alphadesk.ledger import store
         log = logging.getLogger("alphadesk.autorun")
-        if not AUTORUN_ET:
-            log.info("Daily auto-run disabled (AUTORUN_ET empty)")
+        if AUTORUN_INTERVAL_HOURS <= 0 or not AUTORUN_START_ET:
+            log.info("Auto-run disabled")
             return
         try:
-            hh, mm = (int(x) for x in AUTORUN_ET.split(":"))
+            s_h, s_m = (int(x) for x in AUTORUN_START_ET.split(":"))
+            e_h, e_m = (int(x) for x in AUTORUN_END_ET.split(":"))
         except Exception:
-            log.error("Bad AUTORUN_ET %r (want HH:MM) — auto-run disabled", AUTORUN_ET)
+            log.error("Bad AUTORUN_START/END_ET — auto-run disabled")
             return
-        log.info("Daily auto-run scheduled for %s ET", AUTORUN_ET)
-        last_attempt_day = None
+        interval = timedelta(hours=AUTORUN_INTERVAL_HOURS)
+        log.info("Auto-run: every %gh, %s–%s ET", AUTORUN_INTERVAL_HOURS,
+                 AUTORUN_START_ET, AUTORUN_END_ET)
+        running = False
         while True:
             try:
                 now = now_et()
-                if (now.weekday() < 5 and (now.hour, now.minute) >= (hh, mm)
-                        and last_attempt_day != now.date()
-                        and store.runs_today("FIND_TRADES") == 0):
-                    last_attempt_day = now.date()   # one attempt/day, even if it errors
-                    log.info("Daily auto-run: firing Find Trades (%s ET)", AUTORUN_ET)
-                    from alphadesk.desk.stream import stream_find_trades
-                    async for _ev in stream_find_trades(hours=24.0):
-                        pass
-                    log.info("Daily auto-run complete")
+                in_window = (now.weekday() < 5
+                             and (now.hour, now.minute) >= (s_h, s_m)
+                             and (now.hour, now.minute) < (e_h, e_m))
+                last = None
+                lt = store.last_run_time("FIND_TRADES")
+                if lt:
+                    try:
+                        last = datetime.fromisoformat(lt).astimezone(ET)
+                    except (ValueError, TypeError):
+                        last = None
+                if in_window and not running and (last is None or (now - last) >= interval):
+                    running = True
+                    try:
+                        log.info("Auto-run: firing Find Trades")
+                        from alphadesk.desk.stream import stream_find_trades
+                        async for _ev in stream_find_trades(hours=24.0):
+                            pass
+                        log.info("Auto-run complete")
+                    finally:
+                        running = False
             except Exception as exc:
-                log.error("daily auto-run error: %s", exc)
+                log.error("auto-run error: %s", exc)
             await asyncio.sleep(60)   # check each minute
 
-    await asyncio.gather(_grader_loop(), _earnings_loop(), _daily_run_loop(),
+    await asyncio.gather(_grader_loop(), _earnings_loop(), _autorun_loop(),
                          _position_watch_loop(), _web_server().serve())
 
 

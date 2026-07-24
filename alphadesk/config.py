@@ -123,10 +123,15 @@ ENTRY_GAP_SKIP_PCT = float(os.environ.get("ENTRY_GAP_SKIP_PCT", "2.0"))
 # market cap — so the biggest movers are seen first instead of being truncated behind
 # mega-caps (the THRM +22.7% miss). Raise to see more per run (more scout tokens + fetches).
 SCOUT_MAX_CANDIDATES = int(os.environ.get("SCOUT_MAX_CANDIDATES", "60"))
-# Daily auto-run: in `dashboard` mode, fire Find Trades once per trading day at this ET time
-# (HH:MM) — no button click. Timed a few minutes AFTER 9:30 so BMO reporters are public,
-# pricing is live, and the entry gap-guard doesn't refuse everything. Empty string disables it.
-AUTORUN_ET = os.environ.get("AUTORUN_ET", "09:35").strip()
+# Auto-run: in `dashboard` mode, fire Find Trades every AUTORUN_INTERVAL_HOURS within the
+# [AUTORUN_START_ET, AUTORUN_END_ET] ET window on trading days — no button click. Default:
+# hourly, 09:35–16:00 (market hours; start a few min after 9:30 so BMO reporters are public
+# and pricing is live for the gap-guard). Hourly is cheap + information-driven because the 24h
+# repick cooldown means each run only debates NEW catalysts, not the same names on price.
+# Widen END (e.g. 23:59) for around-the-clock; INTERVAL_HOURS<=0 or empty START disables it.
+AUTORUN_INTERVAL_HOURS = float(os.environ.get("AUTORUN_INTERVAL_HOURS", "1"))
+AUTORUN_START_ET = os.environ.get("AUTORUN_START_ET", "09:35").strip()
+AUTORUN_END_ET = os.environ.get("AUTORUN_END_ET", "16:00").strip()
 
 
 def pinned_horizon(edge: str | None) -> int:
