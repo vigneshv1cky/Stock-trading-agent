@@ -120,12 +120,19 @@ Polygon (financial news) + earnings drift (+ since-report move) + Alpaca real-ti
 ### Model tiering (`config.MODEL_MAP`, every role env-overridable `MODEL_<ROLE>`)
 
 - **haiku**: enrichment, notes/briefs, news_check, gate (high-volume extraction)
-- **sonnet**: scout, researcher, earnings_reader
-- **opus**: critic, judge, loner, head, review, connections (web-grounded)
+- **sonnet**: scout, researcher, earnings_reader, plan
+- **opus** (in the default model map): critic, judge, loner, head, review, connections (web-grounded)
 
-Researcher is sonnet, Critic is opus **on purpose** — different models between debate
-roles decorrelate errors. On rate-limit each role steps down opus→sonnet→haiku (tagged
-on the ledger row); if the bottom tier is limited too, the breaker opens.
+**CHEAP_MODELS mode (default ON, 2026-07-24)** — for cheap, frequent (hourly) automation the
+opus judgment roles are downgraded to **sonnet**, so a full run makes NO opus calls and costs a
+fraction. It's a quality/direction BET on an unproven system (sonnet judgment vs opus; and
+researcher+critic now share a tier, losing the deliberate decorrelation below). Every pick is
+model-tagged, so compare the cheap vs opus cohorts in the ledger. `CHEAP_MODELS=0` restores opus;
+keep a single role sharp with a per-role override, e.g. `MODEL_JUDGE=opus`.
+
+Researcher is sonnet, Critic is opus **on purpose** (in the non-cheap map) — different models
+between debate roles decorrelate errors. On rate-limit each role steps down opus→sonnet→haiku
+(tagged on the ledger row); if the bottom tier is limited too, the breaker opens.
 
 ## The LLM layer — `llm.py` (every model call passes through `call_role`)
 
@@ -183,6 +190,7 @@ ADMIN_USERNAME=admin          # dashboard Basic Auth (fail-closed if unset)
 ADMIN_PASSWORD=...
 ALPHADESK_DATA=~/.alphadesk   # ledger.db, universe.json, relationship cache
 SOLO_ARM_EVERY_N=0            # 0=off (lean default); set e.g. 6 to measure committee-vs-solo
+CHEAP_MODELS=1               # 1=downgrade the opus judgment roles (critic/judge/head/review/loner/connections) to sonnet — no opus, cheap hourly runs. 0=opus defaults. Per-role MODEL_<ROLE> overrides win
 WORLD_MAX_CATEGORIES=0        # GDELT world news in Find Trades: 0=off (default); 4=full sweep every ~3 runs; 11=every run (slow)
 MATERIAL_REACTION_PCT=1.5     # earnings drift needs a visible reaction to be a directional candidate; below this % (live vs pre-report close) = skip
 REACTION_AB_HORIZON_DAYS=3    # shadow A/B: forward-grade EVERY reporter's reaction (passed AND dropped) over this horizon → `abtest` shows if the gate cuts winners

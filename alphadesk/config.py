@@ -58,7 +58,18 @@ EXPOSURE_MAX_SHOCKS = int(os.environ.get("EXPOSURE_MAX_SHOCKS", "2"))
 # every run, slowest). Capped at the taxonomy size.
 WORLD_MAX_CATEGORIES = int(os.environ.get("WORLD_MAX_CATEGORIES", "0"))
 
-for _role in list(MODEL_MAP):
+# CHEAP-models mode (default ON) — for cheap, frequent (hourly) automation: downgrade the
+# opus judgment roles to sonnet, so a full run has NO opus calls and costs a fraction. It's a
+# quality/direction BET on an unproven system: sonnet judgment vs opus, and researcher+critic
+# land on the same tier (some error-decorrelation lost, since the opus critic used to differ
+# from the sonnet researcher on purpose). Every pick is model-tagged, so compare the cheap vs
+# opus cohorts in the ledger. Keep any single role sharp with a per-role override, e.g.
+# MODEL_JUDGE=opus. Set CHEAP_MODELS=0 to restore the opus defaults.
+if os.environ.get("CHEAP_MODELS", "1") not in ("0", "", "false", "False", "no"):
+    for _r in ("critic", "judge", "loner", "review", "head", "connections"):
+        MODEL_MAP[_r] = "sonnet"
+
+for _role in list(MODEL_MAP):   # per-role override wins over the cheap default
     _override = os.environ.get(f"MODEL_{_role.upper()}")
     if _override:
         MODEL_MAP[_role] = _override
